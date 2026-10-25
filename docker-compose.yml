@@ -1,0 +1,18 @@
+services:
+  hivemind:
+    image: ghcr.io/turkushan490/hivemind:latest
+    container_name: hivemind
+    restart: unless-stopped
+    ports:
+      - "4820:4820"
+    volumes:
+      - ./data:/data
+    environment:
+      # Where your Ollama runs (host.docker.internal works on Docker Desktop).
+      - OLLAMA_URL=http://host.docker.internal:11434
+      # Optional: encrypts stored API keys. Without it a key is generated in /data.
+      # - SECRET_KEY=change-me
+      # Set to true when served over HTTPS (e.g. behind Nginx Proxy Manager).
+      - SECURE_COOKIES=false
+    extra_hosts:
+      - "host.docker.internal:host-gateway"

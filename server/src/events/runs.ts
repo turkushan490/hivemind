@@ -1,0 +1,94 @@
+import type { CanvasGraph, RunEvent, RunStatus } from '@hivemind/shared';
+import { newId } from '../crypto.js';
+import { db } from '../db/index.js';
+import { runGraph, type EngineDeps } from '../engine/run.js';
+
+type Listener = (ev: RunEvent) => void;
+
+interface LiveRun {
+  id: string;
+  ownerId: string;
+  events: RunEvent[];
+  listeners: Set<Listener>;
+  abort: AbortController;
+  finished: boolean;
+}
+
+/** Active runs live in memory (event bus); finished runs are stored with all events for replay. */
+const live = new Map<string, LiveRun>();
+
+export function startRun(opts: {
+  ownerId: string;
+  canvasId?: string;
+  graph: CanvasGraph;
+  question: string;
+  resolve: EngineDeps['resolve'];
+}): string {
+  const id = newId();
+  const run: LiveRun = { id, ownerId: opts.ownerId, events: [], listeners: new Set(), abort: new AbortController(), finished: false };
+  live.set(id, run);
+  db.prepare("INSERT INTO runs (id, owner_id, canvas_id, question, status) VALUES (?, ?, ?, ?, 'running')").run(id, opts.ownerId, opts.canvasId ?? null, opts.question);
+
+  const emit: EngineDeps['emit'] = (partial) => {
+    const ev = { ...partial, runId: id, seq: run.events.length, ts: Date.now() } as RunEvent;
+    run.events.push(ev);
+    for (const l of run.listeners) l(ev);
+  };
+
+  runGraph(opts.graph, opts.question, { resolve: opts.resolve, emit }, run.abort.signal)
+    .then((r) => finish(run, r.status, r.final, r.cost))
+    .catch((err) => {
+      emit({ type: 'error', error: (err as Error).message });
+      emit({ type: 'run_done', status: 'error' });
+      finish(run, 'error');
+    });
+  return id;
+}
+
+function finish(run: LiveRun, status: RunStatus, final?: string, cost?: number) {
+  run.finished = true;
+  db.prepare("UPDATE runs SET status = ?, final = ?, cost = ?, finished_at = datetime('now'), events = ? WHERE id = ?").run(
+    status,
+    final ?? null,
+    cost ?? null,
+    JSON.stringify(run.events),
+    run.id,
+  );
+  for (const l of run.listeners) l({ type: 'run_done', runId: run.id, seq: -1, ts: Date.now(), status } as RunEvent);
+  run.listeners.clear();
+  // Keep briefly so late subscribers still get the stream from memory.
+  setTimeout(() => live.delete(run.id), 60_000).unref();
+}
+
+/**
+ * Sends every past event, then live ones until the run ends. Returns an unsubscribe function.
+ * Works for finished runs too (replay from the database).
+ */
+export function subscribe(runId: string, ownerId: string, onEvent: Listener, onEnd: () => void): (() => void) | undefined {
+  const run = live.get(runId);
+  if (run && run.ownerId === ownerId) {
+    run.events.forEach(onEvent);
+    if (run.finished) {
+      onEnd();
+      return () => {};
+    }
+    const l: Listener = (ev) => {
+      if (ev.seq === -1) return onEnd();
+      onEvent(ev);
+    };
+    run.listeners.add(l);
+    return () => run.listeners.delete(l);
+  }
+  const row = db.prepare('SELECT events FROM runs WHERE id = ? AND owner_id = ?').get(runId, ownerId) as { events: string | null } | undefined;
+  if (!row) return;
+  (JSON.parse(row.events ?? '[]') as RunEvent[]).forEach(onEvent);
+  onEnd();
+  return () => {};
+}
+
+export function cancelRun(runId: string, ownerId: string): boolean {
+  const run = live.get(runId);
+  if (!run || run.ownerId !== ownerId || run.finished) return false;
+  run.abort.abort();
+  return true;
+}

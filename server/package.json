@@ -1,0 +1,26 @@
+{
+  "name": "server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/main.ts",
+    "build": "esbuild src/main.ts --bundle --platform=node --format=esm --target=node22 --packages=external --alias:@hivemind/shared=../packages/shared/src/index.ts --outfile=dist/main.js",
+    "start": "node dist/main.js",
+    "typecheck": "tsc -p .",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@fastify/cookie": "^11.0.2",
+    "@fastify/static": "^8.2.0",
+    "fastify": "^5.4.0"
+  },
+  "devDependencies": {
+    "@hivemind/shared": "*",
+    "@types/node": "^22.15.0",
+    "esbuild": "^0.25.5",
+    "tsx": "^4.20.3",
+    "typescript": "^5.8.3",
+    "vitest": "^3.2.4"
+  }
+}

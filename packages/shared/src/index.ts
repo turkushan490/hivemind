@@ -99,6 +99,36 @@ export interface ModelInfo {
   price?: { input: number; output: number };
 }
 
+/** A model currently held in memory by a local provider. */
+export interface LoadedModel {
+  model: string;
+  /** Total memory in bytes, and the part in GPU VRAM. */
+  sizeBytes: number;
+  vramBytes: number;
+  /** When the provider unloads it by itself (ISO time). */
+  expiresAt?: string;
+}
+
+/** GET /api/memory: one entry per local provider. */
+export interface ProviderMemory {
+  providerId: string;
+  name: string;
+  canUnload: boolean;
+  models: LoadedModel[];
+  error?: string;
+}
+
+/** An entry of the Problems tab. */
+export interface Problem {
+  id: number;
+  at: string;
+  source: 'server' | 'crash' | 'run' | 'provider' | 'web';
+  message: string;
+  detail?: string;
+  runId?: string;
+  seen: boolean;
+}
+
 // ---- Run events ----
 // Every UI animation is driven by these; replay = feeding stored events again.
 

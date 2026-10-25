@@ -1,6 +1,7 @@
 import { councilGraph, type CanvasGraph, type ModelInfo, type ModelRef, type RunEvent } from '@hivemind/shared';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../api';
+import { toast } from '../notify';
 
 type NodeState = 'idle' | 'queued' | 'loading' | 'thinking' | 'streaming' | 'done' | 'error';
 
@@ -63,7 +64,7 @@ function applyEvent(views: Record<string, NodeView>, ev: RunEvent): Record<strin
   return { ...views, [ev.nodeId]: next };
 }
 
-export function RunPage() {
+export function RunPage({ onProblem }: { onProblem: () => void }) {
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [modelErrors, setModelErrors] = useState<{ providerId: string; error: string }[]>([]);
   const [freeOnly, setFreeOnly] = useState(false);
@@ -76,6 +77,8 @@ export function RunPage() {
   const [runId, setRunId] = useState('');
   const [final, setFinal] = useState<{ text?: string; status?: string; cost?: number } | null>(null);
   const [error, setError] = useState('');
+  const [runErrors, setRunErrors] = useState<string[]>([]);
+  const [connLost, setConnLost] = useState(false);
   const [, setNow] = useState(0);
   const source = useRef<EventSource | null>(null);
 
@@ -105,16 +108,44 @@ export function RunPage() {
       setGraph(g);
       setViews({});
       setFinal(null);
+      setRunErrors([]);
       setRunId(runId);
       source.current?.close();
+      const label = (id?: string) => g.nodes.find((n) => n.id === id)?.label ?? id ?? 'Run';
+      let lost = false;
       const es = new EventSource(`/api/runs/${runId}/events`);
       source.current = es;
+      es.onopen = () => {
+        // After a reconnect the server replays the whole run, so start from a clean slate.
+        if (lost) {
+          setViews({});
+          setRunErrors([]);
+          toast('Reconnected to the server', 'ok');
+        }
+        lost = false;
+        setConnLost(false);
+      };
+      es.onerror = () => {
+        lost = true;
+        setConnLost(true);
+      };
       es.onmessage = (m) => {
         const ev = JSON.parse(m.data) as RunEvent;
         setViews((v) => applyEvent(v, ev));
+        if (ev.type === 'error' && ev.error !== 'Cancelled') {
+          const msg = `${label(ev.nodeId)} failed: ${ev.error}`;
+          setRunErrors((e) => (e.includes(msg) ? e : [...e, msg]));
+          if (!lost) {
+            toast(msg);
+            onProblem();
+          }
+        }
         if (ev.type === 'run_done') setFinal({ text: ev.final, status: ev.status, cost: ev.cost });
       };
-      es.addEventListener('end', () => es.close());
+      es.addEventListener('end', () => {
+        es.close();
+        setConnLost(false);
+      });
     } catch (err) {
       setError((err as Error).message);
     }
@@ -181,13 +212,33 @@ export function RunPage() {
         {error && <p className="text-sm text-red-400">{error}</p>}
       </div>
 
+      {connLost && running && (
+        <div role="alert" className="rounded-lg border border-amber-700 bg-amber-950/40 px-4 py-2 text-sm text-amber-200">
+          Lost the live connection to this run. Reconnecting… the run keeps going on the server.
+        </div>
+      )}
+      {runErrors.length > 0 && (
+        <div role="alert" className="rounded-lg border border-red-800 bg-red-950/40 px-4 py-3 text-sm text-red-200">
+          <div className="mb-1 font-semibold">
+            {runErrors.length} problem{runErrors.length > 1 ? 's' : ''} in this run
+          </div>
+          <ul className="list-disc space-y-0.5 pl-5">
+            {runErrors.map((e) => (
+              <li key={e} className="break-words">
+                {e}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       {graph && (
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {modelNodes.map((n) => {
             const v = views[n.id] ?? { state: 'idle', text: '' };
             const elapsed = v.elapsedMs ?? (v.startedAt ? Date.now() - v.startedAt : undefined);
             return (
-              <div key={n.id} className="card flex max-h-96 flex-col">
+              <div key={n.id} className={`card flex max-h-96 flex-col ${v.state === 'error' ? 'border-red-700 bg-red-950/20' : ''}`}>
                 <div className="mb-2 flex items-center gap-2 text-sm">
                   <span className="font-medium">{n.type === 'llm' ? n.label : `${n.label} · ${n.config.model?.model}`}</span>
                   <span className={`ml-auto ${STATE_STYLE[v.state]}`}>{v.state}</span>
@@ -204,7 +255,8 @@ export function RunPage() {
                     <pre className="max-h-32 overflow-y-auto whitespace-pre-wrap">{v.thinking}</pre>
                   </details>
                 )}
-                <pre className="flex-1 overflow-y-auto whitespace-pre-wrap text-sm text-slate-300">{v.error ?? v.text}</pre>
+                {v.error && <p className="mb-2 rounded bg-red-950/60 px-2 py-1 text-sm break-words text-red-300">{v.error}</p>}
+                <pre className="flex-1 overflow-y-auto whitespace-pre-wrap text-sm text-slate-300">{v.text}</pre>
               </div>
             );
           })}
@@ -212,11 +264,11 @@ export function RunPage() {
       )}
 
       {final && (
-        <div className="card">
+        <div className={`card ${final.status === 'error' ? 'border-red-800' : final.status === 'done' ? 'border-emerald-800' : ''}`}>
           <h2 className="mb-2 font-semibold">
             Final answer <span className="text-sm font-normal text-slate-400">({final.status}{final.cost ? `, $${final.cost.toFixed(5)}` : ''})</span>
           </h2>
-          <pre className="whitespace-pre-wrap text-sm">{final.text ?? 'No answer — see the errors above.'}</pre>
+          <pre className="whitespace-pre-wrap text-sm">{final.text ?? (final.status === 'cancelled' ? 'Cancelled.' : 'No final answer: the run failed. See the problems above.')}</pre>
         </div>
       )}
     </div>

@@ -61,6 +61,18 @@ const MIGRATIONS = [
   CREATE INDEX runs_owner ON runs(owner_id, started_at);
   CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
   `,
+  `
+  CREATE TABLE error_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    at TEXT NOT NULL DEFAULT (datetime('now')),
+    source TEXT NOT NULL,
+    message TEXT NOT NULL,
+    detail TEXT,
+    user_id TEXT,
+    run_id TEXT,
+    seen INTEGER NOT NULL DEFAULT 0
+  );
+  `,
 ];
 
 export const db = new DatabaseSync(join(config.dataDir, 'hivemind.db'));

@@ -2,6 +2,7 @@ import type { CanvasGraph, RunEvent, RunStatus } from '@hivemind/shared';
 import { newId } from '../crypto.js';
 import { db } from '../db/index.js';
 import { runGraph, type EngineDeps } from '../engine/run.js';
+import { logError } from '../errors.js';
 
 type Listener = (ev: RunEvent) => void;
 
@@ -32,6 +33,12 @@ export function startRun(opts: {
   const emit: EngineDeps['emit'] = (partial) => {
     const ev = { ...partial, runId: id, seq: run.events.length, ts: Date.now() } as RunEvent;
     run.events.push(ev);
+    // "All inputs failed" only follows an earlier error, so it isn't logged twice.
+    if (ev.type === 'error' && ev.error !== 'Cancelled' && ev.error !== 'All inputs failed') {
+      const node = ev.nodeId ? opts.graph.nodes.find((n) => n.id === ev.nodeId) : undefined;
+      const where = node ? `${node.label || node.type}${ev.model ? ` (${ev.model})` : ''}: ` : '';
+      logError({ source: 'run', message: `${where}${ev.error}`, userId: opts.ownerId, runId: id });
+    }
     for (const l of run.listeners) l(ev);
   };
 

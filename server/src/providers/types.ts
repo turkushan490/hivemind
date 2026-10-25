@@ -1,4 +1,6 @@
-import type { ModelInfo, ProviderKind } from '@hivemind/shared';
+import type { LoadedModel, ModelInfo, ProviderKind } from '@hivemind/shared';
+
+export type { LoadedModel };
 
 export interface ChatMessage {
   role: 'system' | 'user' | 'assistant';
@@ -31,6 +33,9 @@ export interface ProviderConfig {
 export interface ProviderAdapter {
   listModels(): Promise<ModelInfo[]>;
   stream(req: ChatRequest, signal: AbortSignal): AsyncIterable<StreamChunk>;
+  /** Local providers only: what is loaded in RAM/VRAM, and unloading it. */
+  loaded?(): Promise<LoadedModel[]>;
+  unload?(model: string): Promise<void>;
 }
 
 /** Some model chat templates reject system messages; fold the system prompt into the first user message. */

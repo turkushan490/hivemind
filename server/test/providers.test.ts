@@ -98,6 +98,21 @@ describe('ollama system-message fallback', () => {
   });
 });
 
+describe('ollama memory', () => {
+  it('lists loaded models and unloads with keep_alive 0', async () => {
+    const calls: { url: string; body?: any }[] = [];
+    vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
+      calls.push({ url, body: init?.body ? JSON.parse(init.body as string) : undefined });
+      if (url.endsWith('/api/ps')) return Response.json({ models: [{ name: 'qwen:9b', size: 8e9, size_vram: 6e9, expires_at: '2026-10-25T15:00:00Z' }] });
+      return Response.json({ done: true });
+    });
+    const a = ollamaAdapter({ id: 'o', kind: 'ollama', preset: 'ollama', baseUrl: 'http://o/' });
+    expect(await a.loaded!()).toEqual([{ model: 'qwen:9b', sizeBytes: 8e9, vramBytes: 6e9, expiresAt: '2026-10-25T15:00:00Z' }]);
+    await a.unload!('qwen:9b');
+    expect(calls[1]).toEqual({ url: 'http://o/api/generate', body: { model: 'qwen:9b', keep_alive: 0 } });
+  });
+});
+
 describe('anthropic adapter', () => {
   it('moves the system prompt out of messages and streams text deltas', async () => {
     const fetch = vi.fn(async () =>

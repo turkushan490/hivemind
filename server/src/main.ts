@@ -6,10 +6,33 @@ import { authRoutes } from './api/auth.js';
 import { providerRoutes, seedProviders } from './api/providers.js';
 import { runRoutes } from './api/runs.js';
 import { config } from './config.js';
+import { describe, logError } from './errors.js';
+import { problemRoutes } from './api/problems.js';
+import { memoryRoutes } from './api/memory.js';
 
 const app = Fastify({ logger: { level: process.env.LOG_LEVEL || 'info' }, trustProxy: true, bodyLimit: 5 * 1024 * 1024 });
 
+// A crash is never silent: it is stored, shown in the Problems tab after the restart, then the process exits so Docker restarts it.
+process.on('uncaughtException', (err) => {
+  logError({ source: 'crash', ...describe(err), message: `Server crashed: ${describe(err).message}` });
+  console.error(err);
+  process.exit(1);
+});
+process.on('unhandledRejection', (err) => {
+  logError({ source: 'server', ...describe(err) });
+  console.error(err);
+});
+
 await app.register(cookie);
+
+// Unexpected errors in a request: logged with an id the UI can show.
+app.setErrorHandler((err: Error & { statusCode?: number }, req, reply) => {
+  const status = err.statusCode && err.statusCode < 500 ? err.statusCode : 500;
+  if (status < 500) return reply.code(status).send({ error: err.message });
+  const id = logError({ source: 'server', message: `${req.method} ${req.url.split('?')[0]}: ${err.message}`, detail: err.stack, userId: req.user?.id });
+  req.log.error(err);
+  return reply.code(500).send({ error: `Server error: ${err.message}`, problemId: id });
+});
 
 // Cookie auth + SameSite=Strict; also refuse cross-site form posts by requiring JSON on writes.
 app.addHook('onRequest', async (req, reply) => {
@@ -25,6 +48,8 @@ app.get('/api/health', async () => ({ ok: true, version: process.env.APP_VERSION
 authRoutes(app);
 providerRoutes(app);
 runRoutes(app);
+problemRoutes(app);
+memoryRoutes(app);
 seedProviders(config.ollamaUrl);
 
 if (existsSync(config.webDir)) {

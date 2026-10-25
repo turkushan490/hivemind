@@ -1,6 +1,6 @@
 import type { ModelInfo } from '@hivemind/shared';
 import { readLines } from './lines.js';
-import { checkResponse, foldSystem, type ChatRequest, type ProviderAdapter, type ProviderConfig, type StreamChunk } from './types.js';
+import { checkResponse, foldSystem, type ChatRequest, type LoadedModel, type ProviderAdapter, type ProviderConfig, type StreamChunk } from './types.js';
 
 export function ollamaAdapter(cfg: ProviderConfig): ProviderAdapter {
   const base = cfg.baseUrl.replace(/\/+$/, '');
@@ -16,6 +16,23 @@ export function ollamaAdapter(cfg: ProviderConfig): ProviderAdapter {
         name: m.details?.parameter_size ? `${m.name} (${m.details.parameter_size})` : m.name,
         free: true,
       }));
+    },
+
+    async loaded(): Promise<LoadedModel[]> {
+      const res = await fetch(`${base}/api/ps`);
+      await checkResponse(res, 'Ollama /api/ps');
+      const data = (await res.json()) as { models?: { name: string; size?: number; size_vram?: number; expires_at?: string }[] };
+      return (data.models ?? []).map((m) => ({ model: m.name, sizeBytes: m.size ?? 0, vramBytes: m.size_vram ?? 0, expiresAt: m.expires_at }));
+    },
+
+    async unload(model: string): Promise<void> {
+      // keep_alive 0 tells Ollama to drop the model from RAM/VRAM right away.
+      const res = await fetch(`${base}/api/generate`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ model, keep_alive: 0 }),
+      });
+      await checkResponse(res, `Ollama unload ${model}`);
     },
 
     async *stream(req: ChatRequest, signal: AbortSignal): AsyncIterable<StreamChunk> {

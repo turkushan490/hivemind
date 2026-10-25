@@ -31,17 +31,17 @@ const toInfo = (r: ProviderRow): ProviderInfo => ({
 });
 
 /** Shared providers (admin-made, owner null) plus the user's own. */
-function visibleRows(user: User): ProviderRow[] {
+export function visibleRows(user: User): ProviderRow[] {
   return db.prepare('SELECT * FROM providers WHERE owner_id IS NULL OR owner_id = ? ORDER BY created_at').all(user.id) as unknown as ProviderRow[];
 }
 
-function rowFor(user: User, id: string): ProviderRow | undefined {
+export function rowFor(user: User, id: string): ProviderRow | undefined {
   return db.prepare('SELECT * FROM providers WHERE id = ? AND (owner_id IS NULL OR owner_id = ?)').get(id, user.id) as ProviderRow | undefined;
 }
 
-const canEdit = (user: User, row: ProviderRow) => (row.owner_id === null ? user.role === 'admin' : row.owner_id === user.id);
+export const canEdit = (user: User, row: ProviderRow) => (row.owner_id === null ? user.role === 'admin' : row.owner_id === user.id);
 
-function adapterFor(row: ProviderRow) {
+export function adapterFor(row: ProviderRow) {
   return createAdapter({ id: row.id, kind: row.kind, preset: row.preset, baseUrl: row.base_url, apiKey: row.api_key_enc ? decrypt(row.api_key_enc) : undefined });
 }
 

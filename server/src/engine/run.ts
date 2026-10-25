@@ -82,6 +82,7 @@ export async function runGraph(graph: CanvasGraph, question: string, deps: Engin
     const exec = async () => {
       const t0 = Date.now();
       let firstToken = 0;
+      let firstAnswer = 0;
       let tokens = 0;
       let genMs: number | undefined;
       let inputTokens: number | undefined;
@@ -120,9 +121,11 @@ export async function runGraph(graph: CanvasGraph, question: string, deps: Engin
             else if (chunk.type === 'token') {
               markReady();
               if (!firstToken) firstToken = Date.now();
+              // Live speed counts from the first word of the answer, not from the start of thinking.
+              if (!firstAnswer) firstAnswer = Date.now();
               tokens++;
               out += chunk.text;
-              const secs = (Date.now() - firstToken) / 1000;
+              const secs = (Date.now() - firstAnswer) / 1000;
               deps.emit({ ...base, type: 'token', text: chunk.text, tokens, tokensPerSec: secs > 0.2 ? tokens / secs : undefined });
             } else {
               if (chunk.outputTokens) tokens = chunk.outputTokens;

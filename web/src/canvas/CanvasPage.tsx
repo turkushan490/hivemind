@@ -17,21 +17,23 @@ import '@xyflow/react/dist/style.css';
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from 'react';
 import { api } from '../api';
 import { toast } from '../notify';
-import { STATE_COLOR, useRun } from '../run/state';
+import { useRun } from '../run/state';
 import { useStored } from '../stored';
+import { HiveEdge } from './HiveEdge';
 import { HiveNode, RunViews, type HiveFlowNode } from './HiveNode';
 import { Inspector } from './Inspector';
 import { COMING_SOON, NODE_META } from './meta';
 import { newNodeId, TEMPLATES } from './templates';
 
 const nodeTypes = { hive: HiveNode };
+const edgeTypes = { hive: HiveEdge };
 const PALETTE: NodeType[] = ['input', 'llm', 'review', 'judge', 'output'];
 const ACTIVE = new Set(['loading', 'thinking', 'streaming']);
 const DRAFT_KEY = 'hm.canvas.draft';
 
 const toFlow = (g: CanvasGraph): { nodes: HiveFlowNode[]; edges: Edge[] } => ({
   nodes: g.nodes.map((n) => ({ id: n.id, type: 'hive', position: n.position, data: { kind: n.type, label: n.label, config: n.config } })),
-  edges: g.edges.map((e) => ({ id: e.id, source: e.source, target: e.target })),
+  edges: g.edges.map((e) => ({ id: e.id, source: e.source, target: e.target, type: 'hive' })),
 });
 
 const toGraph = (nodes: HiveFlowNode[], edges: Edge[]): CanvasGraph => ({
@@ -208,7 +210,7 @@ function Editor({ active, onProblem }: { active: boolean; onProblem: () => void 
     !!c.source && !!c.target && c.source !== c.target && !edges.some((e) => e.source === c.source && e.target === c.target) && !wouldLoop(c.source, c.target);
   const onConnect = (c: Connection) => {
     if (!isValidConnection(c)) return toast('That wire would make a loop', 'info');
-    setEdges((es) => addEdge({ ...c, id: `${c.source}->${c.target}` }, es));
+    setEdges((es) => addEdge({ ...c, id: `${c.source}->${c.target}`, type: 'hive' }, es));
   };
 
   // ---- Adding blocks ----
@@ -241,6 +243,7 @@ function Editor({ active, onProblem }: { active: boolean; onProblem: () => void 
 
   // ---- Running ----
   const startRun = async () => {
+    followed.current = '';
     if (!question.trim()) return toast('Type a question first', 'info');
     const input = nodes.find((n) => n.data.kind === 'input');
     if (!input) return toast('Add a Question block', 'info');
@@ -256,18 +259,24 @@ function Editor({ active, onProblem }: { active: boolean; onProblem: () => void 
     } catch {}
   };
 
-  // Wires light up from the state of the blocks they connect.
-  const shownEdges = useMemo(
-    () =>
-      edges.map((e) => {
-        const src = run.views[e.source]?.state;
-        const dst = run.views[e.target]?.state;
-        const live = src === 'done' && !!dst && ACTIVE.has(dst);
-        const stroke = live ? STATE_COLOR[dst!] : src === 'done' ? STATE_COLOR.done : src === 'error' ? STATE_COLOR.error : '#484f58';
-        return { ...e, className: live ? 'hm-edge-live' : undefined, style: { stroke, strokeWidth: live ? 2.5 : 1.75 } };
-      }),
-    [edges, run.views],
-  );
+  // Camera follows the block that is working, then shows the whole canvas when the run ends.
+  const [follow, setFollow] = useStored('canvas.follow', true);
+  const followed = useRef('');
+  useEffect(() => {
+    if (!follow || !run.runId) return;
+    const activeId = Object.entries(run.views).find(([, v]) => ACTIVE.has(v.state))?.[0];
+    if (activeId && activeId !== followed.current) {
+      const node = flow.getNode(activeId);
+      if (!node) return;
+      followed.current = activeId;
+      const w = node.measured?.width ?? 256;
+      const h = node.measured?.height ?? 160;
+      flow.setCenter(node.position.x + w / 2, node.position.y + h / 2, { zoom: 1.15, duration: 900 });
+    } else if (!activeId && run.final && followed.current !== 'all') {
+      followed.current = 'all';
+      flow.fitView({ duration: 900, padding: 0.2 });
+    }
+  }, [run.views, run.final, follow]);
 
   return (
     <div className="flex h-[calc(100vh-88px)] min-h-[520px] flex-col overflow-hidden rounded-lg border border-[#30363d]">
@@ -325,6 +334,9 @@ function Editor({ active, onProblem }: { active: boolean; onProblem: () => void 
             onChange={(e) => setQuestion(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && !run.running && startRun()}
           />
+          <label className="flex shrink-0 items-center gap-1.5 text-xs text-slate-400" title="The view glides to the block that is working">
+            <input type="checkbox" checked={follow} onChange={(e) => setFollow(e.target.checked)} /> Follow
+          </label>
           {run.running ? (
             <button className="btn bg-red-600 hover:bg-red-500" onClick={run.cancel}>
               Stop
@@ -385,7 +397,8 @@ function Editor({ active, onProblem }: { active: boolean; onProblem: () => void 
           <RunViews.Provider value={run.views}>
             <ReactFlow
               nodes={nodes}
-              edges={shownEdges}
+              edges={edges}
+              edgeTypes={edgeTypes}
               nodeTypes={nodeTypes}
               onNodesChange={onNodesChange}
               onEdgesChange={onEdgesChange}
@@ -396,7 +409,7 @@ function Editor({ active, onProblem }: { active: boolean; onProblem: () => void 
               fitView
               fitViewOptions={{ padding: 0.2 }}
               deleteKeyCode={['Backspace', 'Delete']}
-              defaultEdgeOptions={{ type: 'smoothstep' }}
+              defaultEdgeOptions={{ type: 'hive' }}
             >
               <Background variant={BackgroundVariant.Dots} gap={22} size={1.2} color="#30363d" />
               <Controls showInteractive={false} />

@@ -54,3 +54,35 @@ html {
   background-size: 17px 17px;
   animation: hm-flow 0.7s linear infinite;
 }
+
+/* ---- Milestone 3: node effects ---- */
+@property --hm-a { syntax: '<angle>'; inherits: false; initial-value: 0deg; }
+@keyframes hm-spin { to { --hm-a: 360deg; } }
+.hm-aura {
+  position: absolute; inset: -2px; border-radius: 14px; pointer-events: none;
+  background: conic-gradient(from var(--hm-a), transparent 0% 12%, var(--c1) 28%, var(--c2) 42%, transparent 58% 62%, var(--c1) 78%, transparent 94%);
+  animation: hm-spin 2.2s linear infinite;
+}
+.hm-aura-glow { inset: -8px; border-radius: 20px; filter: blur(16px); opacity: 0.7; }
+
+@keyframes hm-burst { from { opacity: 1; transform: scale(1); } to { opacity: 0; transform: scale(1.16); } }
+.hm-burst { position: absolute; inset: -3px; border-radius: 15px; border: 2px solid #34d399; box-shadow: 0 0 24px #34d399; pointer-events: none; animation: hm-burst 0.9s ease-out forwards; }
+.hm-burst-error { border-color: #f87171; box-shadow: 0 0 24px #f87171; }
+
+@keyframes hm-breathe { 50% { opacity: 0.65; } }
+.hm-breathe { animation: hm-breathe 2.4s ease-in-out infinite; }
+
+@keyframes hm-rise {
+  0% { opacity: 0; transform: translateY(8px) scale(0.9); filter: blur(3px); }
+  15% { opacity: 1; filter: blur(0); }
+  70% { opacity: 0.9; }
+  100% { opacity: 0; transform: translateY(-40px) scale(1.06); filter: blur(1px); }
+}
+.hm-thought { bottom: 0; white-space: nowrap; text-shadow: 0 0 8px #a855f7, 0 0 2px #f0abfc; animation: hm-rise 2.6s ease-out forwards; }
+
+@keyframes hm-core { 50% { transform: scale(1.3); opacity: 0.8; } }
+.hm-core-pulse { transform-origin: 32px 32px; animation: hm-core 1.1s ease-in-out infinite; }
+
+@keyframes hm-blink { 50% { opacity: 0; } }
+.hm-caret { animation: hm-blink 0.9s steps(1) infinite; }
+.hm-writing { text-shadow: 0 0 6px rgba(34, 211, 238, 0.45); }

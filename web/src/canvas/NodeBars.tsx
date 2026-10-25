@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import type { NodeView } from '../run/state';
 
 /** Re-renders a few times per second while `on`, for timers that move without new events. */
-function useNow(on: boolean) {
+export function useNow(on: boolean) {
   const [now, setNow] = useState(Date.now());
   useEffect(() => {
     if (!on) return;

@@ -22,3 +22,28 @@ html {
     @apply rounded-md border border-[#30363d] px-3 py-1.5 text-sm hover:bg-[#21262d];
   }
 }
+
+/* ---- Canvas ---- */
+@keyframes hm-glow {
+  0%, 100% { box-shadow: 0 0 0 1px var(--glow), 0 0 14px color-mix(in srgb, var(--glow) 35%, transparent); }
+  50% { box-shadow: 0 0 0 1px var(--glow), 0 0 30px color-mix(in srgb, var(--glow) 60%, transparent); }
+}
+@keyframes hm-fill {
+  from { width: 8%; }
+  to { width: 88%; }
+}
+@keyframes hm-dash {
+  to { stroke-dashoffset: -20; }
+}
+.hm-node-active { animation: hm-glow 1.6s ease-in-out infinite; }
+.hm-bar-live { animation: hm-fill 2.4s ease-in-out infinite alternate; }
+.hm-edge-live path.react-flow__edge-path { stroke-dasharray: 6 4; animation: hm-dash 0.6s linear infinite; }
+
+.react-flow { --xy-background-color: #0d1117; --xy-node-border-radius: 12px; }
+.react-flow__node-hive { padding: 0; border: 0; background: transparent; }
+.react-flow__controls-button { background: #161b22; border-color: #30363d; color: #c9d1d9; fill: #c9d1d9; }
+.react-flow__controls-button:hover { background: #21262d; }
+.react-flow__minimap { background: #11161d; }
+.hm-handle { width: 12px !important; height: 12px !important; background: #0d1117 !important; border: 2px solid #6e7681 !important; }
+.hm-handle:hover { border-color: #818cf8 !important; }
+.react-flow__edge.selected .react-flow__edge-path { stroke: #818cf8 !important; }

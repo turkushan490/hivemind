@@ -113,6 +113,8 @@ export async function runGraph(graph: CanvasGraph, question: string, deps: Engin
         },
       });
 
+      // A model that only "thought" (or returned nothing) must not pass an empty answer on to the judge.
+      if (def.usesModel && !text.trim()) throw new Error('The model returned no answer (it may have spent everything on thinking)');
       outputs.set(node.id, text);
       if (nodeCost) cost += nodeCost;
       // Provider-reported generation time is exact; otherwise time since the first token (incl. thinking).

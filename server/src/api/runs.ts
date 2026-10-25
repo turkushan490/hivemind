@@ -53,11 +53,12 @@ export function runRoutes(app: FastifyInstance) {
     const body = (req.body ?? {}) as { question?: string; canvasId?: string; graph?: CanvasGraph };
     const question = body.question?.trim();
     if (!question) return reply.code(400).send({ error: 'Ask a question' });
+    // A graph in the body wins (the editor runs what is on screen, saved or not); canvasId links the run to it.
     let graph = body.graph;
     if (body.canvasId) {
       const row = db.prepare('SELECT graph FROM canvases WHERE id = ? AND owner_id = ?').get(body.canvasId, req.user!.id) as { graph: string } | undefined;
       if (!row) return reply.code(404).send({ error: 'Canvas not found' });
-      graph = JSON.parse(row.graph);
+      graph ??= JSON.parse(row.graph);
     }
     if (!graph) return reply.code(400).send({ error: 'Send a canvasId or a graph' });
     try {

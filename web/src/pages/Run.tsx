@@ -1,69 +1,9 @@
-import { councilGraph, type CanvasGraph, type ModelInfo, type ModelRef, type RunEvent } from '@hivemind/shared';
+import { councilGraph, type CanvasGraph, type ModelInfo, type RunEvent } from '@hivemind/shared';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../api';
 import { toast } from '../notify';
 import { useStored } from '../stored';
-
-type NodeState = 'idle' | 'queued' | 'loading' | 'thinking' | 'streaming' | 'done' | 'error';
-
-interface NodeView {
-  state: NodeState;
-  text: string;
-  thinking?: string;
-  tokens?: number;
-  tps?: number;
-  elapsedMs?: number;
-  cost?: number;
-  error?: string;
-  startedAt?: number;
-}
-
-const key = (m: ModelRef) => `${m.providerId}|${m.model}`;
-const unkey = (k: string): ModelRef => {
-  const i = k.indexOf('|');
-  return { providerId: k.slice(0, i), model: k.slice(i + 1) };
-};
-
-const STATE_STYLE: Record<NodeState, string> = {
-  idle: 'text-slate-500',
-  queued: 'text-slate-400',
-  loading: 'text-amber-400',
-  thinking: 'text-violet-400',
-  streaming: 'text-cyan-400',
-  done: 'text-emerald-400',
-  error: 'text-red-400',
-};
-
-/** Folds run events into per-node state. The fancy canvas later uses the same reducer idea. */
-function applyEvent(views: Record<string, NodeView>, ev: RunEvent): Record<string, NodeView> {
-  if (!ev.nodeId) return views;
-  const v: NodeView = views[ev.nodeId] ?? { state: 'idle', text: '' };
-  let next: NodeView = v;
-  switch (ev.type) {
-    case 'node_queued':
-      next = { ...v, state: 'queued' };
-      break;
-    case 'model_loading':
-      next = { ...v, state: 'loading' };
-      break;
-    case 'node_start':
-      next = { ...v, state: 'loading', startedAt: ev.ts };
-      break;
-    case 'thinking':
-      next = { ...v, state: 'thinking', thinking: (v.thinking ?? '') + (ev.text ?? '') };
-      break;
-    case 'token':
-      next = { ...v, state: 'streaming', text: v.text + (ev.text ?? ''), tokens: ev.tokens, tps: ev.tokensPerSec ?? v.tps };
-      break;
-    case 'node_done':
-      next = { ...v, state: 'done', text: ev.text ?? v.text, tokens: ev.tokens, tps: ev.tokensPerSec, elapsedMs: ev.elapsedMs, cost: ev.cost };
-      break;
-    case 'error':
-      next = { ...v, state: 'error', error: ev.error };
-      break;
-  }
-  return { ...views, [ev.nodeId]: next };
-}
+import { applyEvent, modelKey as key, parseModelKey as unkey, STATE_TEXT as STATE_STYLE, type NodeView } from '../run/state';
 
 export function RunPage({ onProblem, active }: { onProblem: () => void; active: boolean }) {
   const [models, setModels] = useState<ModelInfo[]>([]);

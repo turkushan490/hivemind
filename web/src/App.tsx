@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { api } from './api';
 import { MemoryButton } from './components/MemoryButton';
 import { Toasts } from './components/Toasts';
+import { CanvasPage } from './canvas/CanvasPage';
 import { Login } from './pages/Login';
 import { Problems } from './pages/Problems';
 import { RunPage } from './pages/Run';
@@ -14,14 +15,14 @@ interface Me {
   role: 'admin' | 'user';
 }
 
-const TABS = { run: 'Council test', settings: 'Settings', problems: 'Problems' } as const;
+const TABS = { canvas: 'Canvas', run: 'Quick council', settings: 'Settings', problems: 'Problems' } as const;
 type Tab = keyof typeof TABS;
 
 export function App() {
   const [me, setMe] = useState<Me | null | undefined>(undefined);
   const [needsSetup, setNeedsSetup] = useState(false);
-  const [storedTab, setTab] = useStored<Tab>('tab', 'run');
-  const tab: Tab = storedTab in TABS ? storedTab : 'run';
+  const [storedTab, setTab] = useStored<Tab>('tab', 'canvas');
+  const tab: Tab = storedTab in TABS ? storedTab : 'canvas';
   // Tabs stay mounted once opened, so switching never loses what you picked or a running council.
   const [opened, setOpened] = useState<Set<Tab>>(() => new Set([tab]));
   useEffect(() => setOpened((o) => (o.has(tab) ? o : new Set(o).add(tab))), [tab]);
@@ -79,7 +80,7 @@ export function App() {
   return (
     <>
       {banner}
-      <div className="mx-auto max-w-7xl p-4">
+      <div className={`mx-auto p-4 ${tab === 'canvas' ? 'max-w-none' : 'max-w-7xl'}`}>
         <header className="mb-4 flex flex-wrap items-center gap-3">
           <img src="/icon.svg" className="h-8 w-8" alt="" />
           <h1 className="text-xl font-semibold">HiveMind</h1>
@@ -108,6 +109,11 @@ export function App() {
             Log out
           </button>
         </header>
+        {opened.has('canvas') && (
+          <div hidden={tab !== 'canvas'}>
+            <CanvasPage active={tab === 'canvas'} onProblem={() => setUnseen((n) => n + 1)} />
+          </div>
+        )}
         {opened.has('run') && (
           <div hidden={tab !== 'run'}>
             <RunPage active={tab === 'run'} onProblem={() => setUnseen((n) => n + 1)} />

@@ -81,6 +81,23 @@ describe('runGraph', () => {
     expect(judgeCall.messages[1].content).not.toContain('b: ok');
   });
 
+  it('treats an empty answer as a failure, so the judge never gets it', async () => {
+    const p = fake();
+    const inner = p.adapter.stream;
+    p.adapter.stream = async function* (req) {
+      if (req.model === 'b') {
+        yield { type: 'thinking' as const, text: 'hmm…' };
+        yield { type: 'done' as const };
+        return;
+      }
+      yield* inner(req, new AbortController().signal);
+    };
+    const { result, events, provider } = await run(undefined, p);
+    expect(result.status).toBe('done');
+    expect(events.find((e) => e.type === 'error' && e.nodeId === 'm2')?.error).toMatch(/no answer/);
+    expect(provider.calls.find((c) => c.model === 'judge')!.messages[1].content).not.toContain('### Answer 2 (b)');
+  });
+
   it('fails the run when the judge fails', async () => {
     const { result } = await run(undefined, fake({ fail: 'judge' }));
     expect(result.status).toBe('error');

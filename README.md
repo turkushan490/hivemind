@@ -5,6 +5,8 @@
 
 <p align="center"><img src="docs/canvas.gif" width="860" alt="Building a canvas: add blocks, drag them, pull wires, pick models, run it live"></p>
 
+<p align="center"><img src="docs/gpu-bars.gif" width="700" alt="Local models: GPU bar (waiting, loading into GPU, loaded) and work bar (thinking, writing) per block"></p>
+
 <p align="center"><img src="docs/demo.gif" width="860" alt="A council run: two local Ollama models answer, an anonymous review, then a judge merges the final answer"></p>
 
 HiveMind is a self-hosted web app where several AI models work together. Ask one question: local models (Ollama) and cloud models answer it, review each other anonymously, and a judge model merges the best parts into one final answer, noting where they disagreed. Every step streams live with tokens, speed, time and cost.
@@ -17,6 +19,7 @@ HiveMind is a self-hosted web app where several AI models work together. Ask one
 
 - **Providers:** Ollama (local, models listed automatically), any OpenAI-compatible API, Anthropic (Claude). Presets for **OpenRouter** (free `:free` models), **Groq** and **Google Gemini** (free tiers), OpenAI, OpenCode Zen and custom URLs.
 - **Council run:** question → N models → optional anonymous review round → judge → final answer.
+- **Real GPU bars for local models:** waiting for the GPU → loading into it (timed against that model's last real load on your server) → loaded / already in GPU, plus a separate thinking / writing bar with tokens and speed.
 - **Local models run one at a time** per Ollama host (no VRAM fights), cloud models run in parallel.
 - **Live event stream (SSE)** for every step: queued, loading into VRAM, thinking, streaming, done, error — with token counts, tokens/sec, time and cost. Runs are stored and can be replayed.
 - **Crash feedback:** nothing fails silently. Server crashes, failed models, provider errors and page errors show up live (red banners, toasts) and are kept in a **Problems** tab, also after a restart.

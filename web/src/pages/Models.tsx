@@ -33,18 +33,19 @@ export function Models({ active }: { active: boolean }) {
     loadInstalled();
   }, [host?.id, active]);
 
-  // Poll downloads fast while one runs; refresh the installed list when one finishes.
+  // Poll downloads fast while one runs; refresh the installed list whenever one finishes (even a very fast one).
   useEffect(() => {
     if (!active) return;
-    let prevRunning = 0;
+    let finished: Set<string> | undefined;
     let timer: ReturnType<typeof setTimeout>;
     const tick = async () => {
       const list = await api<PullJob[]>('/api/ollama/pulls', { quiet: true }).catch(() => [] as PullJob[]);
       setJobs(list);
+      const done = list.filter((j) => j.state === 'done').map((j) => j.id);
+      if (finished && done.some((id) => !finished!.has(id))) loadInstalled();
+      finished = new Set(done);
       const running = list.filter((j) => j.state === 'running').length;
-      if (running < prevRunning) loadInstalled();
-      prevRunning = running;
-      timer = setTimeout(tick, running ? 1000 : 5000);
+      timer = setTimeout(tick, running ? 1000 : 3000);
     };
     tick();
     return () => clearTimeout(timer);

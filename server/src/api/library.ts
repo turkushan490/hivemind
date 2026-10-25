@@ -60,8 +60,8 @@ function startPull(user: User, providerId: string, model: string): PullJob {
       }
     } finally {
       forgetModels(providerId);
-      // Finished jobs stay visible for a while, then disappear.
-      setTimeout(() => jobs.delete(job.id), 30 * 60_000).unref();
+      // Successful downloads disappear after 2 minutes; failures stay longer so the reason can be read.
+      setTimeout(() => jobs.delete(job.id), (job.state === 'done' ? 2 : 30) * 60_000).unref();
     }
   })();
   return publicJob(job);

@@ -18,10 +18,12 @@ HiveMind is a self-hosted web app where several AI models work together. Ask one
 - **Crash feedback:** nothing fails silently. Server crashes, failed models, provider errors and page errors show up live (red banners, toasts) and are kept in a **Problems** tab, also after a restart.
 - **Free memory:** the header shows which Ollama models sit in RAM/VRAM and unloads one or all with a click.
 - **Settings page:** one card per AI — Claude, ChatGPT, free OpenRouter/Groq/Gemini, Ollama, any OpenAI-compatible server. Paste a key, it tests itself.
-- **Download models into Ollama:** from the Ollama library or by searching Hugging Face GGUF models (every quant with its size), with live progress and delete.
+- **Download models into Ollama:** live search of the whole Ollama library, recommendations small to big for your GPU size (fits / slow / too big), or Hugging Face GGUF search with every quant and its size; live progress and delete.
 - **Accounts:** first visitor creates the admin; users, per-user **API tokens** (`Authorization: Bearer hm_…`) for apps and Home Assistant. Provider keys are stored encrypted (AES-256-GCM).
 
 <p align="center"><img src="docs/problems-and-memory.gif" width="860" alt="A model fails during a run and the reason is shown; the Problems tab lists it; Unload all frees the GPU memory"></p>
+
+<p align="center"><img src="docs/model-library.gif" width="860" alt="Recommended models by GPU size, live Ollama library search with exact sizes, sharded Hugging Face warning"></p>
 
 <p align="center"><img src="docs/settings-and-models.gif" width="860" alt="Settings: provider cards, OpenRouter free models, Hugging Face search and download into Ollama with progress, then delete"></p>
 

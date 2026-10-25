@@ -73,11 +73,16 @@ export function runRoutes(app: FastifyInstance) {
   app.get('/api/runs', { preHandler: requireUser }, async (req): Promise<RunSummary[]> =>
     (
       db
-        .prepare('SELECT id, canvas_id, question, status, started_at, finished_at, final, cost FROM runs WHERE owner_id = ? ORDER BY started_at DESC LIMIT 100')
+        .prepare(
+          `SELECT r.id, r.canvas_id, r.question, r.status, r.started_at, r.finished_at, r.final, r.cost, c.name AS canvas_name
+           FROM runs r LEFT JOIN canvases c ON c.id = r.canvas_id
+           WHERE r.owner_id = ? ORDER BY r.started_at DESC LIMIT 200`,
+        )
         .all(req.user!.id) as Record<string, any>[]
     ).map((r) => ({
       id: r.id,
       canvasId: r.canvas_id ?? undefined,
+      canvasName: r.canvas_name ?? undefined,
       question: r.question,
       status: r.status,
       startedAt: r.started_at,
@@ -86,6 +91,26 @@ export function runRoutes(app: FastifyInstance) {
       cost: r.cost ?? undefined,
     })),
   );
+
+  /** One stored run with all its events, for replaying it as an animation. */
+  app.get('/api/runs/:id', { preHandler: requireUser }, async (req, reply) => {
+    const row = db
+      .prepare('SELECT id, question, status, started_at, finished_at, final, cost, events FROM runs WHERE id = ? AND owner_id = ?')
+      .get((req.params as { id: string }).id, req.user!.id) as Record<string, any> | undefined;
+    if (!row) return reply.code(404).send({ error: 'Run not found' });
+    if (row.status === 'running') return reply.code(409).send({ error: 'This run is still going' });
+    return { id: row.id, question: row.question, status: row.status, final: row.final ?? undefined, cost: row.cost ?? undefined, events: JSON.parse(row.events ?? '[]') };
+  });
+
+  app.delete('/api/runs/:id', { preHandler: requireUser }, async (req) => {
+    db.prepare("DELETE FROM runs WHERE id = ? AND owner_id = ? AND status != 'running'").run((req.params as { id: string }).id, req.user!.id);
+    return { ok: true };
+  });
+
+  app.delete('/api/runs', { preHandler: requireUser }, async (req) => {
+    db.prepare("DELETE FROM runs WHERE owner_id = ? AND status != 'running'").run(req.user!.id);
+    return { ok: true };
+  });
 
   /** Server-Sent Events: all past events of the run, then live ones. Also replays finished runs. */
   app.get('/api/runs/:id/events', { preHandler: requireUser }, (req, reply) => {

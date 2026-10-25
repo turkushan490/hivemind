@@ -17,7 +17,9 @@ import '@xyflow/react/dist/style.css';
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from 'react';
 import { api } from '../api';
 import { toast } from '../notify';
-import { useRun } from '../run/state';
+import { useReplay } from '../run/replay';
+import { Clock, useRun } from '../run/state';
+import { History, ReplayBar } from './Replay';
 import { useStored } from '../stored';
 import { HiveEdge } from './HiveEdge';
 import { HiveNode, RunViews, type HiveFlowNode } from './HiveNode';
@@ -100,6 +102,14 @@ function Editor({ active, onProblem }: { active: boolean; onProblem: () => void 
   const [question, setQuestion] = useStored('canvas.question', '');
   const [showTemplates, setShowTemplates] = useState(false);
   const run = useRun(onProblem);
+  const replay = useReplay();
+  const replaying = !!replay.run;
+  // While replaying, the canvas shows the replayed run; your own canvas waits here untouched.
+  const backup = useRef<{ nodes: HiveFlowNode[]; edges: Edge[]; doc: { id?: string; name: string }; saved?: string } | null>(null);
+  const [showHistory, setShowHistory] = useState(false);
+  const views = replaying ? replay.views : run.views;
+  const shownFinal = replaying ? replay.final : run.final;
+  const shownErrors = replaying ? replay.errors : run.errors;
 
   const graph = useMemo(() => toGraph(nodes, edges), [nodes, edges]);
   const graphJson = useMemo(() => JSON.stringify(graph), [graph]);
@@ -130,10 +140,11 @@ function Editor({ active, onProblem }: { active: boolean; onProblem: () => void 
 
   // Every change is kept as a local draft, so nothing is lost on reload or tab switch.
   useEffect(() => {
+    if (replaying) return;
     try {
       localStorage.setItem(DRAFT_KEY, JSON.stringify({ id: doc.id, name: doc.name, graph: JSON.parse(graphJson), saved } satisfies Draft));
     } catch {}
-  }, [graphJson, doc, saved]);
+  }, [graphJson, doc, saved, replaying]);
 
   const confirmDiscard = () => !dirty || nodes.length === 0 || confirm('You have unsaved changes on this canvas. Throw them away?');
 
@@ -143,6 +154,49 @@ function Editor({ active, onProblem }: { active: boolean; onProblem: () => void 
     setEdges(f.edges);
     run.reset();
     setTimeout(() => flow.fitView({ padding: 0.2, duration: 300 }), 50);
+  };
+
+  const enterReplay = async (id: string) => {
+    setShowHistory(false);
+    if (run.running) return toast('Wait until the current run is finished', 'info');
+    try {
+      const data = await replay.open(id);
+      const g = data.events.find((e) => e.type === 'run_start')?.graph;
+      if (!g) {
+        replay.close();
+        return toast('This run has nothing to replay', 'info');
+      }
+      if (!backup.current) backup.current = { nodes, edges, doc, saved };
+      followed.current = '';
+      show(g);
+      // Start after the canvas has been fitted, so the camera can follow from the first block.
+      setTimeout(() => replay.setPlaying(true), 700);
+    } catch {}
+  };
+
+  const exitReplay = () => {
+    replay.close();
+    const b = backup.current;
+    backup.current = null;
+    if (b) {
+      setNodes(b.nodes);
+      setEdges(b.edges);
+      setDoc(b.doc);
+      setSaved(b.saved);
+    }
+    setTimeout(() => flow.fitView({ padding: 0.2, duration: 400 }), 50);
+  };
+
+  /** Keep the replayed canvas as a new, unsaved canvas to edit. */
+  const editCopy = () => {
+    const b = backup.current;
+    const bDirty = b && b.saved !== JSON.stringify({ name: b.doc.name, graph: toGraph(b.nodes, b.edges) });
+    if (bDirty && !confirm('Your canvas has unsaved changes. Replace it with this run’s canvas?')) return;
+    backup.current = null;
+    replay.close();
+    setNodes((ns) => ns.map((n) => ({ ...n, selected: false })));
+    setDoc({ name: `Copy of run: ${replay.run?.question.slice(0, 30) ?? ''}` });
+    setSaved(undefined);
   };
 
   function applyTemplate(id: string, ms = models, skipConfirm = false) {
@@ -209,6 +263,7 @@ function Editor({ active, onProblem }: { active: boolean; onProblem: () => void 
   const isValidConnection = (c: Connection | Edge) =>
     !!c.source && !!c.target && c.source !== c.target && !edges.some((e) => e.source === c.source && e.target === c.target) && !wouldLoop(c.source, c.target);
   const onConnect = (c: Connection) => {
+    if (replaying) return;
     if (!isValidConnection(c)) return toast('That wire would make a loop', 'info');
     setEdges((es) => addEdge({ ...c, id: `${c.source}->${c.target}`, type: 'hive' }, es));
   };
@@ -263,8 +318,8 @@ function Editor({ active, onProblem }: { active: boolean; onProblem: () => void 
   const [follow, setFollow] = useStored('canvas.follow', true);
   const followed = useRef('');
   useEffect(() => {
-    if (!follow || !run.runId) return;
-    const activeId = Object.entries(run.views).find(([, v]) => ACTIVE.has(v.state))?.[0];
+    if (!follow || (!run.runId && !replaying)) return;
+    const activeId = Object.entries(views).find(([, v]) => ACTIVE.has(v.state))?.[0];
     if (activeId && activeId !== followed.current) {
       const node = flow.getNode(activeId);
       if (!node) return;
@@ -272,11 +327,11 @@ function Editor({ active, onProblem }: { active: boolean; onProblem: () => void 
       const w = node.measured?.width ?? 256;
       const h = node.measured?.height ?? 160;
       flow.setCenter(node.position.x + w / 2, node.position.y + h / 2, { zoom: 1.15, duration: 900 });
-    } else if (!activeId && run.final && followed.current !== 'all') {
+    } else if (!activeId && shownFinal && followed.current !== 'all') {
       followed.current = 'all';
       flow.fitView({ duration: 900, padding: 0.2 });
     }
-  }, [run.views, run.final, follow]);
+  }, [views, shownFinal, follow, replaying]);
 
   return (
     <div className="flex h-[calc(100vh-88px)] min-h-[520px] flex-col overflow-hidden rounded-lg border border-[#30363d]">
@@ -287,7 +342,7 @@ function Editor({ active, onProblem }: { active: boolean; onProblem: () => void 
           onChange={(e) => setDoc((d) => ({ ...d, name: e.target.value }))}
           aria-label="Canvas name"
         />
-        {dirty && <span className="text-xs text-amber-400" title="Kept as a draft in this browser until you save">unsaved</span>}
+        {dirty && !replaying && <span className="text-xs text-amber-400" title="Kept as a draft in this browser until you save">unsaved</span>}
         <button className="btn-ghost" onClick={() => save().catch(() => {})} title="Ctrl+S">
           Save
         </button>
@@ -307,7 +362,13 @@ function Editor({ active, onProblem }: { active: boolean; onProblem: () => void 
           ))}
         </select>
         <div className="relative">
-          <button className="btn-ghost" onClick={() => setShowTemplates((s) => !s)}>
+          <button className="btn-ghost" onClick={() => setShowHistory((s) => !s)}>
+            History ▾
+          </button>
+          {showHistory && <History onPick={enterReplay} onClose={() => setShowHistory(false)} />}
+        </div>
+        <div className="relative">
+          <button className="btn-ghost" disabled={replaying} onClick={() => setShowTemplates((s) => !s)}>
             New ▾
           </button>
           {showTemplates && (
@@ -326,6 +387,18 @@ function Editor({ active, onProblem }: { active: boolean; onProblem: () => void 
             Delete
           </button>
         )}
+        {replaying ? (
+          <div className="ml-auto flex min-w-[320px] flex-1 basis-[420px] items-center gap-2 overflow-hidden rounded-md border border-violet-700 bg-violet-950/40 px-3 py-1.5 text-sm">
+            <span className="shrink-0 font-semibold text-violet-200">Replay</span>
+            <span className="min-w-0 flex-1 truncate text-slate-300" title={replay.run!.question}>“{replay.run!.question}”</span>
+            <button className="btn-ghost shrink-0" onClick={editCopy} title="Open this run’s canvas for editing">
+              Edit a copy
+            </button>
+            <button className="btn shrink-0" onClick={exitReplay}>
+              Exit replay
+            </button>
+          </div>
+        ) : (
         <div className="ml-auto flex min-w-[320px] flex-1 items-center gap-2">
           <input
             className="input py-1"
@@ -347,6 +420,7 @@ function Editor({ active, onProblem }: { active: boolean; onProblem: () => void 
             </button>
           )}
         </div>
+        )}
       </div>
 
       {run.connLost && run.running && (
@@ -355,8 +429,9 @@ function Editor({ active, onProblem }: { active: boolean; onProblem: () => void 
         </div>
       )}
 
+      <Clock.Provider value={replaying ? replay.now : Date.now}>
       <div className="flex min-h-0 flex-1">
-        <aside className="w-52 shrink-0 space-y-4 overflow-y-auto border-r border-[#30363d] bg-[#11161d] p-3">
+        <aside className={`w-52 shrink-0 space-y-4 overflow-y-auto border-r border-[#30363d] bg-[#11161d] p-3 ${replaying ? 'pointer-events-none opacity-40' : ''}`}>
           <div className="text-[11px] font-semibold tracking-wider text-slate-500 uppercase">Drag onto the canvas</div>
           <div className="space-y-1.5">
             {PALETTE.map((kind) => {
@@ -394,7 +469,7 @@ function Editor({ active, onProblem }: { active: boolean; onProblem: () => void 
         </aside>
 
         <div className="relative min-w-0 flex-1" onDrop={onDrop} onDragOver={(e) => e.preventDefault()}>
-          <RunViews.Provider value={run.views}>
+          <RunViews.Provider value={views}>
             <ReactFlow
               nodes={nodes}
               edges={edges}
@@ -403,12 +478,13 @@ function Editor({ active, onProblem }: { active: boolean; onProblem: () => void 
               onNodesChange={onNodesChange}
               onEdgesChange={onEdgesChange}
               onConnect={onConnect}
+              nodesConnectable={!replaying}
               isValidConnection={isValidConnection}
               onPaneClick={() => setShowTemplates(false)}
               colorMode="dark"
               fitView
               fitViewOptions={{ padding: 0.2 }}
-              deleteKeyCode={['Backspace', 'Delete']}
+              deleteKeyCode={replaying ? null : ['Backspace', 'Delete']}
               defaultEdgeOptions={{ type: 'hive' }}
             >
               <Background variant={BackgroundVariant.Dots} gap={22} size={1.2} color="#30363d" />
@@ -416,22 +492,24 @@ function Editor({ active, onProblem }: { active: boolean; onProblem: () => void 
               <MiniMap pannable zoomable nodeColor={(n) => NODE_META[(n as HiveFlowNode).data.kind]?.color ?? '#444'} maskColor="rgba(13,17,23,0.7)" />
             </ReactFlow>
           </RunViews.Provider>
+          {replaying && <ReplayBar replay={replay} />}
         </div>
 
         <aside className="w-96 shrink-0 overflow-y-auto border-l border-[#30363d] bg-[#11161d]">
           <Inspector
             node={selected}
-            view={selected ? run.views[selected.id] : undefined}
+            view={selected ? views[selected.id] : undefined}
             models={models}
             providers={providers}
-            onChange={(patch) => selected && updateNode(selected.id, patch)}
-            onDelete={() => selected && flow.deleteElements({ nodes: [{ id: selected.id }] })}
-            final={run.final}
-            errors={run.errors}
-            running={run.running}
+            onChange={(patch) => selected && !replaying && updateNode(selected.id, patch)}
+            onDelete={() => selected && !replaying && flow.deleteElements({ nodes: [{ id: selected.id }] })}
+            final={shownFinal}
+            errors={shownErrors}
+            running={run.running || (replaying && replay.playing)}
           />
         </aside>
       </div>
+      </Clock.Provider>
     </div>
   );
 }

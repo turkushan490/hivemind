@@ -1,15 +1,16 @@
-import { useEffect, useState } from 'react';
-import type { NodeView } from '../run/state';
+import { useContext, useEffect, useState } from 'react';
+import { Clock, type NodeView } from '../run/state';
 
 /** Re-renders a few times per second while `on`, for timers that move without new events. */
 export function useNow(on: boolean) {
-  const [now, setNow] = useState(Date.now());
+  const clock = useContext(Clock);
+  const [, tick] = useState(0);
   useEffect(() => {
     if (!on) return;
-    const t = setInterval(() => setNow(Date.now()), 200);
+    const t = setInterval(() => tick((n) => n + 1), 200);
     return () => clearInterval(t);
   }, [on]);
-  return now;
+  return clock();
 }
 
 const secs = (ms: number) => `${(ms / 1000).toFixed(ms < 10_000 ? 1 : 0)}s`;

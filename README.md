@@ -3,6 +3,8 @@
 <h1 align="center">HiveMind</h1>
 <p align="center"><b>Many AIs, one answer — and you watch them think.</b></p>
 
+<p align="center"><img src="docs/replay.gif" width="860" alt="Run history: pick a past run and replay it on the canvas with a time slider and speed control"></p>
+
 <p align="center"><img src="docs/animations.gif" width="760" alt="A run with animations: loading aura and GPU chip, thinking brain with floating thoughts, writing with live text, particles along the wires"></p>
 
 <p align="center"><img src="docs/canvas.gif" width="860" alt="Building a canvas: add blocks, drag them, pull wires, pick models, run it live"></p>
@@ -13,7 +15,7 @@
 
 HiveMind is a self-hosted web app where several AI models work together. Ask one question: local models (Ollama) and cloud models answer it, review each other anonymously, and a judge model merges the best parts into one final answer, noting where they disagreed. Every step streams live with tokens, speed, time and cost.
 
-> **Status: early (milestone 2).** The engine, providers, login and the drag-and-drop canvas work. The neon live view, helper AI, voice, Home Assistant integration and Android app are on the [roadmap](#roadmap).
+> **Status: early (milestone 3).** The engine, providers, login, the drag-and-drop canvas, live animations and replay work. The helper AI, voice, Home Assistant integration and Android app are on the [roadmap](#roadmap).
 
 ## Features (now)
 
@@ -21,6 +23,7 @@ HiveMind is a self-hosted web app where several AI models work together. Ask one
 
 - **Providers:** Ollama (local, models listed automatically), any OpenAI-compatible API, Anthropic (Claude). Presets for **OpenRouter** (free `:free` models), **Groq** and **Google Gemini** (free tiers), OpenAI, OpenCode Zen and custom URLs.
 - **Council run:** question → N models → optional anonymous review round → judge → final answer.
+- **Run history + replay:** every run is kept; pick one and it plays again on the canvas exactly as it happened (same timing, animations and camera), at 1×–10× speed, with a slider to jump anywhere.
 - **Live animations:** a spinning aura around every working block (amber loading, violet thinking, cyan writing), a pulsing brain-core with the model's real thoughts floating up, the answer typing live, particles flowing along the wires, a green burst when a block finishes, and a camera that follows the active block.
 - **Real GPU bars for local models:** waiting for the GPU → loading into it (timed against that model's last real load on your server) → loaded / already in GPU, plus a separate thinking / writing bar with tokens and speed.
 - **Local models run one at a time** per Ollama host (no VRAM fights), cloud models run in parallel.
@@ -104,7 +107,7 @@ Layout: `packages/shared` (canvas + event types), `server` (Fastify, providers, 
 
 1. ✅ Engine, providers, login, council test page, Docker/Unraid
 2. ✅ Drag-and-drop canvas editor (React Flow): wire any models together, save canvases
-3. Neon live view: particles running along wires, timings, camera following the active step, replay
+3. ✅ Neon live view: particles running along wires, timings, camera following the active step, replay
 4. Helper AI that builds canvases for you, setup wizard, simple "Use" mode, logic and data nodes
 5. Voice (speech in/out), OpenAI-compatible API per canvas, Home Assistant integration, action nodes
 6. Roles, cost stats, judge winner stats, export

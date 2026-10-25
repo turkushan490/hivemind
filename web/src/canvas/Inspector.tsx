@@ -1,5 +1,6 @@
 import { JUDGE_SYSTEM, REVIEW_SYSTEM, type ModelInfo, type NodeConfig, type ProviderInfo } from '@hivemind/shared';
-import { elapsedOf, IDLE, STATE_LABEL, STATE_TEXT, type NodeView, type RunFinal } from '../run/state';
+import { useContext } from 'react';
+import { Clock, elapsedOf, IDLE, STATE_LABEL, STATE_TEXT, type NodeView, type RunFinal } from '../run/state';
 import type { HiveFlowNode } from './HiveNode';
 import { NODE_META } from './meta';
 import { ModelPicker } from './ModelPicker';
@@ -19,6 +20,7 @@ export function Inspector(props: {
   running: boolean;
 }) {
   const { node } = props;
+  const clock = useContext(Clock);
 
   if (!node)
     return (
@@ -66,7 +68,7 @@ export function Inspector(props: {
   const meta = NODE_META[node.data.kind];
   const cfg = node.data.config;
   const view = props.view ?? IDLE;
-  const elapsed = elapsedOf(view);
+  const elapsed = elapsedOf(view, clock());
 
   return (
     <div className="space-y-4 p-4 text-sm">

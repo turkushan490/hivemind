@@ -86,3 +86,6 @@ html {
 @keyframes hm-blink { 50% { opacity: 0; } }
 .hm-caret { animation: hm-blink 0.9s steps(1) infinite; }
 .hm-writing { text-shadow: 0 0 6px rgba(34, 211, 238, 0.45); }
+
+/* Replay time slider */
+.hm-scrub { accent-color: #8b5cf6; height: 4px; cursor: pointer; }

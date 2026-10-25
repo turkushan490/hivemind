@@ -1,5 +1,5 @@
 import type { CanvasGraph, ModelRef, RunEvent } from '@hivemind/shared';
-import { useEffect, useRef, useState } from 'react';
+import { createContext, useEffect, useRef, useState } from 'react';
 import { api } from '../api';
 import { toast } from '../notify';
 
@@ -201,4 +201,7 @@ export function useRun(onProblem?: () => void) {
 }
 
 /** Elapsed seconds of a node: final time when done, live time while running. */
-export const elapsedOf = (v: NodeView) => (v.elapsedMs ?? (v.startedAt ? Date.now() - v.startedAt : undefined));
+export const elapsedOf = (v: NodeView, now = Date.now()) => (v.elapsedMs ?? (v.startedAt ? now - v.startedAt : undefined));
+
+/** The time timers count against: the real clock live, the replay position while replaying a past run. */
+export const Clock = createContext<() => number>(() => Date.now());

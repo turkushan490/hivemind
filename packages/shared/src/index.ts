@@ -259,6 +259,7 @@ export type RunStatus = 'running' | 'done' | 'error' | 'cancelled';
 export interface RunSummary {
   id: string;
   canvasId?: string;
+  canvasName?: string;
   question: string;
   status: RunStatus;
   startedAt: string;

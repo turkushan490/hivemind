@@ -2,6 +2,7 @@ import { councilGraph, type CanvasGraph, type ModelInfo, type ModelRef, type Run
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../api';
 import { toast } from '../notify';
+import { useStored } from '../stored';
 
 type NodeState = 'idle' | 'queued' | 'loading' | 'thinking' | 'streaming' | 'done' | 'error';
 
@@ -64,14 +65,14 @@ function applyEvent(views: Record<string, NodeView>, ev: RunEvent): Record<strin
   return { ...views, [ev.nodeId]: next };
 }
 
-export function RunPage({ onProblem }: { onProblem: () => void }) {
+export function RunPage({ onProblem, active }: { onProblem: () => void; active: boolean }) {
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [modelErrors, setModelErrors] = useState<{ providerId: string; error: string }[]>([]);
-  const [freeOnly, setFreeOnly] = useState(false);
-  const [council, setCouncil] = useState<string[]>([]);
-  const [judge, setJudge] = useState('');
-  const [review, setReview] = useState(false);
-  const [question, setQuestion] = useState('');
+  const [freeOnly, setFreeOnly] = useStored('run.freeOnly', false);
+  const [council, setCouncil] = useStored<string[]>('run.council', []);
+  const [judge, setJudge] = useStored('run.judge', '');
+  const [review, setReview] = useStored('run.review', false);
+  const [question, setQuestion] = useStored('run.question', '');
   const [graph, setGraph] = useState<CanvasGraph | null>(null);
   const [views, setViews] = useState<Record<string, NodeView>>({});
   const [runId, setRunId] = useState('');
@@ -82,13 +83,16 @@ export function RunPage({ onProblem }: { onProblem: () => void }) {
   const [, setNow] = useState(0);
   const source = useRef<EventSource | null>(null);
 
+  useEffect(() => () => source.current?.close(), []);
+
+  // Reload the model list each time the tab is opened (a provider may have been added); picks stay.
   useEffect(() => {
+    if (!active) return;
     api<{ models: ModelInfo[]; errors: { providerId: string; error: string }[] }>('/api/models').then((r) => {
       setModels(r.models);
       setModelErrors(r.errors);
     });
-    return () => source.current?.close();
-  }, []);
+  }, [active]);
 
   // Ticks the live elapsed timers while a run is going.
   useEffect(() => {
@@ -101,8 +105,11 @@ export function RunPage({ onProblem }: { onProblem: () => void }) {
 
   const start = async () => {
     setError('');
-    if (council.length === 0 || !judge) return setError('Pick at least one council model and a judge');
-    const g = councilGraph(council.map(unkey), unkey(judge), review);
+    // Remembered picks may point at models that were removed since.
+    const exists = (k: string) => models.some((m) => key(m) === k);
+    const picked = council.filter(exists);
+    if (picked.length === 0 || !exists(judge)) return setError('Pick at least one council model and a judge');
+    const g = councilGraph(picked.map(unkey), unkey(judge), review);
     try {
       const { runId } = await api<{ runId: string }>('/api/runs', { body: { question, graph: g } });
       setGraph(g);

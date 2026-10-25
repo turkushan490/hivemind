@@ -53,11 +53,19 @@ memoryRoutes(app);
 seedProviders(config.ollamaUrl);
 
 if (existsSync(config.webDir)) {
-  await app.register(staticFiles, { root: config.webDir, wildcard: false });
-  // Single-page app: unknown non-API paths get index.html.
-  app.setNotFoundHandler((req, reply) =>
-    req.url.startsWith('/api/') ? reply.code(404).send({ error: 'Not found' }) : reply.sendFile('index.html'),
-  );
+  await app.register(staticFiles, {
+    root: config.webDir,
+    // Never cache the page itself, so after an update the browser loads the new script files.
+    setHeaders: (res, path) => {
+      if (path.endsWith('.html')) res.setHeader('cache-control', 'no-cache');
+    },
+  });
+  // Single-page app: page routes get index.html; a missing file (old script after an update) is a real 404.
+  app.setNotFoundHandler((req, reply) => {
+    const path = req.url.split('?')[0];
+    if (path.startsWith('/api/') || /\.[a-z0-9]+$/i.test(path)) return reply.code(404).send({ error: 'Not found' });
+    return reply.header('cache-control', 'no-cache').sendFile('index.html');
+  });
 }
 
 await app.listen({ port: config.port, host: config.host });

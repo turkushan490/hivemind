@@ -7,6 +7,7 @@ import { Problems } from './pages/Problems';
 import { Providers } from './pages/Providers';
 import { RunPage } from './pages/Run';
 import { Tokens } from './pages/Tokens';
+import { useStored } from './stored';
 
 interface Me {
   id: string;
@@ -20,7 +21,10 @@ type Tab = keyof typeof TABS;
 export function App() {
   const [me, setMe] = useState<Me | null | undefined>(undefined);
   const [needsSetup, setNeedsSetup] = useState(false);
-  const [tab, setTab] = useState<Tab>('run');
+  const [tab, setTab] = useStored<Tab>('tab', 'run');
+  // Tabs stay mounted once opened, so switching never loses what you picked or a running council.
+  const [opened, setOpened] = useState<Set<Tab>>(() => new Set([tab]));
+  useEffect(() => setOpened((o) => (o.has(tab) ? o : new Set(o).add(tab))), [tab]);
   const [unseen, setUnseen] = useState(0);
   const [serverDown, setServerDown] = useState(false);
 
@@ -104,10 +108,26 @@ export function App() {
             Log out
           </button>
         </header>
-        {tab === 'run' && <RunPage onProblem={() => setUnseen((n) => n + 1)} />}
-        {tab === 'providers' && <Providers isAdmin={me.role === 'admin'} />}
-        {tab === 'tokens' && <Tokens />}
-        {tab === 'problems' && <Problems onSeen={() => setUnseen(0)} />}
+        {opened.has('run') && (
+          <div hidden={tab !== 'run'}>
+            <RunPage active={tab === 'run'} onProblem={() => setUnseen((n) => n + 1)} />
+          </div>
+        )}
+        {opened.has('providers') && (
+          <div hidden={tab !== 'providers'}>
+            <Providers isAdmin={me.role === 'admin'} />
+          </div>
+        )}
+        {opened.has('tokens') && (
+          <div hidden={tab !== 'tokens'}>
+            <Tokens />
+          </div>
+        )}
+        {opened.has('problems') && (
+          <div hidden={tab !== 'problems'}>
+            <Problems active={tab === 'problems'} onSeen={() => setUnseen(0)} />
+          </div>
+        )}
       </div>
       <Toasts />
     </>

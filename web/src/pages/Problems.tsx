@@ -10,7 +10,7 @@ const SOURCE: Record<Problem['source'], { label: string; cls: string }> = {
   web: { label: 'web page', cls: 'bg-slate-700 text-slate-200' },
 };
 
-export function Problems({ onSeen }: { onSeen: () => void }) {
+export function Problems({ onSeen, active }: { onSeen: () => void; active: boolean }) {
   const [list, setList] = useState<Problem[]>([]);
 
   const load = async () => {
@@ -18,9 +18,10 @@ export function Problems({ onSeen }: { onSeen: () => void }) {
     await api('/api/problems/seen', { method: 'POST' });
     onSeen();
   };
+  // Reload every time the tab is opened, so new problems show up.
   useEffect(() => {
-    load();
-  }, []);
+    if (active) load();
+  }, [active]);
 
   return (
     <div className="card space-y-3">

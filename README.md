@@ -3,6 +3,8 @@
 <h1 align="center">HiveMind</h1>
 <p align="center"><b>Many AIs, one answer — and you watch them think.</b></p>
 
+<p align="center"><img src="docs/demo.gif" width="860" alt="A council run: two local Ollama models answer, an anonymous review, then a judge merges the final answer"></p>
+
 HiveMind is a self-hosted web app where several AI models work together. Ask one question: local models (Ollama) and cloud models answer it, review each other anonymously, and a judge model merges the best parts into one final answer, noting where they disagreed. Every step streams live with tokens, speed, time and cost.
 
 > **Status: early (milestone 1).** The engine, providers, login and a plain council test page work. The drag-and-drop canvas, animated live view, helper AI, voice, Home Assistant integration and Android app are on the [roadmap](#roadmap).

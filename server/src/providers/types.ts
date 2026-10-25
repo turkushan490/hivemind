@@ -36,6 +36,15 @@ export interface ProviderAdapter {
   /** Local providers only: what is loaded in RAM/VRAM, and unloading it. */
   loaded?(): Promise<LoadedModel[]>;
   unload?(model: string): Promise<void>;
+  /** Local providers only: download and delete models. */
+  pull?(model: string, signal: AbortSignal): AsyncIterable<PullProgress>;
+  remove?(model: string): Promise<void>;
+}
+
+export interface PullProgress {
+  status: string;
+  total?: number;
+  completed?: number;
 }
 
 /** Some model chat templates reject system messages; fold the system prompt into the first user message. */

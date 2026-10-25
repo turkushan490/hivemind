@@ -113,6 +113,22 @@ describe('ollama memory', () => {
   });
 });
 
+describe('ollama pull', () => {
+  it('streams download progress and surfaces pull errors', async () => {
+    vi.stubGlobal('fetch', async () =>
+      streamed('{"status":"pulling manifest"}\n{"status":"pulling abc","total":100,"completed":40}\n{"status":"success"}\n'),
+    );
+    const a = ollamaAdapter({ id: 'o', kind: 'ollama', preset: 'ollama', baseUrl: 'http://o' });
+    const out = [];
+    for await (const p of a.pull!('qwen3:4b', signal)) out.push(p);
+    expect(out[1]).toEqual({ status: 'pulling abc', total: 100, completed: 40 });
+    expect(out.at(-1)!.status).toBe('success');
+
+    vi.stubGlobal('fetch', async () => streamed('{"error":"pull model manifest: file does not exist"}\n'));
+    await expect(collect(a.pull!('nope:1b', signal) as AsyncIterable<any>)).rejects.toThrow(/file does not exist/);
+  });
+});
+
 describe('anthropic adapter', () => {
   it('moves the system prompt out of messages and streams text deltas', async () => {
     const fetch = vi.fn(async () =>

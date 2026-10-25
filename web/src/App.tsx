@@ -4,9 +4,8 @@ import { MemoryButton } from './components/MemoryButton';
 import { Toasts } from './components/Toasts';
 import { Login } from './pages/Login';
 import { Problems } from './pages/Problems';
-import { Providers } from './pages/Providers';
 import { RunPage } from './pages/Run';
-import { Tokens } from './pages/Tokens';
+import { Settings } from './pages/Settings';
 import { useStored } from './stored';
 
 interface Me {
@@ -15,13 +14,14 @@ interface Me {
   role: 'admin' | 'user';
 }
 
-const TABS = { run: 'Council test', providers: 'Providers', tokens: 'API tokens', problems: 'Problems' } as const;
+const TABS = { run: 'Council test', settings: 'Settings', problems: 'Problems' } as const;
 type Tab = keyof typeof TABS;
 
 export function App() {
   const [me, setMe] = useState<Me | null | undefined>(undefined);
   const [needsSetup, setNeedsSetup] = useState(false);
-  const [tab, setTab] = useStored<Tab>('tab', 'run');
+  const [storedTab, setTab] = useStored<Tab>('tab', 'run');
+  const tab: Tab = storedTab in TABS ? storedTab : 'run';
   // Tabs stay mounted once opened, so switching never loses what you picked or a running council.
   const [opened, setOpened] = useState<Set<Tab>>(() => new Set([tab]));
   useEffect(() => setOpened((o) => (o.has(tab) ? o : new Set(o).add(tab))), [tab]);
@@ -113,14 +113,9 @@ export function App() {
             <RunPage active={tab === 'run'} onProblem={() => setUnseen((n) => n + 1)} />
           </div>
         )}
-        {opened.has('providers') && (
-          <div hidden={tab !== 'providers'}>
-            <Providers isAdmin={me.role === 'admin'} />
-          </div>
-        )}
-        {opened.has('tokens') && (
-          <div hidden={tab !== 'tokens'}>
-            <Tokens />
+        {opened.has('settings') && (
+          <div hidden={tab !== 'settings'}>
+            <Settings isAdmin={me.role === 'admin'} active={tab === 'settings'} />
           </div>
         )}
         {opened.has('problems') && (

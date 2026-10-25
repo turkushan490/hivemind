@@ -1,6 +1,6 @@
 import type { ModelInfo } from '@hivemind/shared';
 import { readLines } from './lines.js';
-import { checkResponse, foldSystem, ProviderError, type ChatRequest, type LoadedModel, type ProviderAdapter, type ProviderConfig, type StreamChunk } from './types.js';
+import { checkResponse, foldSystem, ProviderError, type ChatRequest, type LoadedModel, type ProviderAdapter, type PullProgress, type ProviderConfig, type StreamChunk } from './types.js';
 
 export function ollamaAdapter(cfg: ProviderConfig): ProviderAdapter {
   const base = cfg.baseUrl.replace(/\/+$/, '');
@@ -9,13 +9,43 @@ export function ollamaAdapter(cfg: ProviderConfig): ProviderAdapter {
     async listModels(): Promise<ModelInfo[]> {
       const res = await fetch(`${base}/api/tags`);
       await checkResponse(res, 'Ollama /api/tags');
-      const data = (await res.json()) as { models?: { name: string; details?: { parameter_size?: string } }[] };
+      const data = (await res.json()) as {
+        models?: { name: string; size?: number; modified_at?: string; details?: { parameter_size?: string; quantization_level?: string } }[];
+      };
       return (data.models ?? []).map((m) => ({
         providerId: cfg.id,
         model: m.name,
         name: m.details?.parameter_size ? `${m.name} (${m.details.parameter_size})` : m.name,
         free: true,
+        sizeBytes: m.size,
+        quant: m.details?.quantization_level,
+        modifiedAt: m.modified_at,
       }));
+    },
+
+    async *pull(model: string, signal: AbortSignal): AsyncIterable<PullProgress> {
+      const res = await fetch(`${base}/api/pull`, {
+        method: 'POST',
+        signal,
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ model, stream: true }),
+      });
+      await checkResponse(res, `Ollama pull ${model}`);
+      for await (const line of readLines(res.body!)) {
+        if (!line.trim()) continue;
+        const msg = JSON.parse(line) as { status?: string; total?: number; completed?: number; error?: string };
+        if (msg.error) throw new ProviderError(`Ollama pull ${model}: ${msg.error}`);
+        yield { status: msg.status ?? '', total: msg.total, completed: msg.completed };
+      }
+    },
+
+    async remove(model: string): Promise<void> {
+      const res = await fetch(`${base}/api/delete`, {
+        method: 'DELETE',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ model }),
+      });
+      await checkResponse(res, `Ollama delete ${model}`);
     },
 
     async loaded(): Promise<LoadedModel[]> {

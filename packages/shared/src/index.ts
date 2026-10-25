@@ -70,7 +70,7 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
   { id: 'openrouter', kind: 'openai', name: 'OpenRouter', baseUrl: 'https://openrouter.ai/api/v1', needsKey: true, free: true, local: false, keyUrl: 'https://openrouter.ai/keys', note: 'Free key gives the ":free" models (20 requests/min, 50/day).' },
   { id: 'groq', kind: 'openai', name: 'Groq', baseUrl: 'https://api.groq.com/openai/v1', needsKey: true, free: true, local: false, keyUrl: 'https://console.groq.com/keys', note: 'Free tier, very fast.' },
   { id: 'gemini', kind: 'openai', name: 'Google Gemini', baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai', needsKey: true, free: true, local: false, keyUrl: 'https://aistudio.google.com/apikey', note: 'Free tier via Google AI Studio.' },
-  { id: 'openai', kind: 'openai', name: 'OpenAI', baseUrl: 'https://api.openai.com/v1', needsKey: true, free: false, local: false, keyUrl: 'https://platform.openai.com/api-keys' },
+  { id: 'openai', kind: 'openai', name: 'OpenAI (ChatGPT)', baseUrl: 'https://api.openai.com/v1', needsKey: true, free: false, local: false, keyUrl: 'https://platform.openai.com/api-keys' },
   { id: 'anthropic', kind: 'anthropic', name: 'Anthropic (Claude)', baseUrl: 'https://api.anthropic.com', needsKey: true, free: false, local: false, keyUrl: 'https://console.anthropic.com/settings/keys' },
   { id: 'opencode-zen', kind: 'openai', name: 'OpenCode Zen', baseUrl: 'https://opencode.ai/inference/openai/v1', needsKey: true, free: false, local: false, keyUrl: 'https://opencode.ai/auth', note: 'Paid models only; Zen free models only work inside the OpenCode app.' },
   { id: 'custom', kind: 'openai', name: 'Custom (OpenAI-compatible)', baseUrl: '', needsKey: false, free: false, local: false },
@@ -97,6 +97,10 @@ export interface ModelInfo {
   contextLength?: number;
   /** USD per 1M tokens, when the provider tells us. */
   price?: { input: number; output: number };
+  /** Local models: size on disk and quantization. */
+  sizeBytes?: number;
+  quant?: string;
+  modifiedAt?: string;
 }
 
 /** A model currently held in memory by a local provider. */
@@ -117,6 +121,51 @@ export interface ProviderMemory {
   models: LoadedModel[];
   error?: string;
 }
+
+/** A model download into Ollama (GET /api/ollama/pulls). */
+export interface PullJob {
+  id: string;
+  providerId: string;
+  model: string;
+  status: string;
+  totalBytes?: number;
+  doneBytes?: number;
+  state: 'running' | 'done' | 'error' | 'cancelled';
+  error?: string;
+  startedAt: number;
+}
+
+export interface HfRepo {
+  id: string;
+  downloads: number;
+  likes: number;
+  updatedAt?: string;
+}
+
+export interface HfFile {
+  file: string;
+  /** Quant tag Ollama understands, e.g. Q4_K_M. */
+  quant: string;
+  sizeBytes?: number;
+  /** What to pull in Ollama: hf.co/<repo>:<quant> */
+  pullName: string;
+  /** Split GGUF files can't be pulled by Ollama. */
+  split: boolean;
+}
+
+/** Hand-picked Ollama library models as starting points; any other name can be typed in. */
+export const OLLAMA_PICKS: { name: string; note: string }[] = [
+  { name: 'qwen3:4b', note: 'Small and smart, good helper / builder model' },
+  { name: 'qwen3:8b', note: 'Strong all-rounder, fits 8 GB+ GPUs' },
+  { name: 'qwen3:14b', note: 'Better reasoning, needs ~10 GB VRAM' },
+  { name: 'llama3.2:3b', note: 'Fast small Meta model' },
+  { name: 'llama3.1:8b', note: 'Classic Meta all-rounder' },
+  { name: 'gemma3:4b', note: 'Google, small, also sees images' },
+  { name: 'gemma3:12b', note: 'Google, larger, also sees images' },
+  { name: 'mistral:7b', note: 'Fast European all-rounder' },
+  { name: 'deepseek-r1:8b', note: 'Thinks step by step before answering' },
+  { name: 'phi4:14b', note: 'Microsoft, good at math and logic' },
+];
 
 /** An entry of the Problems tab. */
 export interface Problem {

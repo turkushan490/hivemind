@@ -47,6 +47,8 @@ export function adapterFor(row: ProviderRow) {
 
 // Model lists are cached briefly: OpenRouter's catalog is large and changes rarely.
 const modelCache = new Map<string, { at: number; models: ModelInfo[] }>();
+/** Call after models were added or removed on a provider. */
+export const forgetModels = (providerId: string) => modelCache.delete(providerId);
 async function modelsOf(row: ProviderRow, fresh = false): Promise<ModelInfo[]> {
   const hit = modelCache.get(row.id);
   if (!fresh && hit && Date.now() - hit.at < 10 * 60_000) return hit.models;

@@ -36,7 +36,8 @@ export function startRun(opts: {
     // "All inputs failed" only follows an earlier error, so it isn't logged twice.
     if (ev.type === 'error' && ev.error !== 'Cancelled' && ev.error !== 'All inputs failed') {
       const node = ev.nodeId ? opts.graph.nodes.find((n) => n.id === ev.nodeId) : undefined;
-      const where = node ? `${node.label || node.type}${ev.model ? ` (${ev.model})` : ''}: ` : '';
+      const name = node?.label || node?.type;
+      const where = node ? `${name}${ev.model && ev.model !== name ? ` (${ev.model})` : ''}: ` : '';
       logError({ source: 'run', message: `${where}${ev.error}`, userId: opts.ownerId, runId: id });
     }
     for (const l of run.listeners) l(ev);

@@ -15,7 +15,11 @@ HiveMind is a self-hosted web app where several AI models work together. Ask one
 - **Council run:** question → N models → optional anonymous review round → judge → final answer.
 - **Local models run one at a time** per Ollama host (no VRAM fights), cloud models run in parallel.
 - **Live event stream (SSE)** for every step: queued, loading into VRAM, thinking, streaming, done, error — with token counts, tokens/sec, time and cost. Runs are stored and can be replayed.
+- **Crash feedback:** nothing fails silently. Server crashes, failed models, provider errors and page errors show up live (red banners, toasts) and are kept in a **Problems** tab, also after a restart.
+- **Free memory:** the header shows which Ollama models sit in RAM/VRAM and unloads one or all with a click.
 - **Accounts:** first visitor creates the admin; users, per-user **API tokens** (`Authorization: Bearer hm_…`) for apps and Home Assistant. Provider keys are stored encrypted (AES-256-GCM).
+
+<p align="center"><img src="docs/problems-and-memory.gif" width="860" alt="A model fails during a run and the reason is shown; the Problems tab lists it; Unload all frees the GPU memory"></p>
 
 ## Run it
 

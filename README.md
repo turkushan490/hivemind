@@ -3,13 +3,17 @@
 <h1 align="center">HiveMind</h1>
 <p align="center"><b>Many AIs, one answer — and you watch them think.</b></p>
 
+<p align="center"><img src="docs/canvas.gif" width="860" alt="Building a canvas: add blocks, drag them, pull wires, pick models, run it live"></p>
+
 <p align="center"><img src="docs/demo.gif" width="860" alt="A council run: two local Ollama models answer, an anonymous review, then a judge merges the final answer"></p>
 
 HiveMind is a self-hosted web app where several AI models work together. Ask one question: local models (Ollama) and cloud models answer it, review each other anonymously, and a judge model merges the best parts into one final answer, noting where they disagreed. Every step streams live with tokens, speed, time and cost.
 
-> **Status: early (milestone 1).** The engine, providers, login and a plain council test page work. The drag-and-drop canvas, animated live view, helper AI, voice, Home Assistant integration and Android app are on the [roadmap](#roadmap).
+> **Status: early (milestone 2).** The engine, providers, login and the drag-and-drop canvas work. The neon live view, helper AI, voice, Home Assistant integration and Android app are on the [roadmap](#roadmap).
 
 ## Features (now)
+
+- **Drag-and-drop canvas:** build your own AI teams — drag in models, reviewers and judges, wire them together, pick a model per block (with search and a free filter), save and reuse them. Templates for council, council + review and draft → improve. Run it and every block shows live what it is doing.
 
 - **Providers:** Ollama (local, models listed automatically), any OpenAI-compatible API, Anthropic (Claude). Presets for **OpenRouter** (free `:free` models), **Groq** and **Google Gemini** (free tiers), OpenAI, OpenCode Zen and custom URLs.
 - **Council run:** question → N models → optional anonymous review round → judge → final answer.
@@ -93,7 +97,7 @@ Layout: `packages/shared` (canvas + event types), `server` (Fastify, providers, 
 ## Roadmap
 
 1. ✅ Engine, providers, login, council test page, Docker/Unraid
-2. Drag-and-drop canvas editor (React Flow): wire any models together, save canvases
+2. ✅ Drag-and-drop canvas editor (React Flow): wire any models together, save canvases
 3. Neon live view: particles running along wires, timings, camera following the active step, replay
 4. Helper AI that builds canvases for you, setup wizard, simple "Use" mode, logic and data nodes
 5. Voice (speech in/out), OpenAI-compatible API per canvas, Home Assistant integration, action nodes

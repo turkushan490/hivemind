@@ -80,7 +80,8 @@ export function Inspector(props: {
       {meta.usesModel && (
         <div className="space-y-1">
           <div className="text-xs font-semibold text-slate-300">Model</div>
-          <ModelPicker models={props.models} providers={props.providers} value={cfg.model} onChange={(model) => props.onChange({ config: { model } })} />
+          {/* Keyed by block, so switching blocks never shows the previous block's open/closed list or search. */}
+          <ModelPicker key={node.id} models={props.models} providers={props.providers} value={cfg.model} onChange={(model) => props.onChange({ config: { model } })} />
         </div>
       )}
 

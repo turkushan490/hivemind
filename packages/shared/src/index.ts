@@ -153,19 +153,41 @@ export interface HfFile {
   split: boolean;
 }
 
-/** Hand-picked Ollama library models as starting points; any other name can be typed in. */
-export const OLLAMA_PICKS: { name: string; note: string }[] = [
-  { name: 'qwen3:4b', note: 'Small and smart, good helper / builder model' },
-  { name: 'qwen3:8b', note: 'Strong all-rounder, fits 8 GB+ GPUs' },
-  { name: 'qwen3:14b', note: 'Better reasoning, needs ~10 GB VRAM' },
-  { name: 'llama3.2:3b', note: 'Fast small Meta model' },
-  { name: 'llama3.1:8b', note: 'Classic Meta all-rounder' },
-  { name: 'gemma3:4b', note: 'Google, small, also sees images' },
-  { name: 'gemma3:12b', note: 'Google, larger, also sees images' },
-  { name: 'mistral:7b', note: 'Fast European all-rounder' },
-  { name: 'deepseek-r1:8b', note: 'Thinks step by step before answering' },
-  { name: 'phi4:14b', note: 'Microsoft, good at math and logic' },
-];
+/** A model family in the ollama.com library (GET /api/ollama/library). */
+export interface OllamaLibraryModel {
+  name: string;
+  description: string;
+  /** e.g. vision, tools, thinking, embedding, cloud */
+  capabilities: string[];
+  /** Parameter sizes it comes in, e.g. 4b, 27b */
+  sizes: string[];
+  downloads: number;
+  /** Only runs on ollama.com's cloud, nothing to download. */
+  cloudOnly: boolean;
+  /** Last update on ollama.com (library list only). */
+  updatedAt?: string;
+}
+
+/** One downloadable version of a library model. */
+export interface OllamaTag {
+  tag: string;
+  sizeBytes: number;
+  context?: string;
+  input?: string;
+}
+
+/** A suggested download: model:size with its (estimated) size. */
+export interface OllamaPick {
+  pullName: string;
+  name: string;
+  size: string;
+  description: string;
+  capabilities: string[];
+  downloads: number;
+  /** Popularity weighted by how recent the model is; higher = recommend first. */
+  score: number;
+  estBytes: number;
+}
 
 /** An entry of the Problems tab. */
 export interface Problem {

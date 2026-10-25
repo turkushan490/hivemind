@@ -1,4 +1,5 @@
-import { OLLAMA_PICKS, type HfFile, type HfRepo, type ModelInfo, type PullJob } from '@hivemind/shared';
+import type { HfFile, HfRepo, ModelInfo, OllamaPick, PullJob } from '@hivemind/shared';
+import { estimateBytes, libraryTags, paramsOf, recentPopularity, searchLibrary } from './ollamaLibrary.js';
 import type { FastifyInstance } from 'fastify';
 import { newId } from '../crypto.js';
 import { describe, logError } from '../errors.js';
@@ -81,7 +82,41 @@ async function hfJson(url: string) {
 let orCache: { at: number; models: ModelInfo[] } | undefined;
 
 export function libraryRoutes(app: FastifyInstance) {
-  app.get('/api/ollama/picks', async () => OLLAMA_PICKS);
+  /** Popular library models in every size they come in, smallest first; the page buckets them by your GPU. */
+  app.get('/api/ollama/picks', { preHandler: requireUser }, async (): Promise<OllamaPick[]> => {
+    const popular = await searchLibrary('');
+    const picks: OllamaPick[] = [];
+    for (const m of popular) {
+      if (m.cloudOnly || m.capabilities.includes('embedding')) continue;
+      for (const size of m.sizes) {
+        const params = paramsOf(size);
+        if (!params) continue;
+        picks.push({
+          pullName: `${m.name}:${size}`,
+          name: m.name,
+          size,
+          description: m.description,
+          capabilities: m.capabilities,
+          downloads: m.downloads,
+          // Rank by recent popularity so a 2-year-old model doesn't beat its successor.
+          score: recentPopularity(m),
+          estBytes: estimateBytes(params),
+        });
+      }
+    }
+    return picks.sort((a, b) => a.estBytes - b.estBytes);
+  });
+
+  app.get('/api/ollama/library', { preHandler: requireUser }, async (req) => {
+    const q = String((req.query as { q?: string }).q ?? '').trim().slice(0, 100);
+    return searchLibrary(q);
+  });
+
+  app.get('/api/ollama/library/:name/tags', { preHandler: requireUser }, async (req, reply) => {
+    const { name } = req.params as { name: string };
+    if (!/^[\w.\-]{1,100}$/.test(name)) return reply.code(400).send({ error: 'Not a valid model name' });
+    return libraryTags(name);
+  });
 
   app.get('/api/ollama/pulls', { preHandler: requireUser }, async (req) => {
     const visible = new Set(visibleRows(req.user!).map((r) => r.id));
@@ -140,24 +175,25 @@ export function libraryRoutes(app: FastifyInstance) {
       size?: number;
       lfs?: { size?: number };
     }[];
-    const files: HfFile[] = [];
+    // One entry per quant (Ollama picks the file by its quant tag); shards of one quant are added up.
+    const byQuant = new Map<string, HfFile>();
     for (const f of tree) {
-      if (f.type !== 'file' || !f.path.toLowerCase().endsWith('.gguf') || /mmproj/i.test(f.path)) continue;
-      const quant = f.path.match(QUANT)?.[1]?.toUpperCase();
+      // Skip helper files that are not the model itself (vision projectors, multi-token-prediction / draft heads).
+      const base = f.path.split('/').pop()!;
+      if (f.type !== 'file' || !base.toLowerCase().endsWith('.gguf') || /^(mmproj|mtp|draft)[-_.]|mmproj/i.test(base)) continue;
+      const quant = base.match(QUANT)?.[1]?.toUpperCase();
       if (!quant) continue;
-      files.push({
-        file: f.path,
-        quant,
-        sizeBytes: f.lfs?.size ?? f.size,
-        pullName: `hf.co/${repo}:${quant}`,
-        split: /-\d{5}-of-\d{5}\.gguf$/i.test(f.path),
-      });
+      const split = /-\d{5}-of-\d{5}\.gguf$/i.test(f.path);
+      const size = f.lfs?.size ?? f.size ?? 0;
+      const prev = byQuant.get(quant);
+      if (prev && split && prev.split) {
+        prev.sizeBytes = (prev.sizeBytes ?? 0) + size;
+        continue;
+      }
+      if (prev && !prev.split) continue; // a single file already covers this quant
+      byQuant.set(quant, { file: split ? f.path.replace(/-\d{5}-of-(\d{5})\.gguf$/i, (_, n) => ` (${Number(n)} parts)`) : f.path, quant, sizeBytes: size, pullName: `hf.co/${repo}:${quant}`, split });
     }
-    // One entry per quant: Ollama picks the file by its quant tag.
-    const seen = new Set<string>();
-    return files
-      .sort((a, b) => (a.sizeBytes ?? 0) - (b.sizeBytes ?? 0))
-      .filter((f) => !seen.has(f.quant) && seen.add(f.quant));
+    return [...byQuant.values()].sort((a, b) => (a.sizeBytes ?? 0) - (b.sizeBytes ?? 0));
   });
 
   app.get('/api/catalog/openrouter-free', async (_req, reply) => {

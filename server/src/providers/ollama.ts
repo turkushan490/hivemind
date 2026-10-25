@@ -1,6 +1,6 @@
 import type { ModelInfo } from '@hivemind/shared';
 import { readLines } from './lines.js';
-import { checkResponse, foldSystem, type ChatRequest, type LoadedModel, type ProviderAdapter, type ProviderConfig, type StreamChunk } from './types.js';
+import { checkResponse, foldSystem, ProviderError, type ChatRequest, type LoadedModel, type ProviderAdapter, type ProviderConfig, type StreamChunk } from './types.js';
 
 export function ollamaAdapter(cfg: ProviderConfig): ProviderAdapter {
   const base = cfg.baseUrl.replace(/\/+$/, '');
@@ -65,6 +65,15 @@ export function ollamaAdapter(cfg: ProviderConfig): ProviderAdapter {
         // Some GGUF chat templates choke on system messages ("System message must be at the beginning").
         const detail = await res.clone().text().catch(() => '');
         if (/system/i.test(detail)) res = await chat(foldSystem(req.messages));
+      }
+      if (res.status === 401) {
+        // Ollama cloud models (ollama.com/...) need the Ollama server to be signed in to ollama.com.
+        const body = (await res.json().catch(() => ({}))) as { signin_url?: string };
+        throw new ProviderError(
+          `${req.model} is an Ollama cloud model and the Ollama server is not signed in to ollama.com. ` +
+            `Run "ollama signin" inside the Ollama container${body.signin_url ? ` or open ${body.signin_url}` : ''}, or pick a local model.`,
+          401,
+        );
       }
       await checkResponse(res, 'Ollama /api/chat');
       for await (const line of readLines(res.body!)) {

@@ -9,6 +9,11 @@ export interface ResolvedProvider {
   local: boolean;
   hostKey: string;
   modelInfo(model: string): Promise<ModelInfo | undefined>;
+  /** Remembered timings per model on this provider, to show real progress next time. */
+  stats?: {
+    expectLoad(model: string, sizeBytes?: number): { ms: number; estimated: boolean };
+    record(model: string, s: { loadMs?: number; tokensPerSec?: number }): void;
+  };
 }
 
 export interface EngineDeps {
@@ -72,6 +77,8 @@ export async function runGraph(graph: CanvasGraph, question: string, deps: Engin
       return;
     }
 
+    const provider = def.usesModel ? await deps.resolve(model!.providerId).catch(() => undefined) : undefined;
+
     const exec = async () => {
       const t0 = Date.now();
       let firstToken = 0;
@@ -79,7 +86,16 @@ export async function runGraph(graph: CanvasGraph, question: string, deps: Engin
       let genMs: number | undefined;
       let inputTokens: number | undefined;
       let nodeCost: number | undefined;
-      deps.emit({ ...base, type: 'node_start' });
+      let loading = false;
+      let ready = false;
+      let loadMs: number | undefined;
+      let sizeBytes: number | undefined;
+      deps.emit({ ...base, type: 'node_start', ...(provider?.local && { local: true }) });
+      const markReady = () => {
+        if (ready) return;
+        ready = true;
+        deps.emit({ ...base, type: 'model_ready', warm: !loading });
+      };
 
       const text = await def.execute({
         node,
@@ -89,12 +105,20 @@ export async function runGraph(graph: CanvasGraph, question: string, deps: Engin
           const p = await deps.resolve(model!.providerId);
           let out = '';
           for await (const chunk of p.adapter.stream({ model: model!.model, messages, temperature: node.config.temperature }, signal)) {
-            if (chunk.type === 'loading') deps.emit({ ...base, type: 'model_loading' });
-            else if (chunk.type === 'thinking') {
+            if (chunk.type === 'loading') {
+              loading = true;
+              sizeBytes = (await p.modelInfo(model!.model).catch(() => undefined))?.sizeBytes;
+              const expect = p.stats?.expectLoad(model!.model, sizeBytes);
+              deps.emit({ ...base, type: 'model_loading', sizeBytes, expectedMs: expect?.ms, estimated: expect?.estimated });
+            } else if (chunk.type === 'warm') {
+              sizeBytes = (await p.modelInfo(model!.model).catch(() => undefined))?.sizeBytes;
+            } else if (chunk.type === 'thinking') {
+              markReady();
               if (!firstToken) firstToken = Date.now();
               deps.emit({ ...base, type: 'thinking', text: chunk.text });
             }
             else if (chunk.type === 'token') {
+              markReady();
               if (!firstToken) firstToken = Date.now();
               tokens++;
               out += chunk.text;
@@ -103,6 +127,8 @@ export async function runGraph(graph: CanvasGraph, question: string, deps: Engin
             } else {
               if (chunk.outputTokens) tokens = chunk.outputTokens;
               if (chunk.genMs) genMs = (genMs ?? 0) + chunk.genMs;
+              // Only a real load is worth remembering (a warm model reports a few ms).
+              if (loading && chunk.loadMs && chunk.loadMs > 300) loadMs = chunk.loadMs;
               inputTokens = chunk.inputTokens;
               const info = await p.modelInfo(model!.model).catch(() => undefined);
               if (info?.free) nodeCost = 0;
@@ -119,6 +145,7 @@ export async function runGraph(graph: CanvasGraph, question: string, deps: Engin
       if (nodeCost) cost += nodeCost;
       // Provider-reported generation time is exact; otherwise time since the first token (incl. thinking).
       const genSecs = genMs ? genMs / 1000 : firstToken ? (Date.now() - firstToken) / 1000 : 0;
+      if (provider?.stats && model) provider.stats.record(model.model, { loadMs, tokensPerSec: genSecs > 0 ? tokens / genSecs : undefined });
       deps.emit({
         ...base,
         type: 'node_done',
@@ -128,12 +155,14 @@ export async function runGraph(graph: CanvasGraph, question: string, deps: Engin
         tokensPerSec: genSecs > 0 ? tokens / genSecs : undefined,
         cost: nodeCost,
         elapsedMs: Date.now() - t0,
+        loadMs,
+        sizeBytes,
       });
     };
 
     try {
       if (def.usesModel) {
-        const p = await deps.resolve(model!.providerId);
+        const p = provider ?? (await deps.resolve(model!.providerId));
         if (p.local) {
           deps.emit({ ...base, type: 'node_queued' });
           await withHostLock(p.hostKey, exec);

@@ -3,6 +3,7 @@ import { elapsedOf, IDLE, STATE_LABEL, STATE_TEXT, type NodeView, type RunFinal 
 import type { HiveFlowNode } from './HiveNode';
 import { NODE_META } from './meta';
 import { ModelPicker } from './ModelPicker';
+import { GpuBar, WorkBar } from './NodeBars';
 
 const SYSTEM_DEFAULT: Partial<Record<string, string>> = { judge: JUDGE_SYSTEM, review: REVIEW_SYSTEM };
 
@@ -94,6 +95,12 @@ export function Inspector(props: {
             {elapsed !== undefined && <span className="text-slate-400">{(elapsed / 1000).toFixed(1)} s</span>}
             {view.cost !== undefined && view.cost > 0 && <span className="text-slate-400">${view.cost.toFixed(5)}</span>}
           </div>
+          {meta.usesModel && (
+            <div className="space-y-2">
+              <GpuBar v={view} big />
+              <WorkBar v={view} big />
+            </div>
+          )}
           {view.error && <p className="rounded bg-red-950/60 px-2 py-1 text-xs break-words text-red-300">{view.error}</p>}
           {view.thinking && (
             <details className="text-xs text-violet-300/80" open={view.state === 'thinking'}>

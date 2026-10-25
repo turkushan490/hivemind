@@ -94,7 +94,12 @@ describe('ollama system-message fallback', () => {
     });
     const chunks = await collect(ollamaAdapter({ id: 'o', kind: 'ollama', preset: 'ollama', baseUrl: 'http://o' }).stream(req, signal));
     expect(bodies[1].messages).toEqual([{ role: 'user', content: 'sys\n\nhi' }]);
-    expect(chunks).toEqual([{ type: 'thinking', text: 'hmm' }, { type: 'token', text: 'ok' }, { type: 'done', inputTokens: undefined, outputTokens: 1, genMs: 500 }]);
+    expect(chunks).toEqual([
+      { type: 'warm' },
+      { type: 'thinking', text: 'hmm' },
+      { type: 'token', text: 'ok' },
+      { type: 'done', inputTokens: undefined, outputTokens: 1, genMs: 500, loadMs: undefined },
+    ]);
   });
 });
 

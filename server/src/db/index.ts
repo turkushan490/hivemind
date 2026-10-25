@@ -73,6 +73,16 @@ const MIGRATIONS = [
     seen INTEGER NOT NULL DEFAULT 0
   );
   `,
+  `
+  CREATE TABLE model_stats (
+    provider_id TEXT NOT NULL,
+    model TEXT NOT NULL,
+    load_ms REAL,
+    tokens_per_sec REAL,
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (provider_id, model)
+  );
+  `,
 ];
 
 export const db = new DatabaseSync(join(config.dataDir, 'hivemind.db'));

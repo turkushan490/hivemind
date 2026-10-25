@@ -15,11 +15,14 @@ export interface ChatRequest {
 }
 
 export type StreamChunk =
+  /** The model must be loaded into memory first. */
   | { type: 'loading' }
+  /** The model is already in memory. */
+  | { type: 'warm' }
   | { type: 'token'; text: string }
   | { type: 'thinking'; text: string }
   /** genMs: pure generation time when the provider reports it (more exact tok/s). */
-  | { type: 'done'; inputTokens?: number; outputTokens?: number; genMs?: number };
+  | { type: 'done'; inputTokens?: number; outputTokens?: number; genMs?: number; loadMs?: number };
 
 /** Runtime config of one provider, key already decrypted. */
 export interface ProviderConfig {

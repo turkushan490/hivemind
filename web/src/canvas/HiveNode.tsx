@@ -1,8 +1,9 @@
 import type { NodeConfig, NodeType } from '@hivemind/shared';
 import { Handle, Position, type Node, type NodeProps } from '@xyflow/react';
 import { createContext, memo, useContext } from 'react';
-import { elapsedOf, IDLE, STATE_COLOR, STATE_LABEL, type NodeView } from '../run/state';
+import { IDLE, STATE_COLOR, STATE_LABEL, type NodeView } from '../run/state';
 import { NODE_META } from './meta';
+import { GpuBar, WorkBar } from './NodeBars';
 
 export type HiveNodeData = { kind: NodeType; label?: string; config: NodeConfig };
 export type HiveFlowNode = Node<HiveNodeData, 'hive'>;
@@ -19,7 +20,6 @@ function HiveNodeImpl({ id, data, selected }: NodeProps<HiveFlowNode>) {
   const stateColor = STATE_COLOR[view.state];
   const border = view.state === 'idle' ? (selected ? meta.color : '#30363d') : stateColor;
   const missingModel = meta.usesModel && !data.config.model;
-  const elapsed = elapsedOf(view);
 
   return (
     <div
@@ -45,23 +45,10 @@ function HiveNodeImpl({ id, data, selected }: NodeProps<HiveFlowNode>) {
             {data.config.model?.model ?? 'Pick a model →'}
           </div>
         )}
-        {(meta.usesModel || view.state !== 'idle') && (
-          <div className="h-1 overflow-hidden rounded bg-[#21262d]">
-            <div
-              className={`h-full rounded ${view.state === 'streaming' || view.state === 'loading' ? 'hm-bar-live' : ''}`}
-              style={{
-                background: stateColor,
-                width: view.state === 'done' || view.state === 'error' ? '100%' : active ? undefined : view.state === 'thinking' ? '35%' : '0%',
-              }}
-            />
-          </div>
-        )}
-        {view.state !== 'idle' && (
-          <div className="flex gap-2.5 font-mono text-[11px] text-slate-400">
-            {view.tokens !== undefined && <span>{view.tokens} tok</span>}
-            {view.tps !== undefined && <span>{view.tps.toFixed(0)} t/s</span>}
-            {elapsed !== undefined && <span>{(elapsed / 1000).toFixed(1)}s</span>}
-            {view.state === 'thinking' && <span className="text-violet-300">thinking…</span>}
+        {meta.usesModel && view.state !== 'idle' && (
+          <div className="space-y-1.5 pt-0.5">
+            <GpuBar v={view} />
+            <WorkBar v={view} />
           </div>
         )}
         {view.error && <div className="line-clamp-2 text-xs text-red-300">{view.error}</div>}

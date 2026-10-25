@@ -98,6 +98,26 @@ describe('runGraph', () => {
     expect(provider.calls.find((c) => c.model === 'judge')!.messages[1].content).not.toContain('### Answer 2 (b)');
   });
 
+  it('reports loading with the expected time, the moment the model is ready, and remembers the real load time', async () => {
+    const recorded: { model: string; loadMs?: number }[] = [];
+    const p = fake({ local: true });
+    p.stats = { expectLoad: () => ({ ms: 9000, estimated: false }), record: (model, s) => recorded.push({ model, ...s }) };
+    p.adapter.stream = async function* () {
+      yield { type: 'loading' as const };
+      yield { type: 'token' as const, text: 'ok' };
+      yield { type: 'done' as const, outputTokens: 1, loadMs: 8700 };
+    };
+    const graph = councilGraph([ref('a')], ref('a'));
+    const { events } = await run(graph, p);
+    const m1 = events.filter((e) => e.nodeId === 'm1').map((e) => e.type);
+    expect(m1).toEqual(['node_queued', 'node_start', 'model_loading', 'model_ready', 'token', 'node_done']);
+    expect(events.find((e) => e.type === 'node_start' && e.nodeId === 'm1')?.local).toBe(true);
+    expect(events.find((e) => e.type === 'model_loading')?.expectedMs).toBe(9000);
+    expect(events.find((e) => e.type === 'model_ready')?.warm).toBe(false);
+    expect(events.find((e) => e.type === 'node_done' && e.nodeId === 'm1')?.loadMs).toBe(8700);
+    expect(recorded[0]).toMatchObject({ model: 'a', loadMs: 8700 });
+  });
+
   it('fails the run when the judge fails', async () => {
     const { result } = await run(undefined, fake({ fail: 'judge' }));
     expect(result.status).toBe('error');

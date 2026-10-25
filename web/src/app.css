@@ -47,3 +47,10 @@ html {
 .hm-handle { width: 12px !important; height: 12px !important; background: #0d1117 !important; border: 2px solid #6e7681 !important; }
 .hm-handle:hover { border-color: #818cf8 !important; }
 .react-flow__edge.selected .react-flow__edge-path { stroke: #818cf8 !important; }
+/* Progress stripes that only move forward (no fake back-and-forth). */
+@keyframes hm-flow { to { background-position: 17px 0; } }
+.hm-flow {
+  background-image: repeating-linear-gradient(-45deg, rgba(255, 255, 255, 0.22) 0 6px, transparent 6px 12px);
+  background-size: 17px 17px;
+  animation: hm-flow 0.7s linear infinite;
+}

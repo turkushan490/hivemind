@@ -71,7 +71,7 @@ export function ollamaAdapter(cfg: ProviderConfig): ProviderAdapter {
         const ps = await fetch(`${base}/api/ps`, { signal });
         if (ps.ok) {
           const loaded = ((await ps.json()) as { models?: { name: string }[] }).models ?? [];
-          if (!loaded.some((m) => m.name === req.model)) yield { type: 'loading' };
+          yield loaded.some((m) => m.name === req.model) ? { type: 'warm' } : { type: 'loading' };
         }
       } catch {}
 
@@ -115,6 +115,7 @@ export function ollamaAdapter(cfg: ProviderConfig): ProviderAdapter {
           prompt_eval_count?: number;
           eval_count?: number;
           eval_duration?: number;
+          load_duration?: number;
         };
         if (msg.error) throw new Error(`Ollama: ${msg.error}`);
         if (msg.message?.thinking) yield { type: 'thinking', text: msg.message.thinking };
@@ -125,6 +126,7 @@ export function ollamaAdapter(cfg: ProviderConfig): ProviderAdapter {
             inputTokens: msg.prompt_eval_count,
             outputTokens: msg.eval_count,
             genMs: msg.eval_duration ? msg.eval_duration / 1e6 : undefined,
+            loadMs: msg.load_duration ? msg.load_duration / 1e6 : undefined,
           };
           return;
         }

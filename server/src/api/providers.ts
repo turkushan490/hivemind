@@ -67,7 +67,33 @@ export function resolverFor(user: User) {
       local: !!row.local,
       hostKey: row.base_url,
       modelInfo: async (model) => (await modelsOf(row)).find((m) => m.model === model),
+      stats: row.local ? modelStats(row.id) : undefined,
     };
+  };
+}
+
+/**
+ * Real load times and speeds per local model. Loading has no live progress in Ollama,
+ * so the GPU bar is timed against the last real load of the same model on the same server.
+ */
+function modelStats(providerId: string): NonNullable<ResolvedProvider['stats']> {
+  return {
+    expectLoad(model, sizeBytes) {
+      const row = db.prepare('SELECT load_ms FROM model_stats WHERE provider_id = ? AND model = ?').get(providerId, model) as { load_ms: number | null } | undefined;
+      if (row?.load_ms) return { ms: Math.round(row.load_ms), estimated: false };
+      // First load: about 0.7 GB/s from disk to GPU plus startup (measured on a Tesla T4: 5.4 GB in ~9 s).
+      return { ms: Math.round(1000 + ((sizeBytes ?? 4e9) / 0.7e9) * 1000), estimated: true };
+    },
+    record(model, s) {
+      if (!s.loadMs && !s.tokensPerSec) return;
+      db.prepare(
+        `INSERT INTO model_stats (provider_id, model, load_ms, tokens_per_sec) VALUES (?, ?, ?, ?)
+         ON CONFLICT(provider_id, model) DO UPDATE SET
+           load_ms = COALESCE(excluded.load_ms, load_ms),
+           tokens_per_sec = COALESCE(excluded.tokens_per_sec, tokens_per_sec),
+           updated_at = datetime('now')`,
+      ).run(providerId, model, s.loadMs ?? null, s.tokensPerSec ?? null);
+    },
   };
 }
 

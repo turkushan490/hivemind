@@ -207,6 +207,8 @@ export type RunEventType =
   | 'run_start'
   | 'node_queued'
   | 'model_loading'
+  /** The model produced its first output: loading (if any) is over. */
+  | 'model_ready'
   | 'node_start'
   | 'token'
   /** Reasoning text of thinking models, streamed separately from the answer. */
@@ -238,6 +240,17 @@ export interface RunEvent {
   question?: string;
   /** run_done: final answer text. */
   final?: string;
+  /** node_start: the model runs on local hardware (Ollama). */
+  local?: boolean;
+  /** model_loading: how long loading should take (from this model's last real load, or estimated from its size). */
+  expectedMs?: number;
+  estimated?: boolean;
+  /** model_loading / node_done: model size in memory. */
+  sizeBytes?: number;
+  /** model_ready: the model was already in memory, no loading needed. */
+  warm?: boolean;
+  /** node_done: real load time reported by the provider. */
+  loadMs?: number;
   status?: RunStatus;
 }
 

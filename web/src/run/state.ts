@@ -15,6 +15,19 @@ export interface NodeView {
   cost?: number;
   error?: string;
   startedAt?: number;
+  /** Local model (Ollama): gets a separate GPU bar. */
+  local?: boolean;
+  queuedAt?: number;
+  /** GPU loading: when it began, how long it should take, and when the model was ready. */
+  loadStartedAt?: number;
+  loadExpectedMs?: number;
+  loadEstimated?: boolean;
+  readyAt?: number;
+  /** Was already in memory, no loading. */
+  warm?: boolean;
+  /** Real load time reported when the block finished. */
+  loadMs?: number;
+  sizeBytes?: number;
 }
 
 export const IDLE: NodeView = { state: 'idle', text: '' };
@@ -63,13 +76,16 @@ export function applyEvent(views: Record<string, NodeView>, ev: RunEvent): Recor
   let next: NodeView = v;
   switch (ev.type) {
     case 'node_queued':
-      next = { ...v, state: 'queued' };
-      break;
-    case 'model_loading':
-      next = { ...v, state: 'loading' };
+      next = { ...v, state: 'queued', queuedAt: ev.ts };
       break;
     case 'node_start':
-      next = { ...v, state: 'loading', startedAt: ev.ts };
+      next = { ...v, state: 'loading', startedAt: ev.ts, local: ev.local };
+      break;
+    case 'model_loading':
+      next = { ...v, state: 'loading', loadStartedAt: ev.ts, loadExpectedMs: ev.expectedMs, loadEstimated: ev.estimated, sizeBytes: ev.sizeBytes };
+      break;
+    case 'model_ready':
+      next = { ...v, readyAt: ev.ts, warm: ev.warm };
       break;
     case 'thinking':
       next = { ...v, state: 'thinking', thinking: (v.thinking ?? '') + (ev.text ?? '') };
@@ -78,7 +94,17 @@ export function applyEvent(views: Record<string, NodeView>, ev: RunEvent): Recor
       next = { ...v, state: 'streaming', text: v.text + (ev.text ?? ''), tokens: ev.tokens, tps: ev.tokensPerSec ?? v.tps };
       break;
     case 'node_done':
-      next = { ...v, state: 'done', text: ev.text ?? v.text, tokens: ev.tokens, tps: ev.tokensPerSec, elapsedMs: ev.elapsedMs, cost: ev.cost };
+      next = {
+        ...v,
+        state: 'done',
+        text: ev.text ?? v.text,
+        tokens: ev.tokens,
+        tps: ev.tokensPerSec,
+        elapsedMs: ev.elapsedMs,
+        cost: ev.cost,
+        loadMs: ev.loadMs ?? v.loadMs,
+        sizeBytes: ev.sizeBytes ?? v.sizeBytes,
+      };
       break;
     case 'error':
       next = { ...v, state: 'error', error: ev.error };

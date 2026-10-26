@@ -12,6 +12,10 @@ export interface ChatRequest {
   messages: ChatMessage[];
   temperature?: number;
   maxTokens?: number;
+  /** Ask for a JSON object as the answer (where the provider supports forcing it). */
+  json?: boolean;
+  /** false: ask a thinking model to answer straight away (Ollama). */
+  think?: boolean;
 }
 
 export type StreamChunk =

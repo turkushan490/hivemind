@@ -83,6 +83,16 @@ const MIGRATIONS = [
     PRIMARY KEY (provider_id, model)
   );
   `,
+  `
+  CREATE TABLE memory (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    key TEXT NOT NULL,
+    text TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  CREATE INDEX memory_key ON memory(owner_id, key, id);
+  `,
 ];
 
 export const db = new DatabaseSync(join(config.dataDir, 'hivemind.db'));

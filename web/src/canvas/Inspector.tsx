@@ -4,6 +4,7 @@ import { Clock, elapsedOf, IDLE, STATE_LABEL, STATE_TEXT, type NodeView, type Ru
 import type { HiveFlowNode } from './HiveNode';
 import { NODE_META } from './meta';
 import { ModelPicker } from './ModelPicker';
+import { BlockSettings } from './BlockSettings';
 import { GpuBar, WorkBar } from './NodeBars';
 
 const SYSTEM_DEFAULT: Partial<Record<string, string>> = { judge: JUDGE_SYSTEM, review: REVIEW_SYSTEM };
@@ -88,6 +89,15 @@ export function Inspector(props: {
         </div>
       )}
 
+      <BlockSettings
+        nodeId={node.id}
+        kind={node.data.kind}
+        config={cfg}
+        models={props.models}
+        providers={props.providers}
+        onChange={(config) => props.onChange({ config })}
+      />
+
       {view.state !== 'idle' && (
         <div className="space-y-2 rounded-lg border border-[#30363d] p-3">
           <div className="flex items-center gap-3 text-xs">
@@ -97,7 +107,8 @@ export function Inspector(props: {
             {elapsed !== undefined && <span className="text-slate-400">{(elapsed / 1000).toFixed(1)} s</span>}
             {view.cost !== undefined && view.cost > 0 && <span className="text-slate-400">${view.cost.toFixed(5)}</span>}
           </div>
-          {meta.usesModel && (
+          {view.note && <p className="text-xs font-medium text-amber-200">{view.note}</p>}
+          {(meta.usesModel || !!meta.multiModel) && view.state !== 'skipped' && (
             <div className="space-y-2">
               <GpuBar v={view} big />
               <WorkBar v={view} big />

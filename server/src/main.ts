@@ -11,6 +11,8 @@ import { describe, logError } from './errors.js';
 import { problemRoutes } from './api/problems.js';
 import { memoryRoutes } from './api/memory.js';
 import { libraryRoutes } from './api/library.js';
+import { settingsRoutes } from './api/settings.js';
+import { builderRoutes } from './api/builder.js';
 
 const app = Fastify({ logger: { level: process.env.LOG_LEVEL || 'info' }, trustProxy: true, bodyLimit: 5 * 1024 * 1024 });
 
@@ -87,6 +89,8 @@ runRoutes(app);
 problemRoutes(app);
 memoryRoutes(app);
 libraryRoutes(app);
+settingsRoutes(app);
+builderRoutes(app);
 seedProviders(config.ollamaUrl);
 
 if (existsSync(config.webDir)) {

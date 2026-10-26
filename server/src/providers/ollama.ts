@@ -84,6 +84,8 @@ export function ollamaAdapter(cfg: ProviderConfig): ProviderAdapter {
             model: req.model,
             messages,
             stream: true,
+            ...(req.json && { format: 'json' }),
+            ...(req.think === false && { think: false }),
             options: {
               ...(req.temperature !== undefined && { temperature: req.temperature }),
               ...(req.maxTokens !== undefined && { num_predict: req.maxTokens }),

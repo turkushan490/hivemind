@@ -23,13 +23,13 @@ import { History, ReplayBar } from './Replay';
 import { useStored } from '../stored';
 import { HiveEdge } from './HiveEdge';
 import { HiveNode, RunViews, type HiveFlowNode } from './HiveNode';
+import { BuilderPanel } from './BuilderPanel';
 import { Inspector } from './Inspector';
-import { COMING_SOON, NODE_META } from './meta';
+import { COMING_SOON, NODE_META, PALETTE } from './meta';
 import { newNodeId, TEMPLATES } from './templates';
 
 const nodeTypes = { hive: HiveNode };
 const edgeTypes = { hive: HiveEdge };
-const PALETTE: NodeType[] = ['input', 'llm', 'review', 'judge', 'output'];
 const ACTIVE = new Set(['loading', 'thinking', 'streaming']);
 const DRAFT_KEY = 'hm.canvas.draft';
 
@@ -107,6 +107,9 @@ function Editor({ active, onProblem }: { active: boolean; onProblem: () => void 
   // While replaying, the canvas shows the replayed run; your own canvas waits here untouched.
   const backup = useRef<{ nodes: HiveFlowNode[]; edges: Edge[]; doc: { id?: string; name: string }; saved?: string } | null>(null);
   const [showHistory, setShowHistory] = useState(false);
+  const [panel, setPanel] = useStored<'inspector' | 'builder'>('canvas.panel', 'inspector');
+  /** Canvases before each Builder change, for Undo. */
+  const undoStack = useRef<{ nodes: HiveFlowNode[]; edges: Edge[] }[]>([]);
   const views = replaying ? replay.views : run.views;
   const shownFinal = replaying ? replay.final : run.final;
   const shownErrors = replaying ? replay.errors : run.errors;
@@ -279,7 +282,14 @@ function Editor({ active, onProblem }: { active: boolean; onProblem: () => void 
     }
     const id = newNodeId(kind);
     const lastModel = [...nodes].reverse().find((n) => n.data.config.model)?.data.config.model;
-    const config: NodeConfig = NODE_META[kind].usesModel && lastModel ? { model: lastModel } : {};
+    const meta = NODE_META[kind];
+    const config: NodeConfig = meta.usesModel && lastModel ? { model: lastModel } : {};
+    // Debate / Vote start with fast models filled in; change them in the inspector.
+    if (meta.multiModel) {
+      const picks = prefillModels(models);
+      config.models = [...new Map(picks.slice(0, 3).map((m) => [`${m!.providerId}|${m!.model}`, m!])).values()].slice(0, Math.max(meta.multiModel, 2));
+    }
+    if (kind === 'memory') config.key = 'default';
     setNodes((ns) => [...ns.map((n) => ({ ...n, selected: false })), { id, type: 'hive', position: pos, selected: true, data: { kind, config } }]);
   };
   const onDrop = (e: DragEvent) => {
@@ -433,8 +443,10 @@ function Editor({ active, onProblem }: { active: boolean; onProblem: () => void 
       <div className="flex min-h-0 flex-1">
         <aside className={`w-52 shrink-0 space-y-4 overflow-y-auto border-r border-[#30363d] bg-[#11161d] p-3 ${replaying ? 'pointer-events-none opacity-40' : ''}`}>
           <div className="text-[11px] font-semibold tracking-wider text-slate-500 uppercase">Drag onto the canvas</div>
-          <div className="space-y-1.5">
-            {PALETTE.map((kind) => {
+          {PALETTE.map((g) => (
+          <div key={g.group} className="space-y-1.5">
+            <div className="text-xs font-semibold text-slate-500">{g.group}</div>
+            {g.types.map((kind) => {
               const m = NODE_META[kind];
               return (
                 <button
@@ -454,6 +466,7 @@ function Editor({ active, onProblem }: { active: boolean; onProblem: () => void 
               );
             })}
           </div>
+          ))}
           {COMING_SOON.map((g) => (
             <div key={g.group} className="space-y-1">
               <div className="text-xs font-semibold text-slate-500">
@@ -495,7 +508,19 @@ function Editor({ active, onProblem }: { active: boolean; onProblem: () => void 
           {replaying && <ReplayBar replay={replay} />}
         </div>
 
-        <aside className="w-96 shrink-0 overflow-y-auto border-l border-[#30363d] bg-[#11161d]">
+        <aside className="flex w-96 shrink-0 flex-col border-l border-[#30363d] bg-[#11161d]">
+          <div className="flex shrink-0 border-b border-[#30363d] text-sm">
+            {(['inspector', 'builder'] as const).map((t) => (
+              <button
+                key={t}
+                className={`flex-1 px-3 py-2 ${panel === t ? 'border-b-2 border-indigo-500 text-white' : 'text-slate-400 hover:text-slate-200'}`}
+                onClick={() => setPanel(t)}
+              >
+                {t === 'inspector' ? 'Inspector' : '✨ Builder'}
+              </button>
+            ))}
+          </div>
+          <div className={`min-h-0 flex-1 overflow-y-auto ${panel === 'builder' ? 'hidden' : ''}`}>
           <Inspector
             node={selected}
             view={selected ? views[selected.id] : undefined}
@@ -507,6 +532,31 @@ function Editor({ active, onProblem }: { active: boolean; onProblem: () => void 
             errors={shownErrors}
             running={run.running || (replaying && replay.playing)}
           />
+          </div>
+          <div className={`min-h-0 flex-1 ${panel === 'builder' ? '' : 'hidden'}`}>
+            <BuilderPanel
+              graph={graph}
+              models={models}
+              providers={providers}
+              disabled={replaying}
+              onApply={(g) => {
+                undoStack.current.push({ nodes: nodes.map((n) => ({ ...n, selected: false })), edges });
+                show(g);
+              }}
+              onUndo={
+                undoStack.current.length
+                  ? () => {
+                      const prev = undoStack.current.pop();
+                      if (prev) {
+                        setNodes(prev.nodes);
+                        setEdges(prev.edges);
+                        setTimeout(() => flow.fitView({ padding: 0.2, duration: 300 }), 50);
+                      }
+                    }
+                  : undefined
+              }
+            />
+          </div>
         </aside>
       </div>
       </Clock.Provider>

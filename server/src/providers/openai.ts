@@ -51,6 +51,8 @@ export function openaiAdapter(cfg: ProviderConfig): ProviderAdapter {
           messages: req.messages,
           stream: true,
           stream_options: { include_usage: true },
+          // Only providers known to accept it; others get the instruction in the prompt alone.
+          ...(req.json && ['openai', 'groq'].includes(cfg.preset) && { response_format: { type: 'json_object' } }),
           ...(req.temperature !== undefined && { temperature: req.temperature }),
           ...(req.maxTokens !== undefined && { max_tokens: req.maxTokens }),
         }),

@@ -1,7 +1,7 @@
 // Types shared by the server, the web UI and (later) the Android app.
 // The canvas format and run events are the contract between them.
 
-export const NODE_TYPES = ['input', 'llm', 'review', 'judge', 'output'] as const;
+export const NODE_TYPES = ['input', 'llm', 'review', 'judge', 'output', 'router', 'debate', 'vote', 'template', 'file', 'search', 'memory'] as const;
 export type NodeType = (typeof NODE_TYPES)[number];
 
 /** Which model a node uses: a configured provider plus a model id on it. */
@@ -25,6 +25,32 @@ export interface NodeConfig {
   /** Prompt template; {{question}} and {{inputs}} are filled in. */
   prompt?: string;
   temperature?: number;
+  /** Debate and Vote: the models that take part. */
+  models?: ModelRef[];
+  /** Debate: how many rounds (1-4). */
+  rounds?: number;
+  /** File: the file's text, and its name. */
+  text?: string;
+  fileName?: string;
+  /** Web search: where to search, and how many results. */
+  source?: SearchSource;
+  count?: number;
+  /** Memory: what to remember under, recall or save, how many to recall. */
+  key?: string;
+  mode?: 'recall' | 'save';
+  limit?: number;
+}
+
+export const SEARCH_SOURCES = ['wikipedia', 'brave', 'tavily', 'searxng'] as const;
+export type SearchSource = (typeof SEARCH_SOURCES)[number];
+
+/** Web search settings (GET/PUT /api/settings/search); keys are never sent back, only whether they exist. */
+export interface SearchSettings {
+  source: SearchSource;
+  wikiLang: string;
+  searxngUrl?: string;
+  hasBraveKey: boolean;
+  hasTavilyKey: boolean;
 }
 
 export interface CanvasEdge {
@@ -214,6 +240,10 @@ export type RunEventType =
   /** Reasoning text of thinking models, streamed separately from the answer. */
   | 'thinking'
   | 'node_done'
+  /** A short status line from inside a block, e.g. "Round 2 of 3" or "Searching Wikipedia". */
+  | 'node_progress'
+  /** The block did not run: a Router chose another branch. */
+  | 'node_skipped'
   | 'run_done'
   | 'error';
 
@@ -251,6 +281,8 @@ export interface RunEvent {
   warm?: boolean;
   /** node_done: real load time reported by the provider. */
   loadMs?: number;
+  /** node_progress: what the block is doing right now. */
+  note?: string;
   status?: RunStatus;
 }
 

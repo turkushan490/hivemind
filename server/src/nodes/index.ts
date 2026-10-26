@@ -1,4 +1,4 @@
-import { JUDGE_SYSTEM, REVIEW_SYSTEM, type CanvasNode, type NodeType } from '@hivemind/shared';
+import { JUDGE_SYSTEM, REVIEW_SYSTEM, type CanvasNode, type ModelRef, type NodeType, type SearchSource } from '@hivemind/shared';
 import type { ChatMessage } from '../providers/types.js';
 
 /** Output of an upstream node, as seen by the node that runs next. */
@@ -9,17 +9,35 @@ export interface NodeInput {
   text: string;
 }
 
+/** Things outside the graph a block may use. Missing services make those blocks fail with a clear message. */
+export interface NodeServices {
+  search?(query: string, opts: { source?: SearchSource; count?: number }): Promise<{ title: string; url: string; text: string }[]>;
+  memory?: {
+    recall(key: string, limit: number): { text: string; at: string }[];
+    save(key: string, text: string): void;
+  };
+}
+
 export interface NodeContext {
   node: CanvasNode;
   question: string;
   inputs: NodeInput[];
-  /** Streams one model call; token events are emitted by the engine. */
-  callModel(messages: ChatMessage[]): Promise<string>;
+  /** Blocks wired after this one (for the Router). */
+  outgoing: { id: string; label: string; type: NodeType }[];
+  /** Streams one model call; token events are emitted by the engine. Defaults to the block's own model. */
+  callModel(messages: ChatMessage[], model?: ModelRef): Promise<string>;
+  /** Router: only these outgoing blocks run; the others are skipped. */
+  choose(targetIds: string[]): void;
+  /** A short status line shown on the block while it works. */
+  progress(note: string): void;
+  services: NodeServices;
 }
 
 export interface NodeDefinition {
-  /** Whether this node calls a model (needs config.model). */
+  /** Needs config.model. */
   usesModel: boolean;
+  /** Needs config.models with at least this many models. */
+  minModels?: number;
   execute(ctx: NodeContext): Promise<string>;
 }
 
@@ -37,6 +55,13 @@ function labelled(inputs: NodeInput[]): string {
 }
 
 const letter = (i: number) => String.fromCharCode(65 + (i % 26)) + (i >= 26 ? Math.floor(i / 26) : '');
+const modelName = (m: ModelRef) => m.model.split('/').pop()!.replace(/:latest$/, '');
+
+/** Extra material (search results, files, memory) wired into a block, as a context section. */
+function context(inputs: NodeInput[]): string {
+  const prev = answers(inputs);
+  return prev.length ? `\n\nUse this material:\n\n${labelled(prev)}` : '';
+}
 
 export const NODES: Record<NodeType, NodeDefinition> = {
   input: {
@@ -89,6 +114,156 @@ export const NODES: Record<NodeType, NodeDefinition> = {
     async execute(ctx) {
       const prev = answers(ctx.inputs);
       return prev.map((p) => p.text).join('\n\n---\n\n');
+    },
+  },
+
+  // ---- Logic ----
+
+  router: {
+    usesModel: true,
+    async execute(ctx) {
+      const options = ctx.outgoing;
+      if (options.length === 0) throw new Error('Wire the Router to the blocks it can choose between');
+      const passOn = answers(ctx.inputs).length ? labelled(answers(ctx.inputs)) : ctx.question;
+      if (options.length === 1) {
+        ctx.choose([options[0].id]);
+        return passOn;
+      }
+      const list = options.map((o, i) => `${i + 1}. ${o.label}`).join('\n');
+      ctx.progress('Choosing a route…');
+      const reply = await ctx.callModel(
+        withSystem(
+          ctx.node.config.system ??
+            'You route questions. Pick the single best option for the question. Reply with only the number of that option, nothing else.',
+          `Question: ${ctx.question}${context(ctx.inputs)}\n\nOptions:\n${list}\n\nWhich option number?`,
+        ),
+      );
+      // The first number in the reply that names an option; anything unclear goes to the first option.
+      const n = [...reply.matchAll(/\d+/g)].map((m) => Number(m[0])).find((x) => x >= 1 && x <= options.length) ?? 1;
+      const pick = options[n - 1];
+      ctx.choose([pick.id]);
+      ctx.progress(`Route: ${pick.label}`);
+      return passOn;
+    },
+  },
+
+  debate: {
+    usesModel: false,
+    minModels: 2,
+    async execute(ctx) {
+      const models = ctx.node.config.models!;
+      const rounds = Math.max(1, Math.min(4, ctx.node.config.rounds ?? 2));
+      const material = context(ctx.inputs);
+      let latest: string[] = [];
+      for (let r = 1; r <= rounds; r++) {
+        const next: string[] = [];
+        for (let i = 0; i < models.length; i++) {
+          ctx.progress(`Round ${r} of ${rounds} · ${modelName(models[i])}`);
+          const others = latest
+            .map((a, j) => (j === i ? '' : `### ${modelName(models[j])}\n${a}`))
+            .filter(Boolean)
+            .join('\n\n');
+          const user =
+            r === 1
+              ? `Question: ${ctx.question}${material}\n\nGive your answer.`
+              : `Question: ${ctx.question}${material}\n\nYour previous answer:\n${latest[i]}\n\nThe other participants answered:\n\n${others}\n\n` +
+                'Point out what they got wrong or missed in one or two lines, then give your improved final answer.';
+          next.push(await ctx.callModel(withSystem(ctx.node.config.system ?? 'You take part in a debate between AI models. Be concise and correct.', user), models[i]));
+        }
+        latest = next;
+      }
+      return latest.map((a, i) => `### ${modelName(models[i])} (after ${rounds} round${rounds > 1 ? 's' : ''})\n${a}`).join('\n\n');
+    },
+  },
+
+  vote: {
+    usesModel: false,
+    minModels: 1,
+    async execute(ctx) {
+      const candidates = answers(ctx.inputs);
+      if (candidates.length === 0) throw new Error('Vote needs answers wired into it');
+      if (candidates.length === 1) return candidates[0].text;
+      const voters = ctx.node.config.models!;
+      const body = candidates.map((c, i) => `### Answer ${letter(i)}\n${c.text}`).join('\n\n');
+      const tally = new Array(candidates.length).fill(0);
+      const letters = candidates.map((_, i) => letter(i));
+      const allowed = `${letters.slice(0, -1).join(', ')} or ${letters.at(-1)}`;
+      // The vote: one of the allowed letters, or nothing (anything else is not a vote).
+      const read = (reply: string) => {
+        const pick = reply.trim().toUpperCase().match(/([A-Z])/)?.[1] ?? reply.trim().toUpperCase()[0];
+        const idx = pick ? pick.charCodeAt(0) - 65 : -1;
+        return idx >= 0 && idx < candidates.length ? idx : -1;
+      };
+      let counted = 0;
+      for (const v of voters) {
+        ctx.progress(`${modelName(v)} is voting…`);
+        const ask = `Question: ${ctx.question}\n\n${body}\n\nThere are exactly ${candidates.length} answers: ${allowed}. Which is best? Reply with only one letter: ${allowed}.`;
+        const system = 'You compare answers and vote for the best one. Reply with only the letter of the best answer.';
+        let idx = read(await ctx.callModel(withSystem(system, ask), v));
+        // One stricter try when the reply is not one of the allowed letters.
+        if (idx < 0) idx = read(await ctx.callModel(withSystem(system, `${ask}\n\nOnly ${allowed} are valid. One letter, nothing else.`), v));
+        if (idx >= 0) {
+          tally[idx]++;
+          counted++;
+        }
+      }
+      const best = tally.indexOf(Math.max(...tally));
+      const score = tally.map((t, i) => `${letter(i)} ${t}`).join(', ');
+      ctx.progress(counted ? `Winner: ${candidates[best].label} · ${score}` : `No valid votes — passed on ${candidates[0].label}`);
+      return candidates[best].text;
+    },
+  },
+
+  // ---- Data ----
+
+  template: {
+    usesModel: false,
+    async execute(ctx) {
+      return fill(ctx.node.config.prompt ?? '{{question}}\n\n{{inputs}}', ctx.question, labelled(answers(ctx.inputs))).trim();
+    },
+  },
+
+  file: {
+    usesModel: false,
+    async execute(ctx) {
+      const text = ctx.node.config.text?.trim();
+      if (!text) throw new Error('No file loaded in this block');
+      return text;
+    },
+  },
+
+  search: {
+    usesModel: false,
+    async execute(ctx) {
+      if (!ctx.services.search) throw new Error('Web search is not available here');
+      // Search for what an earlier block wrote (e.g. a model turning the question into search words), else the question.
+      const prev = answers(ctx.inputs);
+      const query = (prev.length ? prev[prev.length - 1].text : ctx.question).slice(0, 300);
+      const source = ctx.node.config.source;
+      ctx.progress(`Searching${source ? ` ${source}` : ''}: ${query.slice(0, 60)}`);
+      const results = await ctx.services.search(query, { source, count: ctx.node.config.count ?? 5 });
+      if (results.length === 0) return `No search results for: ${query}`;
+      ctx.progress(`${results.length} results`);
+      return results.map((r, i) => `${i + 1}. ${r.title}\n${r.text}\n${r.url}`).join('\n\n');
+    },
+  },
+
+  memory: {
+    usesModel: false,
+    async execute(ctx) {
+      const mem = ctx.services.memory;
+      if (!mem) throw new Error('Memory is not available here');
+      const key = (ctx.node.config.key || 'default').trim();
+      if (ctx.node.config.mode === 'save') {
+        const prev = answers(ctx.inputs);
+        const text = prev.length ? prev.map((p) => p.text).join('\n\n') : ctx.question;
+        mem.save(key, `Q: ${ctx.question}\nA: ${text}`);
+        ctx.progress(`Saved to "${key}"`);
+        return text;
+      }
+      const items = mem.recall(key, Math.max(1, Math.min(50, ctx.node.config.limit ?? 5)));
+      ctx.progress(items.length ? `Recalled ${items.length} from "${key}"` : `Nothing in "${key}" yet`);
+      return items.length ? `Remembered from earlier (${key}):\n\n${items.map((m) => `[${m.at}]\n${m.text}`).join('\n\n')}` : '(nothing remembered yet)';
     },
   },
 };

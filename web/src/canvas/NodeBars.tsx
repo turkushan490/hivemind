@@ -81,6 +81,7 @@ export function WorkBar({ v, big }: { v: NodeView; big?: boolean }) {
 
   switch (v.state) {
     case 'idle':
+    case 'skipped':
       return null;
     case 'queued':
       return <Bar big={big} pct={0} color="#6e7681" label="Starts when the GPU is free" dim />;

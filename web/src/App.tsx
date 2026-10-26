@@ -7,6 +7,8 @@ import { Login } from './pages/Login';
 import { Problems } from './pages/Problems';
 import { RunPage } from './pages/Run';
 import { Settings } from './pages/Settings';
+import { SetupWizard } from './pages/SetupWizard';
+import { UsePage } from './pages/UsePage';
 import { useStored } from './stored';
 
 interface Me {
@@ -15,7 +17,7 @@ interface Me {
   role: 'admin' | 'user';
 }
 
-const TABS = { canvas: 'Canvas', run: 'Quick council', settings: 'Settings', problems: 'Problems' } as const;
+const TABS = { use: 'Use', canvas: 'Canvas', run: 'Quick council', settings: 'Settings', problems: 'Problems' } as const;
 type Tab = keyof typeof TABS;
 
 export function App() {
@@ -28,6 +30,7 @@ export function App() {
   useEffect(() => setOpened((o) => (o.has(tab) ? o : new Set(o).add(tab))), [tab]);
   const [unseen, setUnseen] = useState(0);
   const [serverDown, setServerDown] = useState(false);
+  const [wizard, setWizard] = useState(false);
 
   const load = async () => {
     try {
@@ -42,6 +45,14 @@ export function App() {
   useEffect(() => {
     load();
   }, []);
+
+  // First login: the setup wizard (once per user; Settings → Builder AI shows it again).
+  useEffect(() => {
+    if (!me) return;
+    api<{ setupDone?: boolean }>('/api/me/prefs', { quiet: true })
+      .then((p) => !p.setupDone && setWizard(true))
+      .catch(() => {});
+  }, [me?.id]);
 
   // Heartbeat: a dead server or new problems show up without a reload.
   useEffect(() => {
@@ -109,6 +120,11 @@ export function App() {
             Log out
           </button>
         </header>
+        {opened.has('use') && (
+          <div hidden={tab !== 'use'}>
+            <UsePage active={tab === 'use'} onProblem={() => setUnseen((n) => n + 1)} onBuild={() => setTab('canvas')} />
+          </div>
+        )}
         {opened.has('canvas') && (
           <div hidden={tab !== 'canvas'}>
             <CanvasPage active={tab === 'canvas'} onProblem={() => setUnseen((n) => n + 1)} />
@@ -121,7 +137,7 @@ export function App() {
         )}
         {opened.has('settings') && (
           <div hidden={tab !== 'settings'}>
-            <Settings isAdmin={me.role === 'admin'} active={tab === 'settings'} />
+            <Settings isAdmin={me.role === 'admin'} active={tab === 'settings'} onWizard={() => setWizard(true)} />
           </div>
         )}
         {opened.has('problems') && (
@@ -130,6 +146,7 @@ export function App() {
           </div>
         )}
       </div>
+      {wizard && <SetupWizard onDone={() => setWizard(false)} onOpen={(t) => setTab(t)} />}
       <Toasts />
     </>
   );

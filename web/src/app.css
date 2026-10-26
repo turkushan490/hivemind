@@ -89,3 +89,7 @@ html {
 
 /* Replay time slider */
 .hm-scrub { accent-color: #8b5cf6; height: 4px; cursor: pointer; }
+
+/* Builder "designing" indicator */
+@keyframes hm-dot { 0%, 100% { transform: scale(0.7); opacity: 0.6; } 50% { transform: scale(1.2); opacity: 1; } }
+.hm-core-dot { width: 10px; height: 10px; border-radius: 999px; background: radial-gradient(circle, #f0abfc, #8b5cf6); box-shadow: 0 0 10px #a855f7; animation: hm-dot 1s ease-in-out infinite; }

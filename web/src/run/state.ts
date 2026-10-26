@@ -3,7 +3,7 @@ import { createContext, useEffect, useRef, useState } from 'react';
 import { api } from '../api';
 import { toast } from '../notify';
 
-export type NodeState = 'idle' | 'queued' | 'loading' | 'thinking' | 'streaming' | 'done' | 'error';
+export type NodeState = 'idle' | 'queued' | 'loading' | 'thinking' | 'streaming' | 'done' | 'error' | 'skipped';
 
 export interface NodeView {
   state: NodeState;
@@ -28,6 +28,8 @@ export interface NodeView {
   /** Real load time reported when the block finished. */
   loadMs?: number;
   sizeBytes?: number;
+  /** Latest status line from inside the block ("Round 2 of 3", "Route: Coding"). */
+  note?: string;
 }
 
 export const IDLE: NodeView = { state: 'idle', text: '' };
@@ -46,6 +48,7 @@ export const STATE_TEXT: Record<NodeState, string> = {
   streaming: 'text-cyan-400',
   done: 'text-emerald-400',
   error: 'text-red-400',
+  skipped: 'text-slate-600',
 };
 
 /** Hex colours per state, for borders, glows and wires. */
@@ -57,6 +60,7 @@ export const STATE_COLOR: Record<NodeState, string> = {
   streaming: '#22d3ee',
   done: '#34d399',
   error: '#f87171',
+  skipped: '#30363d',
 };
 
 export const STATE_LABEL: Record<NodeState, string> = {
@@ -67,6 +71,7 @@ export const STATE_LABEL: Record<NodeState, string> = {
   streaming: 'writing',
   done: 'done',
   error: 'error',
+  skipped: 'skipped',
 };
 
 /** Folds run events into per-node state. Every animation is driven only by these events. */
@@ -83,6 +88,12 @@ export function applyEvent(views: Record<string, NodeView>, ev: RunEvent): Recor
       break;
     case 'model_loading':
       next = { ...v, state: 'loading', loadStartedAt: ev.ts, loadExpectedMs: ev.expectedMs, loadEstimated: ev.estimated, sizeBytes: ev.sizeBytes };
+      break;
+    case 'node_progress':
+      next = { ...v, note: ev.note };
+      break;
+    case 'node_skipped':
+      next = { ...v, state: 'skipped' };
       break;
     case 'model_ready':
       next = { ...v, readyAt: ev.ts, warm: ev.warm };

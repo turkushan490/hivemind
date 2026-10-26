@@ -10,6 +10,9 @@ export function validateGraph(graph: CanvasGraph): string[] {
     if (!NODE_TYPES.includes(n.type)) throw new Error(`Unknown node type "${n.type}"`);
     if (NODES[n.type].usesModel && !(n.config?.model?.providerId && n.config.model.model))
       throw new Error(`Node "${n.label ?? n.id}" has no model selected`);
+    const min = NODES[n.type].minModels;
+    if (min && (n.config?.models ?? []).filter((m) => m?.providerId && m.model).length < min)
+      throw new Error(`"${n.label ?? n.type}" needs at least ${min} model${min > 1 ? 's' : ''}`);
     ids.add(n.id);
   }
   if (!graph.nodes.some((n) => n.type === 'input')) throw new Error('Graph needs an input node');

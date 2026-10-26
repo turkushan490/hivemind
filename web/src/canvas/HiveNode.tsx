@@ -2,7 +2,7 @@ import type { NodeConfig, NodeType } from '@hivemind/shared';
 import { Handle, Position, type Node, type NodeProps } from '@xyflow/react';
 import { createContext, memo, useContext } from 'react';
 import { IDLE, STATE_COLOR, STATE_LABEL, type NodeView } from '../run/state';
-import { NODE_META } from './meta';
+import { NODE_META, summary } from './meta';
 import { GpuBar, useNow, WorkBar } from './NodeBars';
 import { Aura, Burst, GpuChip, ThinkingCore, ThoughtWords, WritingTail } from './NodeFx';
 
@@ -17,11 +17,12 @@ function HiveNodeImpl({ id, data, selected }: NodeProps<HiveFlowNode>) {
   const view = useContext(RunViews)[id] ?? IDLE;
   const stateColor = STATE_COLOR[view.state];
   const border = view.state === 'idle' ? (selected ? meta.color : '#30363d') : stateColor;
-  const missingModel = meta.usesModel && !data.config.model;
+  const info = summary(data.kind, data.config);
+  const usesModels = meta.usesModel || !!meta.multiModel;
   const loadingGpu = view.local && view.state === 'loading' && !!view.loadStartedAt && !view.readyAt;
 
   return (
-    <div className={`relative w-64 ${view.state === 'queued' ? 'hm-breathe' : ''}`}>
+    <div className={`relative w-64 ${view.state === 'queued' ? 'hm-breathe' : ''} ${view.state === 'skipped' ? 'opacity-40' : ''}`}>
       <Aura state={view.state} />
       <Burst state={view.state} />
       {meta.hasInput && <Handle type="target" position={Position.Left} className="hm-handle" />}
@@ -42,11 +43,12 @@ function HiveNodeImpl({ id, data, selected }: NodeProps<HiveFlowNode>) {
             )}
           </div>
           <div className="truncate text-sm font-semibold text-slate-100">{data.label || meta.title}</div>
-          {meta.usesModel && (
-            <div className={`truncate text-xs ${missingModel ? 'text-red-400' : 'text-slate-400'}`} title={data.config.model?.model}>
-              {data.config.model?.model ?? 'Pick a model →'}
+          {info && (
+            <div className={`truncate text-xs ${info.missing ? 'text-red-400' : 'text-slate-400'}`} title={info.text}>
+              {info.text}
             </div>
           )}
+          {view.note && view.state !== 'idle' && <div className="truncate text-[11px] font-medium text-amber-200/90">{view.note}</div>}
 
           {view.state === 'thinking' && (
             <div className="flex items-center gap-1 rounded-lg bg-violet-950/40 px-1 py-0.5">
@@ -57,7 +59,7 @@ function HiveNodeImpl({ id, data, selected }: NodeProps<HiveFlowNode>) {
           {view.state === 'streaming' && <WritingTail text={view.text} />}
           {loadingGpu && <LoadingChip v={view} />}
 
-          {meta.usesModel && view.state !== 'idle' && (
+          {usesModels && view.state !== 'idle' && view.state !== 'skipped' && (
             <div className="space-y-1.5 pt-0.5">
               <GpuBar v={view} />
               <WorkBar v={view} />

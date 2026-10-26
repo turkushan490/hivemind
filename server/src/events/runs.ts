@@ -3,6 +3,8 @@ import { newId } from '../crypto.js';
 import { db } from '../db/index.js';
 import { runGraph, type EngineDeps } from '../engine/run.js';
 import { logError } from '../errors.js';
+import { memoryFor } from '../services/memory.js';
+import { webSearch } from '../services/search.js';
 
 type Listener = (ev: RunEvent) => void;
 
@@ -43,7 +45,7 @@ export function startRun(opts: {
     for (const l of run.listeners) l(ev);
   };
 
-  runGraph(opts.graph, opts.question, { resolve: opts.resolve, emit }, run.abort.signal)
+  runGraph(opts.graph, opts.question, { resolve: opts.resolve, emit, services: { search: webSearch, memory: memoryFor(opts.ownerId) } }, run.abort.signal)
     .then((r) => finish(run, r.status, r.final, r.cost))
     .catch((err) => {
       emit({ type: 'error', error: (err as Error).message });

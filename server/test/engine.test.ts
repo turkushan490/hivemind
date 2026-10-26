@@ -1,8 +1,9 @@
-import { councilGraph, type RunEvent } from '@hivemind/shared';
+import { councilGraph, type CanvasGraph, type CanvasNode, type RunEvent } from '@hivemind/shared';
 import { describe, expect, it } from 'vitest';
 import { validateGraph } from '../src/engine/graph.js';
 import { runGraph, type ResolvedProvider } from '../src/engine/run.js';
 import type { ChatRequest } from '../src/providers/types.js';
+import type { NodeServices } from '../src/nodes/index.js';
 
 /** Fake provider: answers "<model>: <last user message start>", optionally failing or slow. */
 function fake(opts: { local?: boolean; fail?: string; delay?: number } = {}): ResolvedProvider & { calls: ChatRequest[]; active: number; maxActive: number } {
@@ -118,6 +119,21 @@ describe('runGraph', () => {
     expect(recorded[0]).toMatchObject({ model: 'a', loadMs: 8700 });
   });
 
+  it('asks a local model again without thinking when it only thought', async () => {
+    const p = fake({ local: true });
+    const asks: (boolean | undefined)[] = [];
+    p.adapter.stream = async function* (req) {
+      asks.push(req.think);
+      if (req.think === false) yield { type: 'token' as const, text: 'answer' };
+      else yield { type: 'thinking' as const, text: 'hmm hmm hmm' };
+      yield { type: 'done' as const };
+    };
+    const { result, events } = await run(councilGraph([ref('a')], ref('a')), p);
+    expect(asks).toEqual([undefined, false, undefined, false]);
+    expect(result.final).toBe('answer');
+    expect(events.some((e) => e.type === 'node_progress' && /without thinking/.test(e.note ?? ''))).toBe(true);
+  });
+
   it('fails the run when the judge fails', async () => {
     const { result } = await run(undefined, fake({ fail: 'judge' }));
     expect(result.status).toBe('error');
@@ -137,5 +153,109 @@ describe('runGraph', () => {
     const review = provider.calls.find((c) => c.messages[0].content.startsWith('You review'))!;
     expect(review.messages[1].content).toContain('Answer A');
     expect(review.messages[1].content).not.toContain('### alpha');
+  });
+});
+
+describe('logic and data blocks', () => {
+  const n = (id: string, type: CanvasNode['type'], config: CanvasNode['config'] = {}, label?: string): CanvasNode => ({ id, type, label, position: { x: 0, y: 0 }, config });
+  const e = (a: string, b: string) => ({ id: `${a}->${b}`, source: a, target: b });
+  async function go(graph: CanvasGraph, provider = fake(), services: NodeServices = {}) {
+    const events: RunEvent[] = [];
+    const result = await runGraph(graph, 'Q?', { resolve: async () => provider, emit: (x) => events.push(x as RunEvent), services }, new AbortController().signal);
+    return { result, events, provider };
+  }
+
+  it('Router runs only the branch it picks and skips the rest', async () => {
+    const p = fake();
+    p.adapter.stream = async function* (req) {
+      if (req.messages.some((m) => m.content.includes('Options:'))) yield { type: 'token' as const, text: 'Option 2' };
+      else yield { type: 'token' as const, text: `${req.model} answer` };
+      yield { type: 'done' as const };
+    };
+    const graph = {
+      nodes: [n('q', 'input'), n('r', 'router', { model: ref('router') }), n('a', 'llm', { model: ref('a') }, 'Coding'), n('b', 'llm', { model: ref('b') }, 'Cooking'), n('o', 'output')],
+      edges: [e('q', 'r'), e('r', 'a'), e('r', 'b'), e('a', 'o'), e('b', 'o')],
+    };
+    const { result, events } = await go(graph, p);
+    expect(result.final).toBe('b answer');
+    expect(events.find((x) => x.type === 'node_skipped')?.nodeId).toBe('a');
+    expect(events.some((x) => x.type === 'node_progress' && x.note === 'Route: Cooking')).toBe(true);
+  });
+
+  it('Debate runs every model for every round and shows each final answer', async () => {
+    const graph = {
+      nodes: [n('q', 'input'), n('d', 'debate', { models: [ref('x'), ref('y')], rounds: 2 }), n('o', 'output')],
+      edges: [e('q', 'd'), e('d', 'o')],
+    };
+    const { result, provider, events } = await go(graph);
+    expect(provider.calls).toHaveLength(4);
+    // Round 2 sees the other model's round-1 answer.
+    expect(provider.calls[2].messages.at(-1)!.content).toContain('y: ok');
+    expect(result.final).toContain('### x (after 2 rounds)');
+    expect(events.filter((x) => x.type === 'node_progress').map((x) => x.note)).toContain('Round 2 of 2 · y');
+  });
+
+  it('Debate needs two models', () => {
+    expect(() => validateGraph({ nodes: [n('q', 'input'), n('d', 'debate', { models: [ref('x')] })], edges: [e('q', 'd')] })).toThrow(/at least 2 models/);
+  });
+
+  it('Vote passes on the answer most voters pick', async () => {
+    const p = fake();
+    p.adapter.stream = async function* (req) {
+      if (req.messages.some((m) => m.content.includes('Which is best'))) yield { type: 'token' as const, text: 'B' };
+      else yield { type: 'token' as const, text: `${req.model} says hi` };
+      yield { type: 'done' as const };
+    };
+    const graph = {
+      nodes: [n('q', 'input'), n('a', 'llm', { model: ref('a') }), n('b', 'llm', { model: ref('b') }), n('v', 'vote', { models: [ref('v1'), ref('v2')] }), n('o', 'output')],
+      edges: [e('q', 'a'), e('q', 'b'), e('a', 'v'), e('b', 'v'), e('v', 'o')],
+    };
+    const { result } = await go(graph, p);
+    expect(result.final).toBe('b says hi');
+  });
+
+  it('Vote retries once when a voter names a letter that does not exist', async () => {
+    const p = fake();
+    let tries = 0;
+    p.adapter.stream = async function* (req) {
+      const last = req.messages.at(-1)!.content;
+      if (last.includes('Which is best')) yield { type: 'token' as const, text: tries++ === 0 ? 'C' : 'B' };
+      else yield { type: 'token' as const, text: `${req.model} says hi` };
+      yield { type: 'done' as const };
+    };
+    const graph = {
+      nodes: [n('q', 'input'), n('a', 'llm', { model: ref('a') }), n('b', 'llm', { model: ref('b') }), n('v', 'vote', { models: [ref('v1')] }), n('o', 'output')],
+      edges: [e('q', 'a'), e('q', 'b'), e('a', 'v'), e('b', 'v'), e('v', 'o')],
+    };
+    const { result } = await go(graph, p);
+    // First reply "C" is not a valid letter, so the voter is asked once more.
+    expect(tries).toBe(2);
+    expect(result.final).toBe('b says hi');
+  });
+
+  it('Template, File, Search and Memory feed text into a model', async () => {
+    const saved: string[] = [];
+    const services: NodeServices = {
+      search: async (q) => [{ title: 'Octopus', url: 'https://x', text: `facts about ${q}` }],
+      memory: { recall: () => [{ text: 'earlier note', at: 'yesterday' }], save: (_k, t) => saved.push(t) },
+    };
+    const graph = {
+      nodes: [
+        n('q', 'input'),
+        n('f', 'file', { text: 'file content', fileName: 'notes.txt' }),
+        n('s', 'search'),
+        n('m', 'memory', { key: 'k' }),
+        n('t', 'template', { prompt: 'Topic: {{question}}' }),
+        n('l', 'llm', { model: ref('a') }),
+        n('save', 'memory', { key: 'k', mode: 'save' }),
+        n('o', 'output'),
+      ],
+      edges: [e('q', 'f'), e('q', 's'), e('q', 'm'), e('q', 't'), e('f', 'l'), e('s', 'l'), e('m', 'l'), e('t', 'l'), e('l', 'save'), e('save', 'o')],
+    };
+    const { result, provider } = await go(graph, fake(), services);
+    const prompt = provider.calls[0].messages.at(-1)!.content;
+    for (const part of ['file content', 'facts about Q?', 'earlier note', 'Topic: Q?']) expect(prompt).toContain(part);
+    expect(result.final).toBe('a: ok');
+    expect(saved[0]).toBe('Q: Q?\nA: a: ok');
   });
 });

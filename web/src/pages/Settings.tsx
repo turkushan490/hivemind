@@ -1,12 +1,13 @@
 import { useStored } from '../stored';
 import { Models } from './Models';
 import { Providers } from './Providers';
+import { BuilderSettings, MemorySettings, SearchSettingsPanel } from './SettingsExtra';
 import { Tokens } from './Tokens';
 
-const SECTIONS = { providers: 'AI providers', models: 'Download models', tokens: 'API tokens' } as const;
+const SECTIONS = { providers: 'AI providers', models: 'Download models', builder: 'Builder AI', search: 'Web search', memory: 'Memory', tokens: 'API tokens' } as const;
 type Section = keyof typeof SECTIONS;
 
-export function Settings({ isAdmin, active }: { isAdmin: boolean; active: boolean }) {
+export function Settings({ isAdmin, active, onWizard }: { isAdmin: boolean; active: boolean; onWizard: () => void }) {
   const [section, setSection] = useStored<Section>('settings.section', 'providers');
   return (
     <div className="flex flex-col gap-4 md:flex-row">
@@ -28,6 +29,15 @@ export function Settings({ isAdmin, active }: { isAdmin: boolean; active: boolea
         </div>
         <div hidden={section !== 'models'}>
           <Models active={active && section === 'models'} />
+        </div>
+        <div hidden={section !== 'builder'}>
+          <BuilderSettings active={active && section === 'builder'} onWizard={onWizard} />
+        </div>
+        <div hidden={section !== 'search'}>
+          <SearchSettingsPanel isAdmin={isAdmin} />
+        </div>
+        <div hidden={section !== 'memory'}>
+          <MemorySettings active={active && section === 'memory'} />
         </div>
         <div hidden={section !== 'tokens'}>
           <Tokens />

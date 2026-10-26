@@ -293,7 +293,9 @@ function Editor({ active, onProblem }: { active: boolean; onProblem: () => void 
       for (let i = 0; i < 20 && taken(pos); i++) pos = { x: pos.x + (i % 2 ? 40 : 0), y: pos.y + 120 };
     }
     const id = newNodeId(kind);
-    const lastModel = [...nodes].reverse().find((n) => n.data.config.model)?.data.config.model;
+    // New blocks reuse the last model of the same kind: image blocks an image model, the rest a text model.
+    const isImage = (k: NodeType) => k === 'image';
+    const lastModel = [...nodes].reverse().find((n) => n.data.config.model && isImage(n.data.kind) === isImage(kind))?.data.config.model ?? (isImage(kind) ? pickImageModel(models) : undefined);
     const meta = NODE_META[kind];
     const config: NodeConfig = meta.usesModel && lastModel ? { model: lastModel } : {};
     // Debate / Vote start with fast models filled in; change them in the inspector.

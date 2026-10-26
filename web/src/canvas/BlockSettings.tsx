@@ -145,6 +145,58 @@ const SIZES: [string, number, number][] = [
   ['Small (fast)', 768, 768],
 ];
 
+/** Image models need sizes in multiples of 8; very small or huge sizes give bad pictures or run out of memory. */
+const fitSize = (v: number) => Math.min(2048, Math.max(256, Math.round((Number.isFinite(v) ? v : 1024) / 8) * 8));
+
+/** Any width × height, applied when you leave the field or press Enter; ⇄ swaps them. */
+function CustomSize({ width, height, onChange }: { width: number; height: number; onChange: (w: number, h: number) => void }) {
+  const [w, setW] = useState(String(width));
+  const [h, setH] = useState(String(height));
+  useEffect(() => {
+    setW(String(width));
+    setH(String(height));
+  }, [width, height]);
+  const apply = () => {
+    const nw = fitSize(Number(w));
+    const nh = fitSize(Number(h));
+    setW(String(nw));
+    setH(String(nh));
+    if (nw !== width || nh !== height) onChange(nw, nh);
+  };
+  const preset = SIZES.some(([, a, b]) => a === width && b === height);
+  const mp = ((width * height) / 1e6).toFixed(2);
+  return (
+    <div className={`mt-1 flex items-center gap-1.5 rounded-md border px-2 py-1.5 text-xs ${preset ? 'border-[#30363d]' : 'border-fuchsia-500 bg-fuchsia-500/10'}`}>
+      <span className="text-slate-400">Custom</span>
+      <input
+        className="input w-20 px-2 py-0.5 text-xs"
+        inputMode="numeric"
+        aria-label="Width"
+        value={w}
+        onChange={(e) => setW(e.target.value.replace(/\D/g, ''))}
+        onBlur={apply}
+        onKeyDown={(e) => e.key === 'Enter' && apply()}
+      />
+      <span className="text-slate-500">×</span>
+      <input
+        className="input w-20 px-2 py-0.5 text-xs"
+        inputMode="numeric"
+        aria-label="Height"
+        value={h}
+        onChange={(e) => setH(e.target.value.replace(/\D/g, ''))}
+        onBlur={apply}
+        onKeyDown={(e) => e.key === 'Enter' && apply()}
+      />
+      <button className="rounded px-1.5 text-slate-400 hover:bg-[#21262d] hover:text-slate-200" title="Swap width and height" aria-label="Swap width and height" onClick={() => onChange(height, width)}>
+        ⇄
+      </button>
+      <span className={`ml-auto ${width * height > 1.6e6 ? 'text-amber-300' : 'text-slate-500'}`} title="Bigger pictures take longer and need more GPU memory">
+        {mp} MP
+      </span>
+    </div>
+  );
+}
+
 /** Image block: size, quality, LoRA (ComfyUI), what not to draw, and an optional fixed prompt. */
 function ImageSettings(p: Props) {
   const c = p.config;
@@ -173,6 +225,7 @@ function ImageSettings(p: Props) {
             </button>
           ))}
         </div>
+        <CustomSize width={c.width ?? 1024} height={c.height ?? 1024} onChange={(width, height) => p.onChange({ width, height })} />
       </div>
       {isComfy && (
         <div className="grid grid-cols-2 gap-2">

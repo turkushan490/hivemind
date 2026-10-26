@@ -3,6 +3,10 @@
 <h1 align="center">HiveMind</h1>
 <p align="center"><b>Many AIs, one answer — and you watch them think.</b></p>
 
+<p align="center"><img src="docs/website-files.gif" width="860" alt="A website built by a local model, shown in a live sandboxed preview, and the files folder with previews"></p>
+
+<p align="center"><img src="docs/comfyui-example.png" width="320" alt="Picture made by an Image block with a local SDXL model in ComfyUI"></p>
+
 <p align="center"><img src="docs/builder.gif" width="860" alt="Setup wizard, the Builder making a canvas from one sentence, running it, then asking it in Use mode"></p>
 
 <p align="center"><img src="docs/replay.gif" width="860" alt="Run history: pick a past run and replay it on the canvas with a time slider and speed control"></p>
@@ -21,6 +25,11 @@ HiveMind is a self-hosted web app where several AI models work together. Ask one
 
 ## Features (now)
 
+- **Images:** an Image block draws with your own **ComfyUI** (its checkpoints and LoRAs, fully local) or an OpenAI-compatible image API. Ollama and ComfyUI on the same GPU take turns automatically.
+- **Files & websites:** a files folder (upload, preview, download), a Save file block (website, Markdown, code, JSON, CSV), and a sandboxed live **preview** of websites the AIs build.
+- **Export / import:** canvases as files or a ZIP, finished tasks as ZIPs (answer, every block's output, images, replay data) — and back in again.
+- **Ready-made sets:** Everyday, Coding, Creative, Home / research and Website templates.
+- **Parallel switch:** cloud AIs always run at the same time; local models one by one, or together when you switch it on.
 - **Builder AI:** tell it what you need ("search Wikipedia, then two models answer and a judge merges them") and it builds or changes the canvas with the models you really have. A setup wizard helps you pick its model.
 - **Use mode:** the simple screen — pick a canvas, ask, get the answer, with a compact view of how it was made.
 - **Logic blocks:** Router (a model picks the branch), Debate (models improve each other over rounds), Vote (models pick the best answer).

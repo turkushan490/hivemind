@@ -1,12 +1,14 @@
-import type { CanvasGraph, CanvasNode, ModelInfo, ModelRef, RunEvent, RunStatus } from '@hivemind/shared';
+import type { CanvasGraph, CanvasNode, ModelInfo, ModelRef, OutputFile, RunEvent, RunStatus } from '@hivemind/shared';
 import { NODES, type NodeInput, type NodeServices } from '../nodes/index.js';
 import type { ChatMessage, ProviderAdapter } from '../providers/types.js';
 import { validateGraph } from './graph.js';
 
 export interface ResolvedProvider {
   adapter: ProviderAdapter;
-  /** Local providers run one job at a time per host (VRAM). */
+  /** Runs on local hardware (shows the GPU bar). */
   local: boolean;
+  /** Local and not switched to parallel: one job at a time per host (VRAM). */
+  exclusive?: boolean;
   hostKey: string;
   modelInfo(model: string): Promise<ModelInfo | undefined>;
   /** Remembered timings per model on this provider, to show real progress next time. */
@@ -62,6 +64,7 @@ export async function runGraph(graph: CanvasGraph, question: string, deps: Engin
   /** Wires a Router did not choose ("source->target"). */
   const blocked = new Set<string>();
   const started = new Set<string>();
+  const allFiles: OutputFile[] = [];
   let cost = 0;
 
   deps.emit({ type: 'run_start', graph, question });
@@ -93,7 +96,7 @@ export async function runGraph(graph: CanvasGraph, question: string, deps: Engin
     const primary: ModelRef | undefined = model ?? node.config.models?.[0];
     const usesModels = def.usesModel || !!def.minModels;
     const provider = usesModels && primary ? await deps.resolve(primary.providerId).catch(() => undefined) : undefined;
-    const heldHost = provider?.local ? provider.hostKey : undefined;
+    const heldHost = provider?.local && provider.exclusive !== false ? provider.hostKey : undefined;
 
     const exec = async () => {
       const t0 = Date.now();
@@ -107,6 +110,7 @@ export async function runGraph(graph: CanvasGraph, question: string, deps: Engin
       let ready = false;
       let loadMs: number | undefined;
       let sizeBytes: number | undefined;
+      const files: OutputFile[] = [];
       deps.emit({ ...base, type: 'node_start', ...(provider?.local && { local: true }) });
       const markReady = () => {
         if (ready) return;
@@ -184,14 +188,46 @@ export async function runGraph(graph: CanvasGraph, question: string, deps: Engin
           const m = ref ?? primary;
           if (!m) throw new Error('This block has no model');
           const p = await deps.resolve(m.providerId);
+          // Another AI server on the same GPU (ComfyUI) gives its memory back before a local model loads.
+          if (p.local && p.exclusive !== false) await deps.services?.freeGpu?.(p.hostKey, m.providerId).catch(() => {});
           // A different local GPU than the one this block holds: wait for that GPU too.
-          if (p.local && p.hostKey !== heldHost) return withHostLock(p.hostKey, () => call(messages, m));
+          if (p.local && p.exclusive !== false && p.hostKey !== heldHost) return withHostLock(p.hostKey, () => call(messages, m));
           return call(messages, m);
         },
         choose: (ids) => {
           for (const c of children.get(node.id)!) if (!ids.includes(c)) blocked.add(`${node.id}->${c}`);
         },
         progress: (note) => deps.emit({ ...base, type: 'node_progress', note }),
+        attach: (f) => {
+          files.push(f);
+          allFiles.push(f);
+        },
+        generateImage: async (prompt) => {
+          if (!primary) throw new Error('Pick an image model for this block');
+          const p = await deps.resolve(primary.providerId);
+          if (!p.adapter.image) throw new Error(`${primary.model} cannot make images — pick an image model (ComfyUI or an image API)`);
+          if (!deps.services?.saveFile) throw new Error('Saving images is not available here');
+          // On a shared GPU, Ollama's idle models are cleared first so the image model fits.
+          if (p.local && p.exclusive !== false) await deps.services.freeGpu?.(p.hostKey, primary.providerId).catch(() => {});
+          const c = node.config;
+          const images = await p.adapter.image(
+            { model: primary.model, prompt, negative: c.negative, width: c.width ?? 1024, height: c.height ?? 1024, steps: c.steps, cfg: c.cfg, lora: c.lora, loraStrength: c.loraStrength },
+            signal,
+            (note) => {
+              markReady();
+              deps.emit({ ...base, type: 'node_progress', note });
+            },
+          );
+          markReady();
+          const saved = images.map((img, i) =>
+            deps.services!.saveFile!(`outputs/image-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}${images.length > 1 ? `-${i + 1}` : ''}.${img.ext}`, img.data),
+          );
+          for (const f of saved) {
+            files.push(f);
+            allFiles.push(f);
+          }
+          return saved;
+        },
         services: deps.services ?? {},
       });
 
@@ -204,6 +240,7 @@ export async function runGraph(graph: CanvasGraph, question: string, deps: Engin
       deps.emit({
         ...base,
         type: 'node_done',
+        ...(files.length && { files }),
         text,
         tokens: usesModels ? tokens : undefined,
         inputTokens,
@@ -255,6 +292,6 @@ export async function runGraph(graph: CanvasGraph, question: string, deps: Engin
   const final = finalNode ? outputs.get(finalNode.id) : undefined;
   // Partial failures still count as done when an answer came out; the error events show what broke.
   const status: RunStatus = signal.aborted ? 'cancelled' : final !== undefined ? 'done' : 'error';
-  deps.emit({ type: 'run_done', status, final, cost });
+  deps.emit({ type: 'run_done', status, final, cost, ...(allFiles.length && { files: allFiles }) });
   return { status, final, cost };
 }

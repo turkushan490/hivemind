@@ -4,8 +4,12 @@ import { App } from './App';
 import { reportProblem, toast } from './notify';
 import './app.css';
 
+// Harmless browser notices that are not errors (the canvas resizing itself).
+const NOISE = /ResizeObserver loop/;
+
 // Anything that breaks in the browser is shown and sent to the Problems log.
 window.addEventListener('error', (e) => {
+  if (NOISE.test(e.message)) return;
   reportProblem(`Page error: ${e.message}`, e.error?.stack);
   toast(`Page error: ${e.message}`);
 });

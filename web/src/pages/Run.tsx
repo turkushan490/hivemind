@@ -1,6 +1,7 @@
 import { councilGraph, type CanvasGraph, type ModelInfo, type RunEvent } from '@hivemind/shared';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../api';
+import { AnswerView } from '../components/AnswerView';
 import { toast } from '../notify';
 import { useStored } from '../stored';
 import { applyEvent, modelKey as key, parseModelKey as unkey, STATE_TEXT as STATE_STYLE, type NodeView } from '../run/state';
@@ -41,7 +42,7 @@ export function RunPage({ onProblem, active }: { onProblem: () => void; active: 
     return () => clearInterval(t);
   }, [runId, final]);
 
-  const shown = useMemo(() => (freeOnly ? models.filter((m) => m.free) : models), [models, freeOnly]);
+  const shown = useMemo(() => models.filter((m) => m.kind !== 'image' && (!freeOnly || m.free)), [models, freeOnly]);
 
   const start = async () => {
     setError('');
@@ -215,7 +216,7 @@ export function RunPage({ onProblem, active }: { onProblem: () => void; active: 
           <h2 className="mb-2 font-semibold">
             Final answer <span className="text-sm font-normal text-slate-400">({final.status}{final.cost ? `, $${final.cost.toFixed(5)}` : ''})</span>
           </h2>
-          <pre className="whitespace-pre-wrap text-sm">{final.text ?? (final.status === 'cancelled' ? 'Cancelled.' : 'No final answer: the run failed. See the problems above.')}</pre>
+          {final.text ? <AnswerView text={final.text} /> : <p className="text-sm text-slate-400">{final.status === 'cancelled' ? 'Cancelled.' : 'No final answer: the run failed. See the problems above.'}</p>}
         </div>
       )}
     </div>

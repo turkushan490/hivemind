@@ -85,7 +85,7 @@ export function useReplay() {
       const ev = run.events[idx++];
       views = applyEvent(views, ev);
       if (ev.type === 'error' && ev.error !== 'Cancelled' && ev.error !== 'All inputs failed') errors = [...errors, `${label(ev.nodeId)} failed: ${ev.error}`];
-      if (ev.type === 'run_done' && ev.seq >= 0) final = { text: ev.final, status: ev.status, cost: ev.cost };
+      if (ev.type === 'run_done' && ev.seq >= 0) final = { text: ev.final, status: ev.status, cost: ev.cost, files: ev.files };
     }
     cache.current = { idx, views, final, errors };
     return cache.current;

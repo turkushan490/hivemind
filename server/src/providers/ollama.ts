@@ -39,6 +39,10 @@ export function ollamaAdapter(cfg: ProviderConfig): ProviderAdapter {
       }
     },
 
+    async freeMemory(): Promise<void> {
+      for (const m of await this.loaded!()) await this.unload!(m.model);
+    },
+
     async remove(model: string): Promise<void> {
       const res = await fetch(`${base}/api/delete`, {
         method: 'DELETE',

@@ -6,7 +6,8 @@ import { ModelPicker } from './ModelPicker';
  * Recommended models for the Builder: it has to write a small JSON plan, so mid-size models work best.
  * Local models of about 3–10 GB first (no cost, private), then free cloud models, then the rest.
  */
-export function recommendBuilderModels(models: ModelInfo[]): { model: ModelInfo; why: string }[] {
+export function recommendBuilderModels(all: ModelInfo[]): { model: ModelInfo; why: string }[] {
+  const models = all.filter((m) => m.kind !== 'image');
   // The same weights can be installed under two names (e.g. "x" and "ollama.com/x"): count them once.
   const seen = new Set<string>();
   const local = models

@@ -1,4 +1,4 @@
-import type { CanvasGraph, ModelRef, RunEvent } from '@hivemind/shared';
+import type { CanvasGraph, ModelRef, OutputFile, RunEvent } from '@hivemind/shared';
 import { createContext, useEffect, useRef, useState } from 'react';
 import { api } from '../api';
 import { toast } from '../notify';
@@ -30,6 +30,8 @@ export interface NodeView {
   sizeBytes?: number;
   /** Latest status line from inside the block ("Round 2 of 3", "Route: Coding"). */
   note?: string;
+  /** Files the block wrote (images, saved answers). */
+  files?: OutputFile[];
 }
 
 export const IDLE: NodeView = { state: 'idle', text: '' };
@@ -114,6 +116,7 @@ export function applyEvent(views: Record<string, NodeView>, ev: RunEvent): Recor
         elapsedMs: ev.elapsedMs,
         cost: ev.cost,
         loadMs: ev.loadMs ?? v.loadMs,
+        files: ev.files ?? v.files,
         sizeBytes: ev.sizeBytes ?? v.sizeBytes,
       };
       break;
@@ -128,6 +131,7 @@ export interface RunFinal {
   text?: string;
   status?: string;
   cost?: number;
+  files?: OutputFile[];
 }
 
 /**
@@ -191,7 +195,7 @@ export function useRun(onProblem?: () => void) {
           onProblem?.();
         }
       }
-      if (ev.type === 'run_done') setFinal({ text: ev.final, status: ev.status, cost: ev.cost });
+      if (ev.type === 'run_done') setFinal({ text: ev.final, status: ev.status, cost: ev.cost, files: ev.files });
     };
     es.addEventListener('end', () => {
       es.close();

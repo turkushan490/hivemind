@@ -5,7 +5,7 @@ import { db } from '../db/index.js';
 import { validateGraph } from '../engine/graph.js';
 import { cancelRun, startRun, subscribe } from '../events/runs.js';
 import { requireUser } from './auth.js';
-import { resolverFor } from './providers.js';
+import { gpuFreerFor, resolverFor } from './providers.js';
 
 interface CanvasRow {
   id: string;
@@ -66,7 +66,7 @@ export function runRoutes(app: FastifyInstance) {
     } catch (err) {
       return reply.code(400).send({ error: (err as Error).message });
     }
-    const runId = startRun({ ownerId: req.user!.id, canvasId: body.canvasId, graph, question, resolve: resolverFor(req.user!) });
+    const runId = startRun({ ownerId: req.user!.id, canvasId: body.canvasId, graph, question, resolve: resolverFor(req.user!), freeGpu: gpuFreerFor(req.user!) });
     return { runId };
   });
 

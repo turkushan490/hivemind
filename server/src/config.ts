@@ -21,6 +21,8 @@ export const config = {
   secretKey: secretKey(),
   /** Seeded as the first Ollama provider on a fresh install. */
   ollamaUrl: process.env.OLLAMA_URL || 'http://localhost:11434',
+  /** Optional: your ComfyUI, added once as an image provider. */
+  comfyUrl: process.env.COMFYUI_URL || '',
   /** Set to true behind HTTPS (e.g. Nginx Proxy Manager) so cookies get the Secure flag. */
   secureCookies: process.env.SECURE_COOKIES === 'true',
   webDir: resolve(process.env.WEB_DIR || 'web'),

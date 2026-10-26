@@ -65,6 +65,19 @@ function HiveNodeImpl({ id, data, selected }: NodeProps<HiveFlowNode>) {
               <WorkBar v={view} />
             </div>
           )}
+          {view.files?.some((f) => f.kind === 'image') && (
+            <div className="grid grid-cols-2 gap-1">
+              {view.files
+                .filter((f) => f.kind === 'image')
+                .slice(0, 4)
+                .map((f) => (
+                  <img key={f.path} src={`/api/files/raw?inline=1&path=${encodeURIComponent(f.path)}`} alt="" className="hm-pop aspect-square w-full rounded-md object-cover" />
+                ))}
+            </div>
+          )}
+          {view.files?.some((f) => f.kind !== 'image') && (
+            <div className="truncate text-[11px] text-yellow-200/90">📄 {view.files.filter((f) => f.kind !== 'image').map((f) => f.path.split('/').pop()).join(', ')}</div>
+          )}
           {view.error && <div className="line-clamp-2 text-xs text-red-300">{view.error}</div>}
         </div>
       </div>

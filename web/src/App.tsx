@@ -3,6 +3,7 @@ import { api } from './api';
 import { MemoryButton } from './components/MemoryButton';
 import { Toasts } from './components/Toasts';
 import { CanvasPage } from './canvas/CanvasPage';
+import { FilesPage } from './pages/FilesPage';
 import { Login } from './pages/Login';
 import { Problems } from './pages/Problems';
 import { RunPage } from './pages/Run';
@@ -17,7 +18,7 @@ interface Me {
   role: 'admin' | 'user';
 }
 
-const TABS = { use: 'Use', canvas: 'Canvas', run: 'Quick council', settings: 'Settings', problems: 'Problems' } as const;
+const TABS = { use: 'Use', canvas: 'Canvas', files: 'Files', run: 'Quick council', settings: 'Settings', problems: 'Problems' } as const;
 type Tab = keyof typeof TABS;
 
 export function App() {
@@ -128,6 +129,11 @@ export function App() {
         {opened.has('canvas') && (
           <div hidden={tab !== 'canvas'}>
             <CanvasPage active={tab === 'canvas'} onProblem={() => setUnseen((n) => n + 1)} />
+          </div>
+        )}
+        {opened.has('files') && (
+          <div hidden={tab !== 'files'}>
+            <FilesPage active={tab === 'files'} />
           </div>
         )}
         {opened.has('run') && (

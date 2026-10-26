@@ -1,7 +1,7 @@
 import { PROVIDER_PRESETS, type ModelInfo, type ProviderInfo, type ProviderKind } from '@hivemind/shared';
 import type { FastifyInstance } from 'fastify';
 import { decrypt, encrypt, newId } from '../crypto.js';
-import { db } from '../db/index.js';
+import { db, getSetting, setSetting } from '../db/index.js';
 import type { ResolvedProvider } from '../engine/run.js';
 import { createAdapter } from '../providers/index.js';
 import { requireUser, type User } from './auth.js';
@@ -16,6 +16,7 @@ interface ProviderRow {
   owner_id: string | null;
   enabled: number;
   local: number;
+  parallel: number;
 }
 
 const toInfo = (r: ProviderRow): ProviderInfo => ({
@@ -27,6 +28,7 @@ const toInfo = (r: ProviderRow): ProviderInfo => ({
   hasKey: !!r.api_key_enc,
   enabled: !!r.enabled,
   local: !!r.local,
+  parallel: !!r.parallel,
   shared: r.owner_id === null,
 });
 
@@ -65,7 +67,10 @@ export function resolverFor(user: User) {
     return {
       adapter: adapterFor(row),
       local: !!row.local,
-      hostKey: row.base_url,
+      // Parallel on: this server's models don't wait for each other.
+      exclusive: !!row.local && !row.parallel,
+      // One GPU per machine: Ollama and ComfyUI on the same host share the lock.
+      hostKey: hostOf(row.base_url),
       modelInfo: async (model) => (await modelsOf(row)).find((m) => m.model === model),
       stats: row.local ? modelStats(row.id) : undefined,
     };
@@ -97,11 +102,32 @@ function modelStats(providerId: string): NonNullable<ResolvedProvider['stats']> 
   };
 }
 
+const hostOf = (url: string) => {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return url;
+  }
+};
+
+/** Gives back GPU memory on one machine: every enabled local AI server there except the one about to use it. */
+export function gpuFreerFor(user: User) {
+  return async (hostKey: string, exceptProviderId?: string) => {
+    const rows = visibleRows(user).filter((r) => r.enabled && r.local && r.id !== exceptProviderId && hostOf(r.base_url) === hostKey);
+    await Promise.allSettled(rows.map((r) => adapterFor(r).freeMemory?.()));
+  };
+}
+
 /** Fresh install: add Ollama so local models work right away. */
-export function seedProviders(ollamaUrl: string) {
+export function seedProviders(ollamaUrl: string, comfyUrl?: string) {
   const n = (db.prepare('SELECT COUNT(*) AS n FROM providers').get() as { n: number }).n;
-  if (n > 0) return;
-  db.prepare('INSERT INTO providers (id, preset, kind, name, base_url, local) VALUES (?, ?, ?, ?, ?, 1)').run('ollama', 'ollama', 'ollama', 'Ollama', ollamaUrl);
+  if (n === 0) db.prepare('INSERT INTO providers (id, preset, kind, name, base_url, local) VALUES (?, ?, ?, ?, ?, 1)').run('ollama', 'ollama', 'ollama', 'Ollama', ollamaUrl);
+  // COMFYUI_URL adds ComfyUI once, also on existing installs; removing it later in Settings sticks.
+  if (comfyUrl && !getSetting('seeded.comfyui')) {
+    if (!(db.prepare("SELECT 1 FROM providers WHERE preset = 'comfyui'").get()))
+      db.prepare("INSERT INTO providers (id, preset, kind, name, base_url, local) VALUES ('comfyui', 'comfyui', 'comfyui', 'ComfyUI', ?, 1)").run(comfyUrl);
+    setSetting('seeded.comfyui', '1');
+  }
 }
 
 export function providerRoutes(app: FastifyInstance) {
@@ -135,13 +161,14 @@ export function providerRoutes(app: FastifyInstance) {
   app.patch('/api/providers/:id', { preHandler: requireUser }, async (req, reply) => {
     const row = rowFor(req.user!, (req.params as { id: string }).id);
     if (!row || !canEdit(req.user!, row)) return reply.code(404).send({ error: 'Not found' });
-    const body = (req.body ?? {}) as { name?: string; baseUrl?: string; apiKey?: string; enabled?: boolean };
+    const body = (req.body ?? {}) as { name?: string; baseUrl?: string; apiKey?: string; enabled?: boolean; parallel?: boolean };
     if (body.baseUrl !== undefined && !/^https?:\/\//.test(body.baseUrl)) return reply.code(400).send({ error: 'Base URL must start with http:// or https://' });
-    db.prepare('UPDATE providers SET name = ?, base_url = ?, api_key_enc = ?, enabled = ? WHERE id = ?').run(
+    db.prepare('UPDATE providers SET name = ?, base_url = ?, api_key_enc = ?, enabled = ?, parallel = ? WHERE id = ?').run(
       body.name?.trim() || row.name,
       body.baseUrl?.trim() || row.base_url,
       body.apiKey ? encrypt(body.apiKey.trim()) : row.api_key_enc,
       body.enabled === undefined ? row.enabled : body.enabled ? 1 : 0,
+      body.parallel === undefined ? row.parallel : body.parallel ? 1 : 0,
       row.id,
     );
     modelCache.delete(row.id);
@@ -164,6 +191,14 @@ export function providerRoutes(app: FastifyInstance) {
     } catch (err) {
       return reply.code(502).send({ error: (err as Error).message });
     }
+  });
+
+  /** LoRAs a ComfyUI provider offers (for Image blocks). */
+  app.get('/api/providers/:id/loras', { preHandler: requireUser }, async (req, reply) => {
+    const row = rowFor(req.user!, (req.params as { id: string }).id);
+    if (!row) return reply.code(404).send({ error: 'Not found' });
+    const adapter = adapterFor(row) as ReturnType<typeof adapterFor> & { loras?: () => Promise<string[]> };
+    return adapter.loras ? adapter.loras().catch(() => []) : [];
   });
 
   /** Every model of every enabled provider; providers that fail are reported, not fatal. */

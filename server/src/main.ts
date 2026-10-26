@@ -13,6 +13,8 @@ import { memoryRoutes } from './api/memory.js';
 import { libraryRoutes } from './api/library.js';
 import { settingsRoutes } from './api/settings.js';
 import { builderRoutes } from './api/builder.js';
+import { fileRoutes } from './api/files.js';
+import { exportRoutes } from './api/exports.js';
 
 const app = Fastify({ logger: { level: process.env.LOG_LEVEL || 'info' }, trustProxy: true, bodyLimit: 5 * 1024 * 1024 });
 
@@ -77,7 +79,10 @@ app.addHook('onRequest', async (req, reply) => {
   if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method) && req.url.startsWith('/api/')) {
     const type = req.headers['content-type'] ?? '';
     const hasBody = Number(req.headers['content-length'] ?? 0) > 0 || req.headers['transfer-encoding'];
-    if (hasBody && !type.startsWith('application/json')) return reply.code(415).send({ error: 'Send JSON' });
+    // Raw bodies only where files are uploaded or imported.
+    const upload =
+      (req.url.startsWith('/api/files') && type.startsWith('application/octet-stream')) || (req.url.startsWith('/api/import/') && type.startsWith('application/zip'));
+    if (hasBody && !upload && !type.startsWith('application/json')) return reply.code(415).send({ error: 'Send JSON' });
   }
 });
 
@@ -91,7 +96,9 @@ memoryRoutes(app);
 libraryRoutes(app);
 settingsRoutes(app);
 builderRoutes(app);
-seedProviders(config.ollamaUrl);
+fileRoutes(app);
+exportRoutes(app);
+seedProviders(config.ollamaUrl, config.comfyUrl);
 
 if (existsSync(config.webDir)) {
   await app.register(staticFiles, {

@@ -23,6 +23,8 @@ export interface BuilderCanvas {
     count?: number;
     key?: string;
     mode?: string;
+    format?: string;
+    fileName?: string;
   }[];
   edges: [string, string][];
 }
@@ -45,12 +47,15 @@ const BLOCKS: Record<NodeType, string> = {
   file: 'text from a file the user loads later. No inputs. Leave its content empty.',
   search: `web search for the question (or the text of the block before it). Optional "source": ${SEARCH_SOURCES.join(' | ')}, "count" 1-10.`,
   memory: '"mode": "recall" brings back what was saved under "key"; "mode": "save" remembers what flows through it under "key".',
+  save: `saves what is wired into it as a file. "format": auto | md | txt | html | json | csv | code (auto = html for websites). Optional "fileName".`,
+  image: 'makes an image. Needs "model" (an image model from the list). Draws "prompt" if set, else the text of the block before it (put a model before it that writes an image prompt).',
 };
 
 const ref = (m: ModelInfo) => `${m.providerId}|${m.model}`;
 
 function modelLine(m: ModelInfo): string {
   const gb = (m.sizeBytes ?? 0) / 1e9;
+  if (m.kind === 'image') return `- ${ref(m)} (IMAGE model, only for "image" blocks)`;
   const tier = !m.sizeBytes ? 'cloud' : gb < 2 ? 'tiny, fast but weak' : gb < 6 ? 'small' : gb < 12 ? 'medium' : 'large';
   const tags = [m.free ? 'free' : 'paid', m.sizeBytes ? `local ${gb.toFixed(1)} GB` : 'cloud', ...(m.sizeBytes ? [tier] : [])];
   return `- ${ref(m)} (${tags.join(', ')})`;
@@ -74,6 +79,7 @@ export function toBuilderCanvas(g: CanvasGraph): BuilderCanvas {
         ...(c.count && { count: c.count }),
         ...(c.key && { key: c.key }),
         ...(c.mode && { mode: c.mode }),
+        ...(c.format && { format: c.format }),
       };
     }),
     edges: g.edges.map((e) => [e.source, e.target]),
@@ -81,7 +87,8 @@ export function toBuilderCanvas(g: CanvasGraph): BuilderCanvas {
 }
 
 export function builderSystemPrompt(models: ModelInfo[]): string {
-  const usable = models.filter((m) => !(m.sizeBytes !== undefined && m.sizeBytes < 50e6)).slice(0, 60);
+  const text = models.filter((m) => m.kind !== 'image' && !(m.sizeBytes !== undefined && m.sizeBytes < 50e6)).slice(0, 50);
+  const usable = [...text, ...models.filter((m) => m.kind === 'image').slice(0, 12)];
   return [
     'You are the Builder inside HiveMind, an app where AI models work together on a canvas of blocks wired left to right.',
     'You design or change canvases for the user. Keep them as simple as the request allows.',
@@ -91,6 +98,7 @@ export function builderSystemPrompt(models: ModelInfo[]): string {
     '',
     'Models you may use (copy the id before the space exactly; never invent one):',
     ...(usable.length ? usable.map(modelLine) : ['- (no models connected yet: leave "model" out)']),
+    ...(usable.some((m) => m.kind === 'image') ? [] : ['(No image models are connected: do not use "image" blocks.)']),
     'Prefer local or free models. Use the strongest local or a cloud model as judge. Avoid "tiny" models for answering when small or medium ones exist; tiny ones are fine for a Router.',
     '',
     'Rules: every canvas has exactly one "input" and one "output"; edges go from earlier to later blocks, no loops; ids are short words like "q", "coder", "judge", "out".',
@@ -142,12 +150,19 @@ function firstJsonObject(text: string): string | undefined {
 export function toGraph(c: BuilderCanvas, models: ModelInfo[]): { graph: CanvasGraph; fixes: string[] } {
   const fixes: string[] = [];
   if (!c || !Array.isArray(c.nodes)) throw new Error('"canvas.nodes" must be a list');
-  const known = new Map(models.map((m) => [ref(m), m]));
-  const local = models.filter((m) => (m.sizeBytes ?? 0) > 50e6).sort((a, b) => a.sizeBytes! - b.sizeBytes!);
-  const fallbackSmall = local[0] ?? models[0];
-  const fallbackBig = [...local].reverse().find((m) => m.sizeBytes! < 10e9) ?? models.find((m) => !m.sizeBytes) ?? fallbackSmall;
+  const textModels = models.filter((m) => m.kind !== 'image');
+  const imageModels = models.filter((m) => m.kind === 'image');
+  const known = new Map(textModels.map((m) => [ref(m), m]));
+  const local = textModels.filter((m) => (m.sizeBytes ?? 0) > 50e6).sort((a, b) => a.sizeBytes! - b.sizeBytes!);
+  const fallbackSmall = local[0] ?? textModels[0];
+  const fallbackBig = [...local].reverse().find((m) => m.sizeBytes! < 10e9) ?? textModels.find((m) => !m.sizeBytes) ?? fallbackSmall;
+  const asImage = (id: string | undefined): ModelRef | undefined => {
+    const m = (id && imageModels.find((x) => ref(x) === id || x.model === id)) || imageModels[0];
+    if (id && m && ref(m) !== id && m.model !== id) fixes.push(`"${id}" is not an image model; used ${m.model}`);
+    return m ? { providerId: m.providerId, model: m.model } : undefined;
+  };
   const asRef = (id: string | undefined, big: boolean): ModelRef | undefined => {
-    const m = (id && (known.get(id) ?? models.find((x) => x.model === id || ref(x).endsWith(`|${id}`)))) || (big ? fallbackBig : fallbackSmall);
+    const m = (id && (known.get(id) ?? textModels.find((x) => x.model === id || ref(x).endsWith(`|${id}`)))) || (big ? fallbackBig : fallbackSmall);
     if (id && !known.has(id) && m) fixes.push(`"${id}" is not an available model; used ${m.model}`);
     return m ? { providerId: m.providerId, model: m.model } : undefined;
   };
@@ -165,7 +180,8 @@ export function toGraph(c: BuilderCanvas, models: ModelInfo[]): { graph: CanvasG
     ids.add(id);
     const def = NODES[type];
     const config: NodeConfig = {};
-    if (def.usesModel) config.model = asRef(raw.model, type === 'judge' || type === 'router');
+    if (type === 'image') config.model = asImage(raw.model);
+    else if (def.usesModel) config.model = asRef(raw.model, type === 'judge' || type === 'router');
     if (def.minModels) {
       const list = (raw.models ?? []).map((m) => asRef(m, false)).filter((m): m is ModelRef => !!m);
       while (list.length < def.minModels && fallbackSmall) list.push(asRef(undefined, list.length > 0)!);
@@ -178,6 +194,7 @@ export function toGraph(c: BuilderCanvas, models: ModelInfo[]): { graph: CanvasG
       if (SEARCH_SOURCES.includes(raw.source as never)) config.source = raw.source as NodeConfig['source'];
       if (raw.count) config.count = Math.max(1, Math.min(10, Number(raw.count) || 5));
     }
+    if (type === 'save') config.format = (['auto', 'md', 'txt', 'html', 'json', 'csv', 'code'] as const).find((f) => f === raw.format) ?? 'auto';
     if (type === 'memory') {
       config.key = String(raw.key || 'default');
       config.mode = raw.mode === 'save' ? 'save' : 'recall';

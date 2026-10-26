@@ -1,4 +1,4 @@
-import { JUDGE_SYSTEM, REVIEW_SYSTEM, type CanvasNode, type ModelRef, type NodeType, type SearchSource } from '@hivemind/shared';
+import { JUDGE_SYSTEM, REVIEW_SYSTEM, type CanvasNode, type ModelRef, type NodeType, type OutputFile, type SearchSource } from '@hivemind/shared';
 import type { ChatMessage } from '../providers/types.js';
 
 /** Output of an upstream node, as seen by the node that runs next. */
@@ -16,6 +16,10 @@ export interface NodeServices {
     recall(key: string, limit: number): { text: string; at: string }[];
     save(key: string, text: string): void;
   };
+  /** Writes into the files folder without overwriting; returns the path used. */
+  saveFile?(path: string, data: Buffer | string): OutputFile;
+  /** Unloads idle models of the local AI servers on this GPU host (before an image model needs the memory). */
+  freeGpu?(hostKey: string, exceptProviderId?: string): Promise<void>;
 }
 
 export interface NodeContext {
@@ -30,6 +34,10 @@ export interface NodeContext {
   choose(targetIds: string[]): void;
   /** A short status line shown on the block while it works. */
   progress(note: string): void;
+  /** Makes images with the block's (image) model; they are saved and attached to the block. */
+  generateImage(prompt: string): Promise<OutputFile[]>;
+  /** Shows a file this block wrote on the block and in the final answer. */
+  attach(file: OutputFile): void;
   services: NodeServices;
 }
 
@@ -52,6 +60,17 @@ const answers = (inputs: NodeInput[]) => inputs.filter((i) => i.type !== 'input'
 
 function labelled(inputs: NodeInput[]): string {
   return inputs.map((i) => `### ${i.label}\n${i.text}`).join('\n\n');
+}
+
+/** "2026-10-26_14-05" for file names. */
+const stamp = () => new Date().toISOString().slice(0, 16).replace('T', '_').replace(':', '-');
+const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40) || 'answer';
+
+/** The contents of the first ``` block (optionally of a given language), or undefined. */
+function fenced(text: string, langs?: string[]): string | undefined {
+  for (const m of text.matchAll(/```([\w+-]*)[^\n]*\n([\s\S]*?)```/g)) {
+    if (!langs || langs.includes(m[1].toLowerCase())) return m[2].trim();
+  }
 }
 
 const letter = (i: number) => String.fromCharCode(65 + (i % 26)) + (i >= 26 ? Math.floor(i / 26) : '');
@@ -245,6 +264,51 @@ export const NODES: Record<NodeType, NodeDefinition> = {
       if (results.length === 0) return `No search results for: ${query}`;
       ctx.progress(`${results.length} results`);
       return results.map((r, i) => `${i + 1}. ${r.title}\n${r.text}\n${r.url}`).join('\n\n');
+    },
+  },
+
+  save: {
+    usesModel: false,
+    async execute(ctx) {
+      if (!ctx.services.saveFile) throw new Error('Saving files is not available here');
+      const prev = answers(ctx.inputs);
+      const text = prev.length ? prev.map((p) => p.text).join('\n\n') : ctx.question;
+      let format = ctx.node.config.format ?? 'auto';
+      const html = fenced(text, ['html', 'htm']) ?? (/^\s*(<!doctype html|<html)/i.test(text) ? text.trim() : undefined);
+      if (format === 'auto') format = html ? 'html' : 'md';
+      // What goes in the file: the code from the answer for code formats, the whole answer otherwise.
+      let body = text;
+      let ext: string = format;
+      if (format === 'html') body = html ?? fenced(text) ?? text;
+      if (format === 'json') body = fenced(text, ['json', '']) ?? text;
+      if (format === 'csv') body = fenced(text, ['csv', '']) ?? text;
+      if (format === 'code') {
+        const m = text.match(/```([\w+-]*)[^\n]*\n([\s\S]*?)```/);
+        body = m ? m[2].trim() : text;
+        const lang = (m?.[1] ?? '').toLowerCase();
+        const exts: Record<string, string> = { python: 'py', py: 'py', javascript: 'js', js: 'js', typescript: 'ts', ts: 'ts', bash: 'sh', sh: 'sh', shell: 'sh', css: 'css', sql: 'sql', go: 'go', rust: 'rs', java: 'java', c: 'c', cpp: 'cpp', 'c++': 'cpp', json: 'json', yaml: 'yml', yml: 'yml' };
+        ext = exts[lang] ?? 'txt';
+      }
+      const name = (ctx.node.config.fileName || `${slug(ctx.question)}-{{date}}`).replaceAll('{{date}}', stamp()).replaceAll('{{question}}', slug(ctx.question));
+      const file = ctx.services.saveFile(`outputs/${name.replace(/\.[a-z0-9]{1,5}$/i, '')}.${ext}`, body);
+      ctx.attach(file);
+      ctx.progress(`Saved ${file.path}`);
+      return text;
+    },
+  },
+
+  image: {
+    usesModel: true,
+    async execute(ctx) {
+      // What to draw: a prompt template, else what the block before wrote (e.g. a model writing a prompt), else the question.
+      const prev = answers(ctx.inputs);
+      const prompt = ctx.node.config.prompt
+        ? fill(ctx.node.config.prompt, ctx.question, prev.map((p) => p.text).join('\n\n'))
+        : prev.length
+          ? prev[prev.length - 1].text
+          : ctx.question;
+      const files = await ctx.generateImage(prompt.slice(0, 2000));
+      return files.map((f) => `![image](hm-file:${f.path})`).join('\n') + `\n\nPrompt: ${prompt.slice(0, 500)}`;
     },
   },
 

@@ -1,6 +1,7 @@
 import type { RunSummary } from '@hivemind/shared';
 import { useEffect, useRef, useState } from 'react';
 import { api } from '../api';
+import { toast } from '../notify';
 import type { useReplay } from '../run/replay';
 
 /** sqlite's datetime('now') is UTC without a zone marker. */
@@ -35,9 +36,31 @@ export function History({ onPick, onClose }: { onPick: (id: string) => void; onC
       <div className="flex items-center border-b border-[#30363d] px-3 py-2">
         <span className="text-sm font-semibold">Run history</span>
         <span className="ml-2 text-xs text-slate-500">click a run to replay it</span>
+        <label className="ml-auto cursor-pointer text-xs text-indigo-400 hover:underline" title="Import tasks exported from HiveMind (ZIP)">
+          Import
+          <input
+            type="file"
+            accept=".zip,application/zip"
+            className="hidden"
+            onChange={async (e) => {
+              const f = e.target.files?.[0];
+              if (!f) return;
+              const res = await fetch('/api/import/tasks', { method: 'POST', headers: { 'content-type': 'application/zip' }, body: f });
+              const data = await res.json().catch(() => ({}));
+              if (!res.ok) return toast(data.error ?? `Import failed (HTTP ${res.status})`);
+              toast(`Imported ${data.imported} task${data.imported === 1 ? '' : 's'}`, 'ok');
+              load();
+            }}
+          />
+        </label>
+        {!!runs?.length && (
+          <a className="ml-3 text-xs text-indigo-400 hover:underline" href="/api/export/tasks.zip" title="Every finished task: answers, block outputs, files and replay data">
+            Export all
+          </a>
+        )}
         {!!runs?.length && (
           <button
-            className="ml-auto text-xs text-red-400 hover:underline"
+            className="ml-3 text-xs text-red-400 hover:underline"
             onClick={async () => {
               if (!confirm('Delete all finished runs from the history?')) return;
               await api('/api/runs', { method: 'DELETE' });
@@ -66,6 +89,16 @@ export function History({ onPick, onClose }: { onPick: (id: string) => void; onC
                   {!!r.cost && <span>· ${r.cost.toFixed(4)}</span>}
                 </div>
               </button>
+              {r.status !== 'running' && (
+                <a
+                  aria-label="Export task as ZIP"
+                  title="Export as ZIP"
+                  href={`/api/runs/${r.id}/export.zip`}
+                  className="px-1 text-slate-600 opacity-0 group-hover:opacity-100 hover:text-indigo-300"
+                >
+                  ⬇
+                </a>
+              )}
               {r.status !== 'running' && (
                 <button
                   aria-label="Delete run"

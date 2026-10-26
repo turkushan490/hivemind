@@ -5,6 +5,7 @@ import { runGraph, type EngineDeps } from '../engine/run.js';
 import { logError } from '../errors.js';
 import { memoryFor } from '../services/memory.js';
 import { webSearch } from '../services/search.js';
+import { kindOf, writeUnique } from '../services/files.js';
 
 type Listener = (ev: RunEvent) => void;
 
@@ -26,6 +27,7 @@ export function startRun(opts: {
   graph: CanvasGraph;
   question: string;
   resolve: EngineDeps['resolve'];
+  freeGpu?: (hostKey: string, exceptProviderId?: string) => Promise<void>;
 }): string {
   const id = newId();
   const run: LiveRun = { id, ownerId: opts.ownerId, events: [], listeners: new Set(), abort: new AbortController(), finished: false };
@@ -45,7 +47,19 @@ export function startRun(opts: {
     for (const l of run.listeners) l(ev);
   };
 
-  runGraph(opts.graph, opts.question, { resolve: opts.resolve, emit, services: { search: webSearch, memory: memoryFor(opts.ownerId) } }, run.abort.signal)
+  runGraph(opts.graph, opts.question, {
+      resolve: opts.resolve,
+      emit,
+      services: {
+        search: webSearch,
+        memory: memoryFor(opts.ownerId),
+        saveFile: (path, data) => {
+          const saved = writeUnique(path, data);
+          return { path: saved, kind: kindOf(saved) };
+        },
+        freeGpu: opts.freeGpu,
+      },
+    }, run.abort.signal)
     .then((r) => finish(run, r.status, r.final, r.cost))
     .catch((err) => {
       emit({ type: 'error', error: (err as Error).message });

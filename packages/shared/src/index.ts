@@ -1,7 +1,7 @@
 // Types shared by the server, the web UI and (later) the Android app.
 // The canvas format and run events are the contract between them.
 
-export const NODE_TYPES = ['input', 'llm', 'review', 'judge', 'output', 'router', 'debate', 'vote', 'template', 'file', 'search', 'memory'] as const;
+export const NODE_TYPES = ['input', 'llm', 'review', 'judge', 'output', 'router', 'debate', 'vote', 'template', 'file', 'search', 'memory', 'save', 'image'] as const;
 export type NodeType = (typeof NODE_TYPES)[number];
 
 /** Which model a node uses: a configured provider plus a model id on it. */
@@ -39,6 +39,25 @@ export interface NodeConfig {
   key?: string;
   mode?: 'recall' | 'save';
   limit?: number;
+  /** Save file: the name (may use {{date}} and {{question}}) and the format. */
+  format?: SaveFormat;
+  /** Image: size, steps, guidance, LoRA (ComfyUI), and what not to draw. */
+  width?: number;
+  height?: number;
+  steps?: number;
+  cfg?: number;
+  lora?: string;
+  loraStrength?: number;
+  negative?: string;
+}
+
+export const SAVE_FORMATS = ['auto', 'md', 'txt', 'html', 'json', 'csv', 'code'] as const;
+export type SaveFormat = (typeof SAVE_FORMATS)[number];
+
+/** A file a block wrote to the files folder (outputs/…). */
+export interface OutputFile {
+  path: string;
+  kind: 'image' | 'text' | 'html' | 'pdf' | 'other';
 }
 
 export const SEARCH_SOURCES = ['wikipedia', 'brave', 'tavily', 'searxng'] as const;
@@ -73,7 +92,7 @@ export interface Canvas extends CanvasGraph {
 
 // ---- Providers ----
 
-export const PROVIDER_KINDS = ['ollama', 'openai', 'anthropic'] as const;
+export const PROVIDER_KINDS = ['ollama', 'openai', 'anthropic', 'comfyui'] as const;
 export type ProviderKind = (typeof PROVIDER_KINDS)[number];
 
 /** Presets fill in base URL and defaults; "openai" kind covers every OpenAI-compatible API. */
@@ -99,6 +118,7 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
   { id: 'openai', kind: 'openai', name: 'OpenAI (ChatGPT)', baseUrl: 'https://api.openai.com/v1', needsKey: true, free: false, local: false, keyUrl: 'https://platform.openai.com/api-keys' },
   { id: 'anthropic', kind: 'anthropic', name: 'Anthropic (Claude)', baseUrl: 'https://api.anthropic.com', needsKey: true, free: false, local: false, keyUrl: 'https://console.anthropic.com/settings/keys' },
   { id: 'opencode-zen', kind: 'openai', name: 'OpenCode Zen', baseUrl: 'https://opencode.ai/inference/openai/v1', needsKey: true, free: false, local: false, keyUrl: 'https://opencode.ai/auth', note: 'Paid models only; Zen free models only work inside the OpenCode app.' },
+  { id: 'comfyui', kind: 'comfyui', name: 'ComfyUI (images)', baseUrl: 'http://localhost:8188', needsKey: false, free: true, local: true, note: 'Your own ComfyUI: its checkpoints become local image models for Image blocks.' },
   { id: 'custom', kind: 'openai', name: 'Custom (OpenAI-compatible)', baseUrl: '', needsKey: false, free: false, local: false },
 ];
 
@@ -112,6 +132,8 @@ export interface ProviderInfo {
   hasKey: boolean;
   enabled: boolean;
   local: boolean;
+  /** Local only: run this server's models at the same time instead of one by one. */
+  parallel: boolean;
   shared: boolean;
 }
 
@@ -123,6 +145,8 @@ export interface ModelInfo {
   contextLength?: number;
   /** USD per 1M tokens, when the provider tells us. */
   price?: { input: number; output: number };
+  /** "image" for models that make pictures (Image blocks); text models leave it out. */
+  kind?: 'image';
   /** Local models: size on disk and quantization. */
   sizeBytes?: number;
   quant?: string;
@@ -283,6 +307,8 @@ export interface RunEvent {
   loadMs?: number;
   /** node_progress: what the block is doing right now. */
   note?: string;
+  /** node_done / run_done: files the block (or the whole run) wrote. */
+  files?: OutputFile[];
   status?: RunStatus;
 }
 

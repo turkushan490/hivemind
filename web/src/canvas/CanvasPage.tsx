@@ -16,6 +16,7 @@ import {
 import '@xyflow/react/dist/style.css';
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from 'react';
 import { api } from '../api';
+import { downloadText } from '../components/AnswerView';
 import { toast } from '../notify';
 import { useReplay } from '../run/replay';
 import { Clock, useRun } from '../run/state';
@@ -26,7 +27,7 @@ import { HiveNode, RunViews, type HiveFlowNode } from './HiveNode';
 import { BuilderPanel } from './BuilderPanel';
 import { Inspector } from './Inspector';
 import { COMING_SOON, NODE_META, PALETTE } from './meta';
-import { newNodeId, TEMPLATES } from './templates';
+import { newNodeId, TEMPLATE_GROUPS, TEMPLATES, type TemplateGroup } from './templates';
 
 const nodeTypes = { hive: HiveNode };
 const edgeTypes = { hive: HiveEdge };
@@ -70,7 +71,15 @@ function loadDraft(): Draft | undefined {
  * (fast), the largest one under 10 GB as judge (smartest that still fits). Cloud models fill gaps.
  * Ollama cloud stubs (a few KB on disk) are skipped.
  */
-function prefillModels(ms: ModelInfo[]): (ModelRef | undefined)[] {
+/** A good default image model: a realistic SDXL one when present, else the first image model. */
+function pickImageModel(all: ModelInfo[]): ModelRef | undefined {
+  const img = all.filter((m) => m.kind === 'image');
+  const m = img.find((x) => /epicrealism|juggernaut|realvis|cyberrealistic/i.test(x.model)) ?? img[0];
+  return m && { providerId: m.providerId, model: m.model };
+}
+
+function prefillModels(all: ModelInfo[]): (ModelRef | undefined)[] {
+  const ms = all.filter((m) => m.kind !== 'image');
   const ref = (m: ModelInfo): ModelRef => ({ providerId: m.providerId, model: m.model });
   const local = ms.filter((m) => m.sizeBytes !== undefined && m.sizeBytes > 50e6).sort((a, b) => a.sizeBytes! - b.sizeBytes!);
   const cloud = ms.filter((m) => m.sizeBytes === undefined);
@@ -101,12 +110,14 @@ function Editor({ active, onProblem }: { active: boolean; onProblem: () => void 
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
   const [question, setQuestion] = useStored('canvas.question', '');
   const [showTemplates, setShowTemplates] = useState(false);
+  const [templateGroup, setTemplateGroup] = useStored<TemplateGroup>('canvas.templateGroup', 'Everyday');
   const run = useRun(onProblem);
   const replay = useReplay();
   const replaying = !!replay.run;
   // While replaying, the canvas shows the replayed run; your own canvas waits here untouched.
   const backup = useRef<{ nodes: HiveFlowNode[]; edges: Edge[]; doc: { id?: string; name: string }; saved?: string } | null>(null);
   const [showHistory, setShowHistory] = useState(false);
+  const [showFile, setShowFile] = useState(false);
   const [panel, setPanel] = useStored<'inspector' | 'builder'>('canvas.panel', 'inspector');
   /** Canvases before each Builder change, for Undo. */
   const undoStack = useRef<{ nodes: HiveFlowNode[]; edges: Edge[] }[]>([]);
@@ -205,7 +216,8 @@ function Editor({ active, onProblem }: { active: boolean; onProblem: () => void 
   function applyTemplate(id: string, ms = models, skipConfirm = false) {
     if (!skipConfirm && !confirmDiscard()) return;
     const t = TEMPLATES.find((x) => x.id === id)!;
-    show(t.build(prefillModels(ms)));
+    const refs = prefillModels(ms);
+    show(t.build({ text: refs.slice(0, 3), judge: refs[3], image: pickImageModel(ms) }));
     setDoc({ name: t.name });
     setSaved(undefined);
     setShowTemplates(false);
@@ -372,6 +384,58 @@ function Editor({ active, onProblem }: { active: boolean; onProblem: () => void 
           ))}
         </select>
         <div className="relative">
+          <button className="btn-ghost" onClick={() => setShowFile((s) => !s)} disabled={replaying}>
+            File ▾
+          </button>
+          {showFile && (
+            <div className="absolute z-40 mt-1 w-64 space-y-0.5 rounded-lg border border-[#30363d] bg-[#161b22] p-1 shadow-xl" onMouseLeave={() => setShowFile(false)}>
+              <button
+                className="block w-full rounded px-3 py-2 text-left text-sm hover:bg-[#21262d]"
+                onClick={() => {
+                  setShowFile(false);
+                  // The canvas as it is on screen, saved or not.
+                  downloadText(`${doc.name || 'canvas'}.hivemind.json`, JSON.stringify({ hivemind: 1, type: 'canvas', name: doc.name, ...graph }, null, 2), 'application/json');
+                }}
+              >
+                Export this canvas
+                <span className="block text-xs text-slate-500">a .hivemind.json file to share or back up</span>
+              </button>
+              <a className="block rounded px-3 py-2 text-sm hover:bg-[#21262d]" href="/api/export/canvases.zip" onClick={() => setShowFile(false)}>
+                Export all canvases
+                <span className="block text-xs text-slate-500">one ZIP with every saved canvas</span>
+              </a>
+              <label className="block cursor-pointer rounded px-3 py-2 text-sm hover:bg-[#21262d]">
+                Import canvases…
+                <span className="block text-xs text-slate-500">.hivemind.json or ZIP — added as new canvases</span>
+                <input
+                  type="file"
+                  className="hidden"
+                  accept=".json,.zip,application/json,application/zip"
+                  onChange={async (e) => {
+                    const f = e.target.files?.[0];
+                    setShowFile(false);
+                    if (!f) return;
+                    const zip = f.name.toLowerCase().endsWith('.zip');
+                    const res = await fetch('/api/import/canvases', {
+                      method: 'POST',
+                      headers: { 'content-type': zip ? 'application/zip' : 'application/json' },
+                      body: zip ? f : await f.text(),
+                    });
+                    const data = await res.json().catch(() => ({}));
+                    if (!res.ok) return toast(data.error ?? `Import failed (HTTP ${res.status})`);
+                    const created = data.created as { id: string; name: string }[];
+                    const list = await api<Canvas[]>('/api/canvases', { quiet: true }).catch(() => canvases);
+                    setCanvases(list);
+                    toast(`Imported ${created.length} canvas${created.length === 1 ? '' : 'es'}`, 'ok');
+                    const first = list.find((c) => c.id === created[0]?.id);
+                    if (first) openCanvas(first);
+                  }}
+                />
+              </label>
+            </div>
+          )}
+        </div>
+        <div className="relative">
           <button className="btn-ghost" onClick={() => setShowHistory((s) => !s)}>
             History ▾
           </button>
@@ -382,13 +446,34 @@ function Editor({ active, onProblem }: { active: boolean; onProblem: () => void 
             New ▾
           </button>
           {showTemplates && (
-            <div className="absolute z-30 mt-1 w-72 space-y-1 rounded-lg border border-[#30363d] bg-[#161b22] p-2 shadow-xl">
-              {TEMPLATES.map((t) => (
-                <button key={t.id} className="w-full rounded px-2 py-1.5 text-left hover:bg-[#21262d]" onClick={() => applyTemplate(t.id)}>
-                  <div className="text-sm font-medium">{t.name}</div>
-                  <div className="text-xs text-slate-400">{t.description}</div>
-                </button>
-              ))}
+            <div className="absolute z-30 mt-1 w-[520px] rounded-lg border border-[#30363d] bg-[#161b22] shadow-xl">
+              <div className="flex flex-wrap gap-1 border-b border-[#30363d] p-2">
+                {TEMPLATE_GROUPS.map((g) => (
+                  <button
+                    key={g}
+                    className={`rounded-full px-3 py-1 text-xs ${templateGroup === g ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:bg-[#21262d]'}`}
+                    onClick={() => setTemplateGroup(g)}
+                  >
+                    {g}
+                  </button>
+                ))}
+              </div>
+              <div className="grid max-h-[60vh] grid-cols-2 gap-1 overflow-y-auto p-2">
+                {TEMPLATES.filter((t) => t.group === templateGroup).map((t) => {
+                  const noImage = t.needsImage && !models.some((m) => m.kind === 'image');
+                  return (
+                    <button
+                      key={t.id}
+                      className="rounded-lg border border-[#30363d] px-3 py-2 text-left hover:border-indigo-500 hover:bg-[#21262d]"
+                      onClick={() => applyTemplate(t.id)}
+                    >
+                      <div className="text-sm font-medium">{t.name}</div>
+                      <div className="text-xs text-slate-400">{t.description}</div>
+                      {noImage && <div className="mt-1 text-[11px] text-amber-300">Needs an image model: add ComfyUI in Settings</div>}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
           )}
         </div>

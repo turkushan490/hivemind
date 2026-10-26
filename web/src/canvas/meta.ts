@@ -1,6 +1,6 @@
 import type { NodeType } from '@hivemind/shared';
 
-export type NodeGroup = 'Core' | 'Logic' | 'Data';
+export type NodeGroup = 'Core' | 'Logic' | 'Data' | 'Create';
 
 export interface NodeMeta {
   title: string;
@@ -126,12 +126,31 @@ export const NODE_META: Record<NodeType, NodeMeta> = {
     hasInput: true,
     hasOutput: true,
   },
+  save: {
+    title: 'Save file',
+    color: '#facc15',
+    group: 'Create',
+    description: 'Saves what is wired into it as a file in the files folder (outputs/): a website, Markdown, text, JSON, CSV or code. You can download and preview it.',
+    usesModel: false,
+    hasInput: true,
+    hasOutput: true,
+  },
+  image: {
+    title: 'Image',
+    color: '#e879f9',
+    group: 'Create',
+    description: 'Makes a picture with an image model (your ComfyUI, or an image API). Draws its own prompt, or the text of the block before it — put a model before it that writes the prompt.',
+    usesModel: true,
+    hasInput: true,
+    hasOutput: true,
+  },
 };
 
 export const PALETTE: { group: NodeGroup; types: NodeType[] }[] = [
   { group: 'Core', types: ['input', 'llm', 'review', 'judge', 'output'] },
   { group: 'Logic', types: ['router', 'debate', 'vote'] },
   { group: 'Data', types: ['template', 'file', 'search', 'memory'] },
+  { group: 'Create', types: ['image', 'save'] },
 ];
 
 /** Planned blocks, shown in the palette so the roadmap is visible. */
@@ -145,6 +164,12 @@ export function summary(kind: NodeType, c: import('@hivemind/shared').NodeConfig
     case 'judge':
     case 'router':
       return c.model ? { text: c.model.model } : { text: 'Pick a model →', missing: true };
+    case 'image':
+      return c.model
+        ? { text: `${c.model.model.split('/').pop()!.replace(/\.safetensors$/, '')} · ${c.width ?? 1024}×${c.height ?? 1024}${c.lora ? ' · LoRA' : ''}` }
+        : { text: 'Pick an image model →', missing: true };
+    case 'save':
+      return { text: `${c.fileName || 'answer-{{date}}'} · ${c.format ?? 'auto'}` };
     case 'debate': {
       const n = c.models?.length ?? 0;
       return n >= 2 ? { text: `${n} models · ${c.rounds ?? 2} rounds` } : { text: 'Pick 2+ models →', missing: true };

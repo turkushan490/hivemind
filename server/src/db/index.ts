@@ -93,6 +93,9 @@ const MIGRATIONS = [
   );
   CREATE INDEX memory_key ON memory(owner_id, key, id);
   `,
+  `
+  ALTER TABLE providers ADD COLUMN parallel INTEGER NOT NULL DEFAULT 0;
+  `,
 ];
 
 export const db = new DatabaseSync(join(config.dataDir, 'hivemind.db'));

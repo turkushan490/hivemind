@@ -4,6 +4,7 @@ import { Clock, elapsedOf, IDLE, STATE_LABEL, STATE_TEXT, type NodeView, type Ru
 import type { HiveFlowNode } from './HiveNode';
 import { NODE_META } from './meta';
 import { ModelPicker } from './ModelPicker';
+import { AnswerView } from '../components/AnswerView';
 import { BlockSettings } from './BlockSettings';
 import { GpuBar, WorkBar } from './NodeBars';
 
@@ -49,9 +50,13 @@ export function Inspector(props: {
                 {props.final.cost ? ` · $${props.final.cost.toFixed(5)}` : ''}
               </span>
             </div>
-            <pre className="max-h-[60vh] overflow-y-auto text-sm whitespace-pre-wrap text-slate-200">
-              {props.final.text ?? (props.final.status === 'cancelled' ? 'Cancelled.' : 'No final answer: the run failed.')}
-            </pre>
+            {props.final.text ? (
+              <div className="max-h-[70vh] overflow-y-auto">
+                <AnswerView text={props.final.text} files={props.final.files} compact />
+              </div>
+            ) : (
+              <p className="text-sm text-slate-400">{props.final.status === 'cancelled' ? 'Cancelled.' : 'No final answer: the run failed.'}</p>
+            )}
           </div>
         ) : props.running ? (
           <p className="text-slate-400">Running… click a node to watch it live.</p>
@@ -85,7 +90,7 @@ export function Inspector(props: {
         <div className="space-y-1">
           <div className="text-xs font-semibold text-slate-300">Model</div>
           {/* Keyed by block, so switching blocks never shows the previous block's open/closed list or search. */}
-          <ModelPicker key={node.id} models={props.models} providers={props.providers} value={cfg.model} onChange={(model) => props.onChange({ config: { model } })} />
+          <ModelPicker key={node.id} kind={node.data.kind === 'image' ? 'image' : 'text'} models={props.models} providers={props.providers} value={cfg.model} onChange={(model) => props.onChange({ config: { model } })} />
         </div>
       )}
 
@@ -121,7 +126,14 @@ export function Inspector(props: {
               <pre className="max-h-40 overflow-y-auto whitespace-pre-wrap">{view.thinking}</pre>
             </details>
           )}
-          {view.text && <pre className="max-h-[45vh] overflow-y-auto text-sm whitespace-pre-wrap text-slate-200">{view.text}</pre>}
+          {view.text &&
+            (view.state === 'done' ? (
+              <div className="max-h-[55vh] overflow-y-auto">
+                <AnswerView text={view.text} files={view.files} compact />
+              </div>
+            ) : (
+              <pre className="max-h-[45vh] overflow-y-auto text-sm whitespace-pre-wrap text-slate-200">{view.text}</pre>
+            ))}
         </div>
       )}
 

@@ -146,6 +146,12 @@ describe('runGraph', () => {
     expect(local.events.some((e) => e.type === 'node_queued')).toBe(true);
     const cloud = await run(undefined, fake({ delay: 20 }));
     expect(cloud.provider.maxActive).toBe(3);
+    // Local with "run at the same time" switched on: no queue.
+    const together = fake({ local: true, delay: 20 });
+    together.exclusive = false;
+    const par = await run(undefined, together);
+    expect(par.provider.maxActive).toBe(3);
+    expect(par.events.some((e) => e.type === 'node_queued')).toBe(false);
   });
 
   it('hides model names from reviewers', async () => {
@@ -257,5 +263,49 @@ describe('logic and data blocks', () => {
     for (const part of ['file content', 'facts about Q?', 'earlier note', 'Topic: Q?']) expect(prompt).toContain(part);
     expect(result.final).toBe('a: ok');
     expect(saved[0]).toBe('Q: Q?\nA: a: ok');
+  });
+});
+
+describe('files and images', () => {
+  const n = (id: string, type: CanvasNode['type'], config: CanvasNode['config'] = {}): CanvasNode => ({ id, type, position: { x: 0, y: 0 }, config });
+  const e = (a: string, b: string) => ({ id: `${a}->${b}`, source: a, target: b });
+
+  it('Save file writes the website from an answer and shows it on the block and the run', async () => {
+    const p = fake();
+    p.adapter.stream = async function* () {
+      yield { type: 'token' as const, text: 'Here you go:\n```html\n<!doctype html><h1>Hi</h1>\n```\nEnjoy.' };
+      yield { type: 'done' as const };
+    };
+    const written: { path: string; data: string }[] = [];
+    const services: NodeServices = { saveFile: (path, data) => (written.push({ path, data: String(data) }), { path, kind: 'html' }) };
+    const events: RunEvent[] = [];
+    const graph = { nodes: [n('q', 'input'), n('a', 'llm', { model: ref('a') }), n('s', 'save', { fileName: 'site' }), n('o', 'output')], edges: [e('q', 'a'), e('a', 's'), e('s', 'o')] };
+    const result = await runGraph(graph, 'Make a site', { resolve: async () => p, emit: (x) => events.push(x as RunEvent), services }, new AbortController().signal);
+    expect(written).toEqual([{ path: 'outputs/site.html', data: '<!doctype html><h1>Hi</h1>' }]);
+    expect(events.find((x) => x.type === 'node_done' && x.nodeId === 's')?.files).toEqual([{ path: 'outputs/site.html', kind: 'html' }]);
+    expect(events.find((x) => x.type === 'run_done')?.files).toHaveLength(1);
+    expect(result.final).toContain('Enjoy.');
+  });
+
+  it('Image draws what the block before it wrote, frees the GPU first and saves the picture', async () => {
+    const p = fake({ local: true });
+    const drawn: string[] = [];
+    p.adapter.image = async (req, _s, progress) => {
+      drawn.push(req.prompt);
+      progress('Step 1/8');
+      return [{ data: Buffer.from('png'), ext: 'png' }];
+    };
+    const freed: string[] = [];
+    const services: NodeServices = {
+      saveFile: (path) => ({ path, kind: 'image' }),
+      freeGpu: async (host) => void freed.push(host),
+    };
+    const events: RunEvent[] = [];
+    const graph = { nodes: [n('q', 'input'), n('w', 'llm', { model: ref('writer') }), n('i', 'image', { model: ref('sdxl') }), n('o', 'output')], edges: [e('q', 'w'), e('w', 'i'), e('i', 'o')] };
+    const result = await runGraph(graph, 'a cat', { resolve: async () => p, emit: (x) => events.push(x as RunEvent), services }, new AbortController().signal);
+    expect(drawn).toEqual(['writer: ok']);
+    expect(freed.length).toBeGreaterThan(0);
+    expect(result.final).toMatch(/^!\[image\]\(hm-file:outputs\/image-.*\.png\)/);
+    expect(events.some((x) => x.type === 'node_progress' && x.note === 'Step 1/8')).toBe(true);
   });
 });

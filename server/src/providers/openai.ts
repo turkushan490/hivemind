@@ -1,6 +1,6 @@
 import type { ModelInfo } from '@hivemind/shared';
 import { readSSE } from './lines.js';
-import { checkResponse, type ChatRequest, type ProviderAdapter, type ProviderConfig, type StreamChunk } from './types.js';
+import { checkResponse, type ChatRequest, type GeneratedImage, type ImageRequest, type ProviderAdapter, type ProviderConfig, type StreamChunk } from './types.js';
 
 interface OpenAIModel {
   id: string;
@@ -30,6 +30,7 @@ export function openaiAdapter(cfg: ProviderConfig): ProviderAdapter {
         const priced = m.pricing && Number.isFinite(pIn) && Number.isFinite(pOut);
         const free = cfg.preset === 'openrouter' ? m.id.endsWith(':free') || (priced && pIn === 0 && pOut === 0) : isFreePreset(cfg.preset);
         return {
+          ...(IMAGE_MODEL.test(m.id) && { kind: 'image' as const }),
           providerId: cfg.id,
           // Gemini returns "models/gemini-x"; the chat endpoint wants it without the prefix.
           model: m.id.replace(/^models\//, ''),
@@ -39,6 +40,26 @@ export function openaiAdapter(cfg: ProviderConfig): ProviderAdapter {
           ...(priced && { price: { input: pIn * 1e6, output: pOut * 1e6 } }),
         };
       });
+    },
+
+    async image(req: ImageRequest, signal: AbortSignal, onProgress: (note: string) => void): Promise<GeneratedImage[]> {
+      onProgress('Asking the image API…');
+      const size = `${req.width}x${req.height}`;
+      const res = await fetch(`${base}/images/generations`, {
+        method: 'POST',
+        signal,
+        headers: headers(),
+        body: JSON.stringify({ model: req.model, prompt: req.prompt, n: 1, size, ...(/^dall-e/i.test(req.model) && { response_format: 'b64_json' }) }),
+      });
+      await checkResponse(res, `${cfg.preset} images`);
+      const data = (await res.json()) as { data?: { b64_json?: string; url?: string }[] };
+      return Promise.all(
+        (data.data ?? []).map(async (d) => {
+          if (d.b64_json) return { data: Buffer.from(d.b64_json, 'base64'), ext: 'png' };
+          const r = await fetch(d.url!, { signal });
+          return { data: Buffer.from(await r.arrayBuffer()), ext: 'png' };
+        }),
+      );
     },
 
     async *stream(req: ChatRequest, signal: AbortSignal): AsyncIterable<StreamChunk> {
@@ -73,6 +94,9 @@ export function openaiAdapter(cfg: ProviderConfig): ProviderAdapter {
     },
   };
 }
+
+/** OpenAI-compatible image models: DALL·E, gpt-image, and Google's Imagen through Gemini's compatible API. */
+const IMAGE_MODEL = /^(models\/)?(dall-e|gpt-image|imagen)/i;
 
 function isFreePreset(preset: string): boolean {
   return preset === 'groq' || preset === 'gemini';

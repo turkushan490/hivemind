@@ -159,6 +159,27 @@ function ProviderCard(props: {
                 </button>
               </div>
             )}
+            {p.local && (
+              <label className="flex items-start gap-2 rounded-md border border-[#30363d] px-2 py-1.5 text-xs">
+                <input
+                  type="checkbox"
+                  className="mt-0.5"
+                  checked={p.parallel}
+                  onChange={async (e) => {
+                    await api(`/api/providers/${p.id}`, { method: 'PATCH', body: { parallel: e.target.checked } });
+                    toast(e.target.checked ? 'Local models now run at the same time' : 'Local models now run one at a time', 'ok');
+                    props.onChanged();
+                  }}
+                />
+                <span>
+                  <span className="font-medium text-slate-200">Run models at the same time</span>
+                  <span className="block text-slate-500">
+                    Off: one model at a time, safest for the GPU. On: blocks on this server run together — only when the models fit in GPU memory
+                    together, otherwise Ollama swaps them and it gets slower. Cloud AIs always run at the same time.
+                  </span>
+                </span>
+              </label>
+            )}
             <div className="flex gap-1">
               <button className="btn-ghost" onClick={() => props.onCheck(p, true)}>
                 Test

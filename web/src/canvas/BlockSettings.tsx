@@ -1,5 +1,6 @@
 import { SEARCH_SOURCES, type ModelInfo, type ModelRef, type NodeConfig, type NodeType, type ProviderInfo } from '@hivemind/shared';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { api } from '../api';
 import { toast } from '../notify';
 import { ModelPicker } from './ModelPicker';
 
@@ -101,9 +102,134 @@ export function BlockSettings(p: Props) {
           )}
         </div>
       );
+    case 'save':
+      return (
+        <div className="space-y-2">
+          <label className="block space-y-1">
+            <Label>File name</Label>
+            <input
+              className="input"
+              placeholder="answer-{{date}}"
+              value={p.config.fileName ?? ''}
+              onChange={(e) => p.onChange({ fileName: e.target.value || undefined })}
+            />
+            <span className="text-xs text-slate-500">
+              <code>{'{{date}}'}</code> and <code>{'{{question}}'}</code> are filled in. Saved in the files folder under <code>outputs/</code>, never overwriting.
+            </span>
+          </label>
+          <label className="block space-y-1">
+            <Label>Format</Label>
+            <select className="input" value={p.config.format ?? 'auto'} onChange={(e) => p.onChange({ format: e.target.value as NodeConfig['format'] })}>
+              <option value="auto">Auto — a website when the answer has HTML, otherwise Markdown</option>
+              <option value="md">Markdown (.md)</option>
+              <option value="txt">Text (.txt)</option>
+              <option value="html">Website (.html) — previewable</option>
+              <option value="json">JSON (.json)</option>
+              <option value="csv">Spreadsheet (.csv)</option>
+              <option value="code">Code — the code from the answer, right file type</option>
+            </select>
+          </label>
+        </div>
+      );
+    case 'image':
+      return <ImageSettings {...p} />;
     default:
       return null;
   }
+}
+
+const SIZES: [string, number, number][] = [
+  ['Square', 1024, 1024],
+  ['Portrait', 832, 1216],
+  ['Landscape', 1216, 832],
+  ['Small (fast)', 768, 768],
+];
+
+/** Image block: size, quality, LoRA (ComfyUI), what not to draw, and an optional fixed prompt. */
+function ImageSettings(p: Props) {
+  const c = p.config;
+  const [loras, setLoras] = useState<string[] | null>(null);
+  const [loraQ, setLoraQ] = useState('');
+  const providerId = c.model?.providerId;
+  const isComfy = p.providers.find((x) => x.id === providerId)?.preset === 'comfyui';
+  useEffect(() => {
+    if (!providerId || !isComfy) return setLoras(null);
+    api<string[]>(`/api/providers/${providerId}/loras`, { quiet: true }).then(setLoras).catch(() => setLoras([]));
+  }, [providerId, isComfy]);
+  const shownLoras = (loras ?? []).filter((l) => l.toLowerCase().includes(loraQ.toLowerCase())).slice(0, 60);
+
+  return (
+    <div className="space-y-3">
+      <div className="space-y-1">
+        <Label>Size</Label>
+        <div className="grid grid-cols-2 gap-1">
+          {SIZES.map(([name, w, h]) => (
+            <button
+              key={name}
+              className={`rounded-md border px-2 py-1 text-xs ${(c.width ?? 1024) === w && (c.height ?? 1024) === h ? 'border-fuchsia-500 bg-fuchsia-500/15 text-fuchsia-100' : 'border-[#30363d] text-slate-400'}`}
+              onClick={() => p.onChange({ width: w, height: h })}
+            >
+              {name} · {w}×{h}
+            </button>
+          ))}
+        </div>
+      </div>
+      {isComfy && (
+        <div className="grid grid-cols-2 gap-2">
+          <label className="block space-y-1">
+            <span className="text-xs text-slate-400">Steps: {c.steps ?? 'auto'}</span>
+            <input type="range" className="w-full" min={4} max={50} value={c.steps ?? 25} onChange={(e) => p.onChange({ steps: Number(e.target.value) })} />
+          </label>
+          <label className="block space-y-1">
+            <span className="text-xs text-slate-400">Guidance: {c.cfg ?? 'auto'}</span>
+            <input type="range" className="w-full" min={1} max={12} step={0.5} value={c.cfg ?? 6} onChange={(e) => p.onChange({ cfg: Number(e.target.value) })} />
+          </label>
+          {(c.steps !== undefined || c.cfg !== undefined) && (
+            <button className="col-span-2 text-left text-xs text-indigo-400 hover:underline" onClick={() => p.onChange({ steps: undefined, cfg: undefined })}>
+              Back to automatic (fast models get few steps automatically)
+            </button>
+          )}
+        </div>
+      )}
+      {isComfy && loras && (
+        <div className="space-y-1">
+          <Label>LoRA {c.lora && <span className="font-normal text-fuchsia-300">· {c.lora.split('/').pop()}</span>}</Label>
+          <input className="input py-1 text-xs" placeholder={`Search ${loras.length} LoRAs…`} value={loraQ} onChange={(e) => setLoraQ(e.target.value)} />
+          {loraQ && (
+            <div className="max-h-40 overflow-y-auto rounded-md border border-[#30363d]">
+              {shownLoras.map((l) => (
+                <button key={l} className="block w-full truncate px-2 py-1 text-left text-xs hover:bg-[#21262d]" onClick={() => (p.onChange({ lora: l }), setLoraQ(''))}>
+                  {l}
+                </button>
+              ))}
+            </div>
+          )}
+          {c.lora && (
+            <div className="flex items-center gap-2 text-xs">
+              <span className="text-slate-400">Strength {c.loraStrength ?? 1}</span>
+              <input type="range" className="flex-1" min={0} max={1.5} step={0.05} value={c.loraStrength ?? 1} onChange={(e) => p.onChange({ loraStrength: Number(e.target.value) })} />
+              <button className="text-red-400" onClick={() => p.onChange({ lora: undefined, loraStrength: undefined })}>
+                remove
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+      <label className="block space-y-1">
+        <Label>Prompt (optional)</Label>
+        <textarea
+          className="input min-h-16 text-xs"
+          placeholder="Empty = draw what the block before wrote. Or e.g. watercolor of {{question}}"
+          value={c.prompt ?? ''}
+          onChange={(e) => p.onChange({ prompt: e.target.value || undefined })}
+        />
+      </label>
+      <label className="block space-y-1">
+        <Label>Don’t draw</Label>
+        <input className="input text-xs" placeholder="lowres, blurry, watermark, text" value={c.negative ?? ''} onChange={(e) => p.onChange({ negative: e.target.value || undefined })} />
+      </label>
+    </div>
+  );
 }
 
 /** A list of models for Debate / Vote: remove any, add more. */
@@ -150,6 +276,12 @@ const MAX_CHARS = 200_000;
 /** Reads a text or PDF file in the browser and keeps its text in the block. */
 function FileLoader(p: Props) {
   const [busy, setBusy] = useState(false);
+  const [folder, setFolder] = useState<{ path: string; kind: string }[]>([]);
+  useEffect(() => {
+    api<{ path: string; kind: string }[]>('/api/files', { quiet: true })
+      .then((l) => setFolder(l.filter((f) => f.kind === 'text' || f.kind === 'pdf' || f.kind === 'html')))
+      .catch(() => {});
+  }, []);
   const load = async (file: File) => {
     setBusy(true);
     try {
@@ -184,6 +316,25 @@ function FileLoader(p: Props) {
   };
   return (
     <div className="space-y-2">
+      {folder.length > 0 && (
+        <select
+          className="input text-xs"
+          value=""
+          onChange={async (e) => {
+            const path = e.target.value;
+            if (!path) return;
+            const blob = await (await fetch(`/api/files/raw?path=${encodeURIComponent(path)}`)).blob();
+            load(new File([blob], path.split('/').pop()!));
+          }}
+        >
+          <option value="">Take a file from the files folder…</option>
+          {folder.map((f) => (
+            <option key={f.path} value={f.path}>
+              {f.path}
+            </option>
+          ))}
+        </select>
+      )}
       <label className="flex cursor-pointer items-center justify-center rounded-md border border-dashed border-[#30363d] px-3 py-4 text-sm text-slate-300 hover:border-teal-500">
         <input type="file" className="hidden" accept=".txt,.md,.csv,.json,.log,.xml,.html,.pdf,text/*,application/pdf" onChange={(e) => e.target.files?.[0] && load(e.target.files[0])} />
         {busy ? 'Reading…' : p.config.fileName ? `Replace ${p.config.fileName}` : 'Choose a file (txt, md, csv, json, PDF)'}

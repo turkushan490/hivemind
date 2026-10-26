@@ -2,6 +2,7 @@ import type { Canvas, RunSummary } from '@hivemind/shared';
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { api } from '../api';
 import { GpuBar, WorkBar } from '../canvas/NodeBars';
+import { AnswerView } from '../components/AnswerView';
 import { NODE_META } from '../canvas/meta';
 import { toast } from '../notify';
 import { IDLE, STATE_LABEL, STATE_TEXT, useRun } from '../run/state';
@@ -141,7 +142,7 @@ export function UsePage({ active, onProblem, onBuild }: { active: boolean; onPro
               </button>
             )}
           </div>
-          <div className="text-[15px] leading-relaxed whitespace-pre-wrap text-slate-100">{run.final.text ?? 'No answer: the run failed (see above).'}</div>
+          {run.final.text ? <AnswerView text={run.final.text} files={run.final.files} /> : <p className="text-slate-400">No answer: the run failed (see above).</p>}
         </div>
       )}
 
@@ -151,7 +152,7 @@ export function UsePage({ active, onProblem, onBuild }: { active: boolean; onPro
           {history.map((h) => (
             <details key={h.id} className="rounded-lg border border-[#30363d] bg-[#161b22] px-3 py-2">
               <summary className="cursor-pointer text-sm text-slate-200">{h.question}</summary>
-              <div className="mt-2 text-sm whitespace-pre-wrap text-slate-400">{h.final ?? `(${h.status})`}</div>
+              <div className="mt-2">{h.final ? <AnswerView text={h.final} compact /> : <span className="text-sm text-slate-500">({h.status})</span>}</div>
             </details>
           ))}
         </div>

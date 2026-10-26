@@ -3,20 +3,28 @@ import { useMemo, useState } from 'react';
 import { useStored } from '../stored';
 
 /** Searchable model list, grouped by provider, with a free-only switch. */
-export function ModelPicker(props: { models: ModelInfo[]; providers: ProviderInfo[]; value?: ModelRef; onChange: (m: ModelRef) => void }) {
+export function ModelPicker(props: {
+  models: ModelInfo[];
+  providers: ProviderInfo[];
+  value?: ModelRef;
+  onChange: (m: ModelRef) => void;
+  /** Image blocks list only image models; every other block only text models. */
+  kind?: 'image' | 'text';
+}) {
   const [q, setQ] = useState('');
   const [freeOnly, setFreeOnly] = useStored('canvas.freeOnly', false);
   const [open, setOpen] = useState(!props.value);
 
   const groups = useMemo(() => {
     const words = q.toLowerCase().split(/\s+/).filter(Boolean);
-    const list = props.models.filter(
+    const want = props.kind ?? 'text';
+    const list = props.models.filter((m) => (want === 'image') === (m.kind === 'image')).filter(
       (m) => (!freeOnly || m.free) && words.every((w) => `${m.name} ${m.model}`.toLowerCase().includes(w)),
     );
     const byProvider = new Map<string, ModelInfo[]>();
     for (const m of list) byProvider.set(m.providerId, [...(byProvider.get(m.providerId) ?? []), m]);
     return [...byProvider.entries()].map(([id, ms]) => ({ name: props.providers.find((p) => p.id === id)?.name ?? id, models: ms }));
-  }, [props.models, props.providers, q, freeOnly]);
+  }, [props.models, props.providers, q, freeOnly, props.kind]);
 
   const current = props.value && props.models.find((m) => m.providerId === props.value!.providerId && m.model === props.value!.model);
   const providerName = props.value && (props.providers.find((p) => p.id === props.value!.providerId)?.name ?? props.value.providerId);

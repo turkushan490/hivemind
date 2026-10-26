@@ -46,6 +46,28 @@ export interface ProviderAdapter {
   /** Local providers only: download and delete models. */
   pull?(model: string, signal: AbortSignal): AsyncIterable<PullProgress>;
   remove?(model: string): Promise<void>;
+  /** Local only: give the GPU memory back (unload everything this server holds). */
+  freeMemory?(): Promise<void>;
+  /** Image models (ComfyUI, OpenAI-compatible image APIs). */
+  image?(req: ImageRequest, signal: AbortSignal, onProgress: (note: string) => void): Promise<GeneratedImage[]>;
+}
+
+export interface ImageRequest {
+  model: string;
+  prompt: string;
+  negative?: string;
+  width: number;
+  height: number;
+  steps?: number;
+  cfg?: number;
+  lora?: string;
+  loraStrength?: number;
+}
+
+export interface GeneratedImage {
+  data: Buffer;
+  /** File extension without the dot, e.g. png. */
+  ext: string;
 }
 
 export interface PullProgress {

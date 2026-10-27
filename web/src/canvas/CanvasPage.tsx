@@ -647,6 +647,7 @@ function Editor({ active, onProblem }: { active: boolean; onProblem: () => void 
             final={shownFinal}
             errors={shownErrors}
             running={run.running || (replaying && replay.playing)}
+            runId={replaying ? replay.run!.id : run.final ? run.runId : undefined}
           />
           </div>
           <div className={`min-h-0 flex-1 ${panel === 'builder' ? '' : 'hidden'}`}>

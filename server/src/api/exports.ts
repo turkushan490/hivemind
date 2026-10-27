@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { newId } from '../crypto.js';
 import { db } from '../db/index.js';
 import { safePath, writeUnique } from '../services/files.js';
+import { runMarkdown, runReport } from '../services/runExport.js';
 import { createZip, readZip, type ZipEntry } from '../services/zip.js';
 import { requireUser, type User } from './auth.js';
 
@@ -73,6 +74,18 @@ function taskEntries(user: User, id: string, prefix = ''): ZipEntry[] {
 
 export function exportRoutes(app: FastifyInstance) {
   app.addContentTypeParser('application/zip', { parseAs: 'buffer', bodyLimit: 300 * 1024 * 1024 }, (_req, body, done) => done(null, body));
+
+  // One run as a document: Markdown (also what the print / PDF view shows) or JSON.
+  app.get('/api/runs/:id/export.:format', { preHandler: requireUser }, async (req, reply) => {
+    const { id, format } = req.params as { id: string; format: string };
+    if (format !== 'md' && format !== 'json') return reply.callNotFound();
+    const report = runReport(req.user!.id, id);
+    if (!report) return reply.code(404).send({ error: 'Run not found (or still running)' });
+    const name = `${safeName(report.question)}.${format}`;
+    if (format === 'json') return sendFile(reply, name, JSON.stringify(report, null, 2), 'application/json; charset=utf-8');
+    const base = `${req.protocol}://${req.headers.host ?? 'localhost'}`;
+    return sendFile(reply, name, runMarkdown(report, (req.query as { relative?: string }).relative ? '' : base), 'text/markdown; charset=utf-8');
+  });
 
   // ---- Canvases ----
   app.get('/api/canvases/:id/export', { preHandler: requireUser }, async (req, reply) => {

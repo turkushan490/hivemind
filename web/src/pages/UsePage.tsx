@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { api } from '../api';
 import { GpuBar, WorkBar } from '../canvas/NodeBars';
 import { AnswerView } from '../components/AnswerView';
+import { ExportRun } from '../components/ExportRun';
 import { NODE_META } from '../canvas/meta';
 import { toast } from '../notify';
 import { IDLE, STATE_LABEL, STATE_TEXT, useRun } from '../run/state';
@@ -156,6 +157,7 @@ export function UsePage({ active, viewer, onProblem, onBuild }: { active: boolea
             <span className="font-semibold text-emerald-300">Answer</span>
             {run.final.cost ? <span className="text-xs text-slate-500">${run.final.cost.toFixed(4)}</span> : null}
             {run.final.text && <SpeakButton text={run.final.text} className="ml-auto" />}
+            <ExportRun runId={run.runId} className={run.final.text ? '' : 'ml-auto'} />
             {run.final.text && (
               <button
                 className="btn-ghost px-2 py-0.5 text-xs"
@@ -182,6 +184,10 @@ export function UsePage({ active, viewer, onProblem, onBuild }: { active: boolea
             <details key={h.id} className="rounded-lg border border-[#30363d] bg-[#161b22] px-3 py-2">
               <summary className="cursor-pointer text-sm text-slate-200">{h.question}</summary>
               <div className="mt-2">{h.final ? <AnswerView text={h.final} compact /> : <span className="text-sm text-slate-500">({h.status})</span>}</div>
+              <div className="mt-2 flex justify-end gap-2">
+                {h.final && <SpeakButton text={h.final} />}
+                <ExportRun runId={h.id} />
+              </div>
             </details>
           ))}
         </div>

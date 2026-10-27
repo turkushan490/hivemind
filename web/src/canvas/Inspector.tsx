@@ -8,6 +8,7 @@ import { AnswerView } from '../components/AnswerView';
 import { BlockSettings } from './BlockSettings';
 import { GpuBar, WorkBar } from './NodeBars';
 import { SpeakButton } from '../voice';
+import { ExportRun } from '../components/ExportRun';
 
 const SYSTEM_DEFAULT: Partial<Record<string, string>> = { judge: JUDGE_SYSTEM, review: REVIEW_SYSTEM };
 
@@ -21,6 +22,8 @@ export function Inspector(props: {
   final: RunFinal | null;
   errors: string[];
   running: boolean;
+  /** The run shown (live or replayed), for Export. */
+  runId?: string;
 }) {
   const { node } = props;
   const clock = useContext(Clock);
@@ -51,6 +54,7 @@ export function Inspector(props: {
                 {props.final.cost ? ` · $${props.final.cost.toFixed(5)}` : ''}
               </span>
               {props.final.text && <SpeakButton text={props.final.text} className="ml-auto" />}
+              {props.runId && <ExportRun runId={props.runId} className={props.final.text ? '' : 'ml-auto'} />}
             </div>
             {props.final.text ? (
               <div className="max-h-[70vh] overflow-y-auto">

@@ -1,4 +1,5 @@
 import type { RunSummary } from '@hivemind/shared';
+import { ExportRun } from '../components/ExportRun';
 import { useEffect, useRef, useState } from 'react';
 import { api } from '../api';
 import { toast } from '../notify';
@@ -89,6 +90,7 @@ export function History({ onPick, onClose }: { onPick: (id: string) => void; onC
                   {!!r.cost && <span>· ${r.cost.toFixed(4)}</span>}
                 </div>
               </button>
+              {r.status !== 'running' && <ExportRun runId={r.id} className="opacity-0 group-hover:opacity-100 focus-within:opacity-100" />}
               {r.status !== 'running' && (
                 <a
                   aria-label="Export task as ZIP"

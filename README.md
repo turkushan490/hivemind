@@ -21,10 +21,14 @@
 
 HiveMind is a self-hosted web app where several AI models work together. Ask one question: local models (Ollama) and cloud models answer it, review each other anonymously, and a judge model merges the best parts into one final answer, noting where they disagreed. Every step streams live with tokens, speed, time and cost.
 
-> **Status: early (milestone 4).** The engine, providers, login, the drag-and-drop canvas, live animations, replay, the Builder AI, Use mode and logic/data blocks work. Voice, Home Assistant integration and Android app are on the [roadmap](#roadmap).
+> **Status: milestone 5.** The engine, providers, login, the drag-and-drop canvas, live animations, replay, the Builder AI, Use mode, logic/data blocks, voice, action blocks, the OpenAI-compatible API and the Home Assistant integration work. Roles/cost stats and the Android app are on the [roadmap](#roadmap).
 
 ## Features (now)
 
+- **OpenAI-compatible API:** every saved canvas is a “model” at `http://<server>:4820/v1` — `GET /v1/models`, `POST /v1/chat/completions` (streaming too) with your API token. Works with Home Assistant, Open WebUI, the `openai` package or anything that speaks OpenAI. See [docs/openai-api.md](docs/openai-api.md).
+- **Voice:** 🎤 in Use mode and on the Question block (record → transcribe → run) and 🔊 Read aloud on answers. Speech to text through any OpenAI-compatible server (Groq Whisper free, OpenAI, a local speaches / faster-whisper); text to speech with the browser's voice or an OpenAI-compatible speech server (OpenAI, local Kokoro / Piper). See [docs/voice.md](docs/voice.md).
+- **Action blocks:** **Home Assistant** (read entity states, call services with templated JSON), **Webhook / HTTP** (any method, headers, body template; passes the response on) and **Discord** (post to a channel webhook). Failures show on the block and in Problems. See [docs/action-blocks.md](docs/action-blocks.md).
+- **Home Assistant integration:** a custom integration ([`integrations/home_assistant`](integrations/home_assistant)) — config flow, an Assist conversation agent and a button per canvas, and a `hivemind.run_canvas` action that returns the answer. Works on HA OS and HA Docker over plain HTTP.
 - **Images:** an Image block draws with your own **ComfyUI** (its checkpoints and LoRAs, fully local) or an OpenAI-compatible image API. Ollama and ComfyUI on the same GPU take turns automatically.
 - **Files & websites:** a files folder (upload, preview, download), a Save file block (website, Markdown, code, JSON, CSV), and a sandboxed live **preview** of websites the AIs build.
 - **Export / import:** canvases as files or a ZIP, finished tasks as ZIPs (answer, every block's output, images, replay data) — and back in again.
@@ -85,6 +89,13 @@ Set `OLLAMA_URL` to your Ollama container (e.g. `http://192.168.1.10:11434`).
 | `SECRET_KEY` | generated in `/data` | Encrypts stored API keys |
 | `SECURE_COOKIES` | `false` | `true` when served over HTTPS |
 
+### Home Assistant
+
+Both directions work:
+
+- **HiveMind → Home Assistant:** in **Settings → Home Assistant** enter your HA address (e.g. `http://192.168.1.20:8123`) and a long-lived access token (HA profile → Security). Home Assistant blocks can then read sensors and call services.
+- **Home Assistant → HiveMind:** install the [HiveMind integration](integrations/home_assistant/README.md) with an API token from **Settings → API tokens**. Each canvas becomes an Assist agent and a button, plus the `hivemind.run_canvas` action.
+
 ### Free models
 
 | Provider | How to get it free |
@@ -97,6 +108,18 @@ Set `OLLAMA_URL` to your Ollama container (e.g. `http://192.168.1.10:11434`).
 OpenCode Zen's free models (like Big Pickle) only work inside the OpenCode app, so HiveMind supports Zen's paid models only.
 
 ## API
+
+### OpenAI-compatible (per canvas)
+
+```bash
+curl http://server:4820/v1/chat/completions \
+  -H "Authorization: Bearer hm_..." -H "Content-Type: application/json" \
+  -d '{"model": "<canvas id or name>", "messages": [{"role": "user", "content": "Why is the sky blue?"}]}'
+```
+
+`GET /v1/models` lists your canvases. Add `"stream": true` for server-sent chunks. **Settings → OpenAI API** shows your base URL, canvas ids and copyable examples. Details: [docs/openai-api.md](docs/openai-api.md).
+
+### Native
 
 ```bash
 # Run a saved canvas or an ad-hoc graph
@@ -113,10 +136,10 @@ npm install
 npm test
 npm run build
 npm run dev:server   # API on :4820
-npm run dev:web      # UI on :5173 (proxies /api)
+npm run dev:web      # UI on :5173 (proxies /api and /v1)
 ```
 
-Layout: `packages/shared` (canvas + event types), `server` (Fastify, providers, engine, SQLite via `node:sqlite`), `web` (React + Vite + Tailwind).
+Layout: `packages/shared` (canvas + event types), `server` (Fastify, providers, engine, SQLite via `node:sqlite`), `web` (React + Vite + Tailwind), `integrations/home_assistant` (the Home Assistant custom integration, Python; its tests run with `pytest`, see its README).
 
 ## Roadmap
 
@@ -124,7 +147,7 @@ Layout: `packages/shared` (canvas + event types), `server` (Fastify, providers, 
 2. ✅ Drag-and-drop canvas editor (React Flow): wire any models together, save canvases
 3. ✅ Neon live view: particles running along wires, timings, camera following the active step, replay
 4. ✅ Helper AI that builds canvases for you, setup wizard, simple "Use" mode, logic and data nodes
-5. Voice (speech in/out), OpenAI-compatible API per canvas, Home Assistant integration, action nodes
+5. ✅ Voice (speech in/out), OpenAI-compatible API per canvas, Home Assistant integration, action nodes
 6. Roles, cost stats, judge winner stats, export
 7. Android app
 

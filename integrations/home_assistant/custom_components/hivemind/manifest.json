@@ -1,0 +1,13 @@
+{
+  "domain": "hivemind",
+  "name": "HiveMind",
+  "codeowners": ["@turkushan490"],
+  "config_flow": true,
+  "dependencies": ["conversation"],
+  "documentation": "https://github.com/turkushan490/hivemind/tree/main/integrations/home_assistant",
+  "integration_type": "service",
+  "iot_class": "local_polling",
+  "issue_tracker": "https://github.com/turkushan490/hivemind/issues",
+  "requirements": [],
+  "version": "0.5.0"
+}

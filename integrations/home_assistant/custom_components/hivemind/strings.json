@@ -1,0 +1,61 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to HiveMind",
+        "description": "The address of your HiveMind (e.g. http://192.168.1.10:4820) and an API token from HiveMind → Settings → API tokens.",
+        "data": {
+          "url": "HiveMind address",
+          "token": "API token"
+        }
+      },
+      "reauth_confirm": {
+        "title": "New HiveMind API token",
+        "description": "HiveMind refused the token. Make a new one in HiveMind → Settings → API tokens.",
+        "data": {
+          "token": "API token"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Cannot reach HiveMind at this address. Check the address and port (default 4820) and that Home Assistant can reach that machine.",
+      "invalid_auth": "HiveMind refused the API token."
+    },
+    "abort": {
+      "already_configured": "This HiveMind is already added.",
+      "reauth_successful": "The new token works."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "HiveMind options",
+        "description": "Pick the canvases that become Assist agents and buttons (none picked = all). New canvases made in HiveMind show up after reloading the integration.",
+        "data": {
+          "canvases": "Canvases",
+          "button_text": "Text a button press sends to its canvas"
+        }
+      }
+    }
+  },
+  "services": {
+    "run_canvas": {
+      "name": "Run canvas",
+      "description": "Runs a HiveMind canvas with a question and returns its final answer.",
+      "fields": {
+        "canvas": {
+          "name": "Canvas",
+          "description": "The canvas id or name (see HiveMind → Settings → OpenAI API)."
+        },
+        "text": {
+          "name": "Text",
+          "description": "The question or instruction for the canvas."
+        },
+        "config_entry_id": {
+          "name": "HiveMind server",
+          "description": "Only needed when you added more than one HiveMind."
+        }
+      }
+    }
+  }
+}

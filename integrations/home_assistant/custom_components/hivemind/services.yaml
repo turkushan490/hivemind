@@ -1,0 +1,18 @@
+run_canvas:
+  fields:
+    canvas:
+      required: true
+      example: "Kitchen helper"
+      selector:
+        text:
+    text:
+      required: true
+      example: "What should I cook tonight?"
+      selector:
+        text:
+          multiline: true
+    config_entry_id:
+      required: false
+      selector:
+        config_entry:
+          integration: hivemind

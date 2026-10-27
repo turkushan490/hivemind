@@ -23,7 +23,7 @@ import { Clock, useRun } from '../run/state';
 import { History, ReplayBar } from './Replay';
 import { useStored } from '../stored';
 import { HiveEdge } from './HiveEdge';
-import { HiveNode, RunViews, type HiveFlowNode } from './HiveNode';
+import { HiveNode, InputMic, RunViews, type HiveFlowNode } from './HiveNode';
 import { BuilderPanel } from './BuilderPanel';
 import { Inspector } from './Inspector';
 import { COMING_SOON, NODE_META, PALETTE } from './meta';
@@ -321,9 +321,9 @@ function Editor({ active, onProblem }: { active: boolean; onProblem: () => void 
     );
 
   // ---- Running ----
-  const startRun = async () => {
+  const startRun = async (q = question) => {
     followed.current = '';
-    if (!question.trim()) return toast('Type a question first', 'info');
+    if (!q.trim()) return toast('Type a question first', 'info');
     const input = nodes.find((n) => n.data.kind === 'input');
     if (!input) return toast('Add a Question block', 'info');
     if (!edges.some((e) => e.source === input.id)) return toast('Wire the Question block to something', 'info');
@@ -334,9 +334,23 @@ function Editor({ active, onProblem }: { active: boolean; onProblem: () => void 
     }
     setNodes((ns) => ns.map((n) => ({ ...n, selected: false })));
     try {
-      await run.start({ question: question.trim(), graph, canvasId: doc.id });
+      await run.start({ question: q.trim(), graph, canvasId: doc.id });
     } catch {}
   };
+
+  // The mic on the Question block: what was said becomes the question, and the canvas runs.
+  const startRunRef = useRef(startRun);
+  startRunRef.current = startRun;
+  const runningRef = useRef(false);
+  runningRef.current = run.running || replaying;
+  const onSpoken = useCallback(
+    (text: string) => {
+      setQuestion(text);
+      if (runningRef.current) return toast('A run is going: the question is filled in, press Run when it is done', 'info');
+      startRunRef.current(text);
+    },
+    [setQuestion],
+  );
 
   // Camera follows the block that is working, then shows the whole canvas when the run ends.
   const [follow, setFollow] = useStored('canvas.follow', true);
@@ -512,7 +526,7 @@ function Editor({ active, onProblem }: { active: boolean; onProblem: () => void 
               Stop
             </button>
           ) : (
-            <button className="btn" onClick={startRun}>
+            <button className="btn" onClick={() => startRun()}>
               Run
             </button>
           )}
@@ -569,6 +583,7 @@ function Editor({ active, onProblem }: { active: boolean; onProblem: () => void 
         </aside>
 
         <div className="relative min-w-0 flex-1" onDrop={onDrop} onDragOver={(e) => e.preventDefault()}>
+          <InputMic.Provider value={onSpoken}>
           <RunViews.Provider value={views}>
             <ReactFlow
               nodes={nodes}
@@ -592,6 +607,7 @@ function Editor({ active, onProblem }: { active: boolean; onProblem: () => void 
               <MiniMap pannable zoomable nodeColor={(n) => NODE_META[(n as HiveFlowNode).data.kind]?.color ?? '#444'} maskColor="rgba(13,17,23,0.7)" />
             </ReactFlow>
           </RunViews.Provider>
+          </InputMic.Provider>
           {replaying && <ReplayBar replay={replay} />}
         </div>
 

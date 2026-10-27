@@ -1,10 +1,10 @@
 import { useStored } from '../stored';
 import { Models } from './Models';
 import { Providers } from './Providers';
-import { BuilderSettings, HomeAssistantPanel, MemorySettings, OpenAIApiSettings, SearchSettingsPanel } from './SettingsExtra';
+import { BuilderSettings, HomeAssistantPanel, VoicePanel, MemorySettings, OpenAIApiSettings, SearchSettingsPanel } from './SettingsExtra';
 import { Tokens } from './Tokens';
 
-const SECTIONS = { providers: 'AI providers', models: 'Download models', builder: 'Builder AI', search: 'Web search', memory: 'Memory', homeassistant: 'Home Assistant', tokens: 'API tokens', api: 'OpenAI API' } as const;
+const SECTIONS = { providers: 'AI providers', models: 'Download models', builder: 'Builder AI', search: 'Web search', memory: 'Memory', voice: 'Voice', homeassistant: 'Home Assistant', tokens: 'API tokens', api: 'OpenAI API' } as const;
 type Section = keyof typeof SECTIONS;
 
 export function Settings({ isAdmin, active, onWizard }: { isAdmin: boolean; active: boolean; onWizard: () => void }) {
@@ -38,6 +38,9 @@ export function Settings({ isAdmin, active, onWizard }: { isAdmin: boolean; acti
         </div>
         <div hidden={section !== 'memory'}>
           <MemorySettings active={active && section === 'memory'} />
+        </div>
+        <div hidden={section !== 'voice'}>
+          <VoicePanel isAdmin={isAdmin} active={active && section === 'voice'} />
         </div>
         <div hidden={section !== 'homeassistant'}>
           <HomeAssistantPanel isAdmin={isAdmin} active={active && section === 'homeassistant'} />

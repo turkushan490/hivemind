@@ -1,8 +1,9 @@
-import { SEARCH_SOURCES, type HomeAssistantSettings, type ModelInfo, type ModelRef, type ProviderInfo, type SearchSettings, type SearchSource } from '@hivemind/shared';
+import { SEARCH_SOURCES, type HomeAssistantSettings, type ModelInfo, type VoiceSettings, type ModelRef, type ProviderInfo, type SearchSettings, type SearchSource } from '@hivemind/shared';
 import { useEffect, useState } from 'react';
 import { api } from '../api';
 import { BuilderModelChooser } from '../canvas/BuilderModelChooser';
 import { toast } from '../notify';
+import { loadVoice, MicButton, SpeakButton } from '../voice';
 
 /** Settings → Builder AI: the model that turns requests into canvases, and the setup wizard. */
 export function BuilderSettings({ active, onWizard }: { active: boolean; onWizard: () => void }) {
@@ -342,6 +343,152 @@ export function HomeAssistantPanel({ isAdmin, active }: { isAdmin: boolean; acti
           {testing ? 'Testing…' : 'Test connection'}
         </button>
         {test && <span className={`text-xs ${test.ok ? 'text-emerald-400' : 'text-red-400'}`}>{test.text}</span>}
+      </div>
+    </div>
+  );
+}
+
+const STT_PRESETS = [
+  { name: 'Groq Whisper (free)', url: 'https://api.groq.com/openai/v1', model: 'whisper-large-v3-turbo', note: 'Free with your Groq key — reused from the Groq provider if you added one.' },
+  { name: 'OpenAI', url: 'https://api.openai.com/v1', model: 'gpt-4o-mini-transcribe', note: 'Paid. Reuses the OpenAI provider key if you added one.' },
+  { name: 'Local (speaches / faster-whisper)', url: 'http://192.168.1.10:8000/v1', model: 'Systran/faster-whisper-small', note: 'Runs on your own server, e.g. the speaches container. Change the address.' },
+];
+const TTS_PRESETS = [
+  { name: 'OpenAI TTS', url: 'https://api.openai.com/v1', model: 'gpt-4o-mini-tts', voice: 'alloy', note: 'Paid, natural voices.' },
+  { name: 'Kokoro (local)', url: 'http://192.168.1.10:8880/v1', model: 'kokoro', voice: 'af_bella', note: 'Kokoro-FastAPI container on your server. Change the address.' },
+  { name: 'Piper / openedai-speech (local)', url: 'http://192.168.1.10:8000/v1', model: 'tts-1', voice: 'alloy', note: 'Any OpenAI-compatible speech server. Change the address.' },
+];
+
+/** Settings → Voice: speech to text for the mic buttons, text to speech for “Read aloud”. */
+export function VoicePanel({ isAdmin, active }: { isAdmin: boolean; active: boolean }) {
+  const [s, setS] = useState<VoiceSettings | null>(null);
+  const [draft, setDraft] = useState<Partial<VoiceSettings> & { sttKey?: string; ttsKey?: string }>({});
+  const [heard, setHeard] = useState('');
+  useEffect(() => {
+    if (!active) return;
+    loadVoice(true).then((v) => {
+      setS(v);
+      setDraft({});
+    });
+  }, [active]);
+  if (!s) return null;
+  const v = { ...s, ...draft };
+  const set = (patch: typeof draft) => setDraft((d) => ({ ...d, ...patch }));
+  const dirty = Object.keys(draft).length > 0;
+  const save = async () => {
+    const next = await api<VoiceSettings>('/api/settings/voice', { method: 'PUT', body: draft });
+    setS(next);
+    setDraft({});
+    loadVoice(true);
+    toast('Voice settings saved', 'ok');
+  };
+  const field = (label: string, key: 'sttUrl' | 'sttModel' | 'sttLanguage' | 'ttsUrl' | 'ttsModel' | 'ttsVoice', placeholder: string) => (
+    <label className="flex items-center gap-2">
+      <span className="w-28 shrink-0 text-slate-400">{label}</span>
+      <input className="input py-1" disabled={!isAdmin} placeholder={placeholder} value={v[key] ?? ''} onChange={(e) => set({ [key]: e.target.value })} />
+    </label>
+  );
+  const keyField = (key: 'sttKey' | 'ttsKey', has: boolean) => (
+    <label className="flex items-center gap-2">
+      <span className="w-28 shrink-0 text-slate-400">API key</span>
+      <input
+        className="input py-1"
+        type="password"
+        disabled={!isAdmin}
+        placeholder={has ? 'saved — type to replace' : 'optional (local servers need none; a provider on the same address lends its key)'}
+        value={draft[key] ?? ''}
+        onChange={(e) => set({ [key]: e.target.value })}
+      />
+    </label>
+  );
+  return (
+    <div className="card max-w-2xl space-y-4">
+      <div>
+        <h2 className="font-semibold">Voice</h2>
+        <p className="text-sm text-slate-400">
+          The 🎤 buttons (Use mode and the Question block) record you and turn speech into the question; 🔊 Read aloud speaks answers. The microphone
+          only works over https or on localhost — on plain http the button lets you pick or record an audio file instead.
+        </p>
+      </div>
+
+      <section className="space-y-2 text-sm">
+        <div className="text-xs font-semibold tracking-wider text-slate-500 uppercase">Speech to text</div>
+        {isAdmin && (
+          <div className="grid gap-2 sm:grid-cols-3">
+            {STT_PRESETS.map((p) => (
+              <button
+                key={p.name}
+                className={`rounded-lg border px-3 py-2 text-left ${v.sttUrl === p.url ? 'border-indigo-500 bg-indigo-500/10' : 'border-[#30363d] bg-[#0d1117] hover:border-slate-500'}`}
+                onClick={() => set({ sttUrl: p.url, sttModel: p.model })}
+              >
+                <div className="text-sm font-medium">{p.name}</div>
+                <div className="text-xs text-slate-400">{p.note}</div>
+              </button>
+            ))}
+          </div>
+        )}
+        {field('Address', 'sttUrl', 'https://api.groq.com/openai/v1 (empty = off)')}
+        {field('Model', 'sttModel', 'whisper-large-v3-turbo')}
+        {field('Language', 'sttLanguage', 'empty = detect; or en, nl, de…')}
+        {keyField('sttKey', s.hasSttKey)}
+      </section>
+
+      <section className="space-y-2 text-sm">
+        <div className="text-xs font-semibold tracking-wider text-slate-500 uppercase">Text to speech</div>
+        <div className="flex gap-1">
+          {(['browser', 'server'] as const).map((m) => (
+            <button
+              key={m}
+              disabled={!isAdmin}
+              className={`flex-1 rounded-md border px-2 py-1.5 text-sm ${v.ttsMode === m ? 'border-indigo-500 bg-indigo-500/15 text-indigo-100' : 'border-[#30363d] text-slate-400'}`}
+              onClick={() => set({ ttsMode: m })}
+            >
+              {m === 'browser' ? 'Browser voice (free, built in)' : 'Speech server (OpenAI-compatible)'}
+            </button>
+          ))}
+        </div>
+        {v.ttsMode === 'server' && (
+          <>
+            {isAdmin && (
+              <div className="grid gap-2 sm:grid-cols-3">
+                {TTS_PRESETS.map((p) => (
+                  <button
+                    key={p.name}
+                    className={`rounded-lg border px-3 py-2 text-left ${v.ttsUrl === p.url && v.ttsModel === p.model ? 'border-indigo-500 bg-indigo-500/10' : 'border-[#30363d] bg-[#0d1117] hover:border-slate-500'}`}
+                    onClick={() => set({ ttsUrl: p.url, ttsModel: p.model, ttsVoice: p.voice })}
+                  >
+                    <div className="text-sm font-medium">{p.name}</div>
+                    <div className="text-xs text-slate-400">{p.note}</div>
+                  </button>
+                ))}
+              </div>
+            )}
+            {field('Address', 'ttsUrl', 'http://192.168.1.10:8880/v1')}
+            {field('Model', 'ttsModel', 'tts-1')}
+            {field('Voice', 'ttsVoice', 'alloy')}
+            {keyField('ttsKey', s.hasTtsKey)}
+          </>
+        )}
+      </section>
+
+      {isAdmin && (
+        <div className="flex items-center gap-2">
+          <button className="btn" disabled={!dirty} onClick={() => save().catch(() => {})}>
+            Save
+          </button>
+          {dirty && (
+            <button className="btn-ghost" onClick={() => setDraft({})}>
+              Undo changes
+            </button>
+          )}
+          {dirty && <span className="text-xs text-amber-300">Save before testing</span>}
+        </div>
+      )}
+      <div className="flex flex-wrap items-center gap-2 border-t border-[#30363d] pt-3">
+        <MicButton size="sm" onText={setHeard} disabled={dirty} />
+        <span className="text-xs text-slate-400">Test the microphone</span>
+        <SpeakButton text="Hello! This is how HiveMind sounds when it reads an answer aloud." />
+        {heard && <span className="w-full text-sm text-emerald-300">Heard: “{heard}”</span>}
       </div>
     </div>
   );

@@ -7,6 +7,7 @@ import { ModelPicker } from './ModelPicker';
 import { AnswerView } from '../components/AnswerView';
 import { BlockSettings } from './BlockSettings';
 import { GpuBar, WorkBar } from './NodeBars';
+import { SpeakButton } from '../voice';
 
 const SYSTEM_DEFAULT: Partial<Record<string, string>> = { judge: JUDGE_SYSTEM, review: REVIEW_SYSTEM };
 
@@ -49,6 +50,7 @@ export function Inspector(props: {
                 {props.final.status}
                 {props.final.cost ? ` · $${props.final.cost.toFixed(5)}` : ''}
               </span>
+              {props.final.text && <SpeakButton text={props.final.text} className="ml-auto" />}
             </div>
             {props.final.text ? (
               <div className="max-h-[70vh] overflow-y-auto">

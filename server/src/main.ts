@@ -16,6 +16,7 @@ import { builderRoutes } from './api/builder.js';
 import { fileRoutes } from './api/files.js';
 import { exportRoutes } from './api/exports.js';
 import { v1Routes } from './api/v1.js';
+import { voiceRoutes } from './api/voice.js';
 
 const app = Fastify({ logger: { level: process.env.LOG_LEVEL || 'info' }, trustProxy: true, bodyLimit: 5 * 1024 * 1024 });
 
@@ -82,7 +83,9 @@ app.addHook('onRequest', async (req, reply) => {
     const hasBody = Number(req.headers['content-length'] ?? 0) > 0 || req.headers['transfer-encoding'];
     // Raw bodies only where files are uploaded or imported.
     const upload =
-      (req.url.startsWith('/api/files') && type.startsWith('application/octet-stream')) || (req.url.startsWith('/api/import/') && type.startsWith('application/zip'));
+      (req.url.startsWith('/api/files') && type.startsWith('application/octet-stream')) ||
+      (req.url.startsWith('/api/import/') && type.startsWith('application/zip')) ||
+      (req.url.startsWith('/api/voice/transcribe') && /^(audio\/|video\/|application\/octet-stream)/.test(type));
     if (hasBody && !upload && !type.startsWith('application/json')) return reply.code(415).send({ error: 'Send JSON' });
   }
 });
@@ -100,6 +103,7 @@ builderRoutes(app);
 fileRoutes(app);
 exportRoutes(app);
 v1Routes(app);
+voiceRoutes(app);
 seedProviders(config.ollamaUrl, config.comfyUrl);
 
 if (existsSync(config.webDir)) {

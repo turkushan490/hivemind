@@ -8,6 +8,7 @@ const SOURCE: Record<Problem['source'], { label: string; cls: string }> = {
   run: { label: 'run', cls: 'bg-amber-900/60 text-amber-200' },
   provider: { label: 'provider', cls: 'bg-violet-900/60 text-violet-200' },
   web: { label: 'web page', cls: 'bg-slate-700 text-slate-200' },
+  voice: { label: 'voice', cls: 'bg-sky-900/60 text-sky-200' },
 };
 
 export function Problems({ onSeen, active }: { onSeen: () => void; active: boolean }) {

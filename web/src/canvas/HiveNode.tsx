@@ -5,12 +5,16 @@ import { IDLE, STATE_COLOR, STATE_LABEL, type NodeView } from '../run/state';
 import { NODE_META, summary } from './meta';
 import { GpuBar, useNow, WorkBar } from './NodeBars';
 import { Aura, Burst, GpuChip, ThinkingCore, ThoughtWords, WritingTail } from './NodeFx';
+import { MicButton } from '../voice';
 
 export type HiveNodeData = { kind: NodeType; label?: string; config: NodeConfig };
 export type HiveFlowNode = Node<HiveNodeData, 'hive'>;
 
 /** Live run state per node id; a context so streaming tokens don't rebuild the whole graph. */
 export const RunViews = createContext<Record<string, NodeView>>({});
+
+/** Question block mic: hands the transcribed text to the canvas, which fills it in and runs. */
+export const InputMic = createContext<((text: string) => void) | null>(null);
 
 function HiveNodeImpl({ id, data, selected }: NodeProps<HiveFlowNode>) {
   const meta = NODE_META[data.kind];
@@ -19,6 +23,7 @@ function HiveNodeImpl({ id, data, selected }: NodeProps<HiveFlowNode>) {
   const border = view.state === 'idle' ? (selected ? meta.color : '#30363d') : stateColor;
   const info = summary(data.kind, data.config);
   const usesModels = meta.usesModel || !!meta.multiModel;
+  const onSpoken = useContext(InputMic);
   const loadingGpu = view.local && view.state === 'loading' && !!view.loadStartedAt && !view.readyAt;
 
   return (
@@ -42,7 +47,10 @@ function HiveNodeImpl({ id, data, selected }: NodeProps<HiveFlowNode>) {
               </span>
             )}
           </div>
-          <div className="truncate text-sm font-semibold text-slate-100">{data.label || meta.title}</div>
+          <div className="flex items-center gap-2">
+            <div className="min-w-0 flex-1 truncate text-sm font-semibold text-slate-100">{data.label || meta.title}</div>
+            {data.kind === 'input' && onSpoken && <MicButton size="sm" onText={onSpoken} />}
+          </div>
           {info && (
             <div className={`truncate text-xs ${info.missing ? 'text-red-400' : 'text-slate-400'}`} title={info.text}>
               {info.text}

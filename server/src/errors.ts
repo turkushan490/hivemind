@@ -1,7 +1,7 @@
 import { db } from './db/index.js';
 
 /** Where a problem came from, shown in the Problems tab. */
-export type ErrorSource = 'server' | 'crash' | 'run' | 'provider' | 'web';
+export type ErrorSource = 'server' | 'crash' | 'run' | 'provider' | 'web' | 'voice';
 
 export interface LoggedError {
   source: ErrorSource;

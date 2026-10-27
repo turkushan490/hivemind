@@ -70,6 +70,24 @@ export interface NodeConfig {
 export const HTTP_METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'] as const;
 export type HttpMethod = (typeof HTTP_METHODS)[number];
 
+/** Voice settings (GET/PUT /api/settings/voice); keys are never sent back. */
+export interface VoiceSettings {
+  /** Speech to text: an OpenAI-compatible server with /audio/transcriptions (Groq, OpenAI, speaches / faster-whisper). */
+  sttUrl?: string;
+  sttModel?: string;
+  /** e.g. "en", "nl"; empty = detect. */
+  sttLanguage?: string;
+  hasSttKey: boolean;
+  /** Ready to transcribe (an address is set). */
+  sttReady: boolean;
+  /** Text to speech: the browser's own voices, or an OpenAI-compatible /audio/speech server (OpenAI, Kokoro, Piper). */
+  ttsMode: 'browser' | 'server';
+  ttsUrl?: string;
+  ttsModel?: string;
+  ttsVoice?: string;
+  hasTtsKey: boolean;
+}
+
 /** Home Assistant connection (GET/PUT /api/settings/homeassistant); the token is never sent back. */
 export interface HomeAssistantSettings {
   url?: string;
@@ -268,7 +286,7 @@ export interface OllamaPick {
 export interface Problem {
   id: number;
   at: string;
-  source: 'server' | 'crash' | 'run' | 'provider' | 'web';
+  source: 'server' | 'crash' | 'run' | 'provider' | 'web' | 'voice';
   message: string;
   detail?: string;
   runId?: string;

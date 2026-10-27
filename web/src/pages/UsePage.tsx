@@ -1,5 +1,5 @@
 import type { Canvas, RunSummary } from '@hivemind/shared';
-import { useEffect, useMemo, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { api } from '../api';
 import { GpuBar, WorkBar } from '../canvas/NodeBars';
 import { AnswerView } from '../components/AnswerView';
@@ -7,6 +7,7 @@ import { NODE_META } from '../canvas/meta';
 import { toast } from '../notify';
 import { IDLE, STATE_LABEL, STATE_TEXT, useRun } from '../run/state';
 import { useStored } from '../stored';
+import { MicButton, speak, SpeakButton, useVoice } from '../voice';
 
 /** The simple screen: pick a saved canvas, ask, get the answer. What a phone or Home Assistant user sees. */
 export function UsePage({ active, onProblem, onBuild }: { active: boolean; onProblem: () => void; onBuild: () => void }) {
@@ -15,6 +16,10 @@ export function UsePage({ active, onProblem, onBuild }: { active: boolean; onPro
   const [question, setQuestion] = useState('');
   const [history, setHistory] = useState<RunSummary[]>([]);
   const run = useRun(onProblem);
+  const voice = useVoice();
+  const [readAloud, setReadAloud] = useStored('use.readAloud', true);
+  /** The question came from the microphone: read the answer aloud (if wanted). */
+  const byVoice = useRef(false);
 
   useEffect(() => {
     if (!active) return;
@@ -32,13 +37,15 @@ export function UsePage({ active, onProblem, onBuild }: { active: boolean; onPro
   }, [active, canvas?.id]);
   useEffect(() => {
     if (run.final) loadHistory();
+    if (run.final?.text && byVoice.current && readAloud) speak(run.final.text, voice).catch((err) => toast(`Could not read aloud: ${(err as Error).message}`));
+    if (run.final) byVoice.current = false;
   }, [run.final]);
 
-  const ask = async (e?: FormEvent) => {
+  const ask = async (e?: FormEvent, q = question) => {
     e?.preventDefault();
-    if (!canvas || !question.trim() || run.running) return;
+    if (!canvas || !q.trim() || run.running) return;
     try {
-      await run.start({ question: question.trim(), graph: { nodes: canvas.nodes, edges: canvas.edges }, canvasId: canvas.id });
+      await run.start({ question: q.trim(), graph: { nodes: canvas.nodes, edges: canvas.edges }, canvasId: canvas.id });
     } catch {}
   };
 
@@ -81,6 +88,14 @@ export function UsePage({ active, onProblem, onBuild }: { active: boolean; onPro
           value={question}
           onChange={(e) => setQuestion(e.target.value)}
           autoFocus
+        />
+        <MicButton
+          disabled={run.running}
+          onText={(text) => {
+            setQuestion(text);
+            byVoice.current = true;
+            ask(undefined, text);
+          }}
         />
         {run.running ? (
           <button type="button" className="btn h-12 shrink-0 bg-red-600 hover:bg-red-500" onClick={run.cancel}>
@@ -133,9 +148,10 @@ export function UsePage({ active, onProblem, onBuild }: { active: boolean; onPro
           <div className="flex items-center gap-2">
             <span className="font-semibold text-emerald-300">Answer</span>
             {run.final.cost ? <span className="text-xs text-slate-500">${run.final.cost.toFixed(4)}</span> : null}
+            {run.final.text && <SpeakButton text={run.final.text} className="ml-auto" />}
             {run.final.text && (
               <button
-                className="btn-ghost ml-auto px-2 py-0.5 text-xs"
+                className="btn-ghost px-2 py-0.5 text-xs"
                 onClick={() => navigator.clipboard.writeText(run.final!.text!).then(() => toast('Copied', 'ok'))}
               >
                 Copy
@@ -144,6 +160,12 @@ export function UsePage({ active, onProblem, onBuild }: { active: boolean; onPro
           </div>
           {run.final.text ? <AnswerView text={run.final.text} files={run.final.files} /> : <p className="text-slate-400">No answer: the run failed (see above).</p>}
         </div>
+      )}
+
+      {voice?.sttReady && (
+        <label className="flex items-center gap-2 text-xs text-slate-500">
+          <input type="checkbox" checked={readAloud} onChange={(e) => setReadAloud(e.target.checked)} /> Read the answer aloud when I ask by voice
+        </label>
       )}
 
       {history.length > 0 && (

@@ -1,5 +1,6 @@
 import { JUDGE_SYSTEM, REVIEW_SYSTEM, type CanvasNode, type ModelRef, type NodeType, type OutputFile, type SearchSource } from '@hivemind/shared';
 import type { ChatMessage } from '../providers/types.js';
+import { ACTION_NODES } from './actions.js';
 
 /** Output of an upstream node, as seen by the node that runs next. */
 export interface NodeInput {
@@ -20,6 +21,8 @@ export interface NodeServices {
   saveFile?(path: string, data: Buffer | string): OutputFile;
   /** Unloads idle models of the local AI servers on this GPU host (before an image model needs the memory). */
   freeGpu?(hostKey: string, exceptProviderId?: string): Promise<void>;
+  /** Home Assistant address and token (Settings → Home Assistant), or undefined when not set up. */
+  homeAssistant?(): { url: string; token: string } | undefined;
 }
 
 export interface NodeContext {
@@ -39,6 +42,8 @@ export interface NodeContext {
   /** Shows a file this block wrote on the block and in the final answer. */
   attach(file: OutputFile): void;
   services: NodeServices;
+  /** Aborted when the run is cancelled. */
+  signal?: AbortSignal;
 }
 
 export interface NodeDefinition {
@@ -330,4 +335,7 @@ export const NODES: Record<NodeType, NodeDefinition> = {
       return items.length ? `Remembered from earlier (${key}):\n\n${items.map((m) => `[${m.at}]\n${m.text}`).join('\n\n')}` : '(nothing remembered yet)';
     },
   },
+
+  // ---- Action ----
+  ...ACTION_NODES,
 };

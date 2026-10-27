@@ -1,17 +1,17 @@
 import { useStored } from '../stored';
 import { Models } from './Models';
 import { Providers } from './Providers';
-import { BuilderSettings, MemorySettings, OpenAIApiSettings, SearchSettingsPanel } from './SettingsExtra';
+import { BuilderSettings, HomeAssistantPanel, MemorySettings, OpenAIApiSettings, SearchSettingsPanel } from './SettingsExtra';
 import { Tokens } from './Tokens';
 
-const SECTIONS = { providers: 'AI providers', models: 'Download models', builder: 'Builder AI', search: 'Web search', memory: 'Memory', tokens: 'API tokens', api: 'OpenAI API' } as const;
+const SECTIONS = { providers: 'AI providers', models: 'Download models', builder: 'Builder AI', search: 'Web search', memory: 'Memory', homeassistant: 'Home Assistant', tokens: 'API tokens', api: 'OpenAI API' } as const;
 type Section = keyof typeof SECTIONS;
 
 export function Settings({ isAdmin, active, onWizard }: { isAdmin: boolean; active: boolean; onWizard: () => void }) {
   const [section, setSection] = useStored<Section>('settings.section', 'providers');
   return (
     <div className="flex flex-col gap-4 md:flex-row">
-      <nav className="flex shrink-0 gap-1 md:w-48 md:flex-col">
+      <nav className="flex shrink-0 gap-1 overflow-x-auto md:w-48 md:flex-col">
         {(Object.keys(SECTIONS) as Section[]).map((s) => (
           <button
             key={s}
@@ -38,6 +38,9 @@ export function Settings({ isAdmin, active, onWizard }: { isAdmin: boolean; acti
         </div>
         <div hidden={section !== 'memory'}>
           <MemorySettings active={active && section === 'memory'} />
+        </div>
+        <div hidden={section !== 'homeassistant'}>
+          <HomeAssistantPanel isAdmin={isAdmin} active={active && section === 'homeassistant'} />
         </div>
         <div hidden={section !== 'tokens'}>
           <Tokens />

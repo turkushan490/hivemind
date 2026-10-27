@@ -1,4 +1,4 @@
-import { SEARCH_SOURCES, type ModelInfo, type ModelRef, type NodeConfig, type NodeType, type ProviderInfo } from '@hivemind/shared';
+import { HTTP_METHODS, SEARCH_SOURCES, type ModelInfo, type ModelRef, type NodeConfig, type NodeType, type ProviderInfo } from '@hivemind/shared';
 import { useEffect, useState } from 'react';
 import { api } from '../api';
 import { toast } from '../notify';
@@ -133,6 +133,25 @@ export function BlockSettings(p: Props) {
       );
     case 'image':
       return <ImageSettings {...p} />;
+    case 'homeassistant':
+      return <HomeAssistantSettings {...p} />;
+    case 'webhook':
+      return <WebhookSettings {...p} />;
+    case 'discord':
+      return (
+        <div className="space-y-2">
+          <label className="block space-y-1">
+            <Label>Webhook URL</Label>
+            <input className="input text-xs" placeholder="https://discord.com/api/webhooks/…" value={p.config.url ?? ''} onChange={(e) => p.onChange({ url: e.target.value || undefined })} />
+            <span className="text-xs text-slate-500">Discord channel → Edit channel → Integrations → Webhooks → Copy URL. Anyone with this URL can post, so keep the canvas private.</span>
+          </label>
+          <label className="block space-y-1">
+            <Label>Message</Label>
+            <textarea className="input min-h-20 text-xs" placeholder="{{input}}" value={p.config.body ?? ''} onChange={(e) => p.onChange({ body: e.target.value || undefined })} />
+            <TemplateHelp />
+          </label>
+        </div>
+      );
     default:
       return null;
   }
@@ -400,6 +419,148 @@ function FileLoader(p: Props) {
           <pre className="mt-1 max-h-48 overflow-y-auto whitespace-pre-wrap text-slate-400">{p.config.text.slice(0, 3000)}</pre>
         </details>
       )}
+    </div>
+  );
+}
+
+const TemplateHelp = () => (
+  <span className="text-xs text-slate-500">
+    <code>{'{{input}}'}</code> = what is wired in (or the question), <code>{'{{question}}'}</code>, <code>{'{{inputs}}'}</code> = all wired-in answers. In JSON
+    they are escaped for you.
+  </span>
+);
+
+/** Shows whether a JSON template is valid (with the placeholders filled by sample text). */
+function JsonHint({ text }: { text?: string }) {
+  if (!text?.trim() || !/^\s*(\[|\{(?!\{))/.test(text)) return null;
+  try {
+    JSON.parse(text.replace(/\{\{\s*(input|question|inputs)\s*\}\}/g, 'x'));
+    return <span className="text-xs text-emerald-400">Valid JSON</span>;
+  } catch (err) {
+    return <span className="text-xs text-red-400">Not valid JSON: {(err as Error).message}</span>;
+  }
+}
+
+/** Home Assistant block: read entity states or call a service. Entities come from your Home Assistant. */
+function HomeAssistantSettings(p: Props) {
+  const c = p.config;
+  const op = c.haOp ?? 'state';
+  const [entities, setEntities] = useState<{ id: string; name: string; state: string }[] | null>(null);
+  const [error, setError] = useState('');
+  useEffect(() => {
+    api<{ id: string; name: string; state: string }[]>('/api/homeassistant/entities', { quiet: true })
+      .then(setEntities)
+      .catch((err) => setError((err as Error).message));
+  }, []);
+  const services = [...new Set((entities ?? []).map((e) => e.id.split('.')[0]))].sort();
+  return (
+    <div className="space-y-2">
+      {error && <p className="rounded-md bg-red-950/40 p-2 text-xs text-red-300">{error}</p>}
+      <div className="flex gap-1">
+        {(['state', 'service'] as const).map((m) => (
+          <button
+            key={m}
+            className={`flex-1 rounded-md border px-2 py-1.5 text-sm ${op === m ? 'border-sky-400 bg-sky-400/15 text-sky-100' : 'border-[#30363d] text-slate-400'}`}
+            onClick={() => p.onChange({ haOp: m })}
+          >
+            {m === 'state' ? 'Read states' : 'Call a service'}
+          </button>
+        ))}
+      </div>
+      <datalist id={`ha-entities-${p.nodeId}`}>
+        {(entities ?? []).map((e) => (
+          <option key={e.id} value={e.id}>
+            {e.name} ({e.state})
+          </option>
+        ))}
+      </datalist>
+      {op === 'state' ? (
+        <>
+          <label className="block space-y-1">
+            <Label>Entities</Label>
+            <textarea
+              className="input min-h-16 text-xs"
+              placeholder={'sensor.living_room_temperature\nweather.home'}
+              value={c.entities ?? ''}
+              onChange={(e) => p.onChange({ entities: e.target.value || undefined })}
+            />
+          </label>
+          <input
+            className="input py-1 text-xs"
+            list={`ha-entities-${p.nodeId}`}
+            placeholder={entities ? `Add one of ${entities.length} entities…` : 'Add an entity…'}
+            onChange={(e) => {
+              if (!entities?.some((x) => x.id === e.target.value)) return;
+              p.onChange({ entities: [c.entities?.trim(), e.target.value].filter(Boolean).join('\n') });
+              e.target.value = '';
+            }}
+          />
+          <p className="text-xs text-slate-500">Passes the states on as text, e.g. to a model that answers “Is it warm inside?”.</p>
+        </>
+      ) : (
+        <>
+          <label className="block space-y-1">
+            <Label>Service</Label>
+            <input className="input text-xs" list={`ha-services-${p.nodeId}`} placeholder="light.turn_on" value={c.service ?? ''} onChange={(e) => p.onChange({ service: e.target.value || undefined })} />
+            <datalist id={`ha-services-${p.nodeId}`}>
+              {services.flatMap((d) => ['turn_on', 'turn_off', 'toggle'].map((a) => <option key={`${d}.${a}`} value={`${d}.${a}`} />))}
+            </datalist>
+          </label>
+          <label className="block space-y-1">
+            <Label>Data (JSON)</Label>
+            <textarea
+              className="input min-h-24 font-mono text-xs"
+              placeholder={'{"entity_id": "light.kitchen", "brightness_pct": 60}\nor for a message: {"message": "{{input}}"}'}
+              value={c.body ?? ''}
+              onChange={(e) => p.onChange({ body: e.target.value || undefined })}
+            />
+            <JsonHint text={c.body} />
+          </label>
+          <TemplateHelp />
+        </>
+      )}
+    </div>
+  );
+}
+
+/** Webhook / HTTP block: method, URL, headers and a body template. */
+function WebhookSettings(p: Props) {
+  const c = p.config;
+  const method = c.method ?? 'POST';
+  return (
+    <div className="space-y-2">
+      <div className="flex gap-1">
+        <select className="input w-28 shrink-0 text-xs" value={method} onChange={(e) => p.onChange({ method: e.target.value as NodeConfig['method'] })}>
+          {HTTP_METHODS.map((m) => (
+            <option key={m}>{m}</option>
+          ))}
+        </select>
+        <input className="input text-xs" placeholder="https://example.com/hook?q={{question}}" value={c.url ?? ''} onChange={(e) => p.onChange({ url: e.target.value || undefined })} />
+      </div>
+      <label className="block space-y-1">
+        <Label>Headers</Label>
+        <textarea
+          className="input min-h-12 font-mono text-xs"
+          placeholder={'Authorization: Bearer …\nX-Source: HiveMind'}
+          value={c.headers ?? ''}
+          onChange={(e) => p.onChange({ headers: e.target.value || undefined })}
+        />
+        <span className="text-xs text-slate-500">One per line. Headers are saved in the canvas (and its exports).</span>
+      </label>
+      {method !== 'GET' && (
+        <label className="block space-y-1">
+          <Label>Body</Label>
+          <textarea
+            className="input min-h-20 font-mono text-xs"
+            placeholder={'{"text": "{{input}}", "question": "{{question}}"}'}
+            value={c.body ?? ''}
+            onChange={(e) => p.onChange({ body: e.target.value || undefined })}
+          />
+          <JsonHint text={c.body} />
+        </label>
+      )}
+      <TemplateHelp />
+      <p className="text-xs text-slate-500">The response is passed on (JSON pretty-printed). An error status stops the block and shows up in Problems.</p>
     </div>
   );
 }

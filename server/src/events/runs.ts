@@ -6,6 +6,7 @@ import { logError } from '../errors.js';
 import { memoryFor } from '../services/memory.js';
 import { webSearch } from '../services/search.js';
 import { kindOf, writeUnique } from '../services/files.js';
+import { homeAssistantConnection } from '../services/homeassistant.js';
 
 type Listener = (ev: RunEvent) => void;
 
@@ -58,6 +59,7 @@ export function startRun(opts: {
           return { path: saved, kind: kindOf(saved) };
         },
         freeGpu: opts.freeGpu,
+        homeAssistant: homeAssistantConnection,
       },
     }, run.abort.signal)
     .then((r) => finish(run, r.status, r.final, r.cost))

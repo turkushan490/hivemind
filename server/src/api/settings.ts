@@ -1,5 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { db } from '../db/index.js';
+import { logError } from '../errors.js';
+import { homeAssistantConnection, homeAssistantSettings, saveHomeAssistantSettings } from '../services/homeassistant.js';
 import { saveSearchSettings, searchSettings, webSearch } from '../services/search.js';
 import { requireAdmin, requireUser } from './auth.js';
 
@@ -19,6 +21,42 @@ export function settingsRoutes(app: FastifyInstance) {
     } catch (err) {
       return reply.code(502).send({ error: (err as Error).message });
     }
+  });
+
+  // ---- Home Assistant (for Home Assistant blocks) ----
+  app.get('/api/settings/homeassistant', { preHandler: requireUser }, async () => homeAssistantSettings());
+
+  app.put('/api/settings/homeassistant', { preHandler: requireAdmin }, async (req, reply) => {
+    try {
+      saveHomeAssistantSettings((req.body ?? {}) as { url?: string; token?: string });
+    } catch (err) {
+      return reply.code(400).send({ error: (err as Error).message });
+    }
+    return homeAssistantSettings();
+  });
+
+  /** Checks address and token; on success also returns the entities, for the block's picker. */
+  app.get('/api/homeassistant/entities', { preHandler: requireUser }, async (req, reply) => {
+    const ha = homeAssistantConnection();
+    if (!ha) return reply.code(400).send({ error: 'Home Assistant is not connected yet (Settings → Home Assistant)' });
+    let res: Response;
+    try {
+      res = await fetch(`${ha.url}/api/states`, { headers: { authorization: `Bearer ${ha.token}` }, signal: AbortSignal.timeout(15_000) });
+    } catch (err) {
+      const cause = (err as { cause?: { code?: string } }).cause;
+      const message = `Can't reach Home Assistant at ${ha.url}: ${cause?.code ?? (err as Error).message}`;
+      logError({ source: 'server', message, userId: req.user!.id });
+      return reply.code(502).send({ error: message });
+    }
+    if (!res.ok) {
+      const message = `Home Assistant answered HTTP ${res.status}${res.status === 401 ? ' — the token is wrong or expired' : ''}`;
+      logError({ source: 'server', message, userId: req.user!.id });
+      return reply.code(502).send({ error: message });
+    }
+    const states = (await res.json()) as { entity_id: string; state: string; attributes?: { friendly_name?: string } }[];
+    return states
+      .map((s) => ({ id: s.entity_id, name: s.attributes?.friendly_name ?? s.entity_id, state: s.state }))
+      .sort((a, b) => a.id.localeCompare(b.id));
   });
 
   // Memory blocks: see and clear what was remembered.

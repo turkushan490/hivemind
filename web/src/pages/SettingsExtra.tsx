@@ -1,4 +1,4 @@
-import { SEARCH_SOURCES, type ModelInfo, type ModelRef, type ProviderInfo, type SearchSettings, type SearchSource } from '@hivemind/shared';
+import { SEARCH_SOURCES, type HomeAssistantSettings, type ModelInfo, type ModelRef, type ProviderInfo, type SearchSettings, type SearchSource } from '@hivemind/shared';
 import { useEffect, useState } from 'react';
 import { api } from '../api';
 import { BuilderModelChooser } from '../canvas/BuilderModelChooser';
@@ -252,6 +252,96 @@ print(reply.choices[0].message.content)`;
       <div className="space-y-1">
         <div className="text-xs font-semibold text-slate-300">Example (Python, openai package)</div>
         <CopyBlock text={python} />
+      </div>
+    </div>
+  );
+}
+
+/** Settings → Home Assistant: the address and long-lived token used by Home Assistant blocks. */
+export function HomeAssistantPanel({ isAdmin, active }: { isAdmin: boolean; active: boolean }) {
+  const [s, setS] = useState<HomeAssistantSettings | null>(null);
+  const [url, setUrl] = useState('');
+  const [token, setToken] = useState('');
+  const [test, setTest] = useState<{ ok: boolean; text: string } | null>(null);
+  const [testing, setTesting] = useState(false);
+  useEffect(() => {
+    if (!active) return;
+    api<HomeAssistantSettings>('/api/settings/homeassistant', { quiet: true })
+      .then((r) => {
+        setS(r);
+        setUrl(r.url ?? '');
+      })
+      .catch(() => {});
+  }, [active]);
+  if (!s) return null;
+  const runTest = async () => {
+    setTesting(true);
+    setTest(null);
+    try {
+      const list = await api<unknown[]>('/api/homeassistant/entities', { quiet: true });
+      setTest({ ok: true, text: `Connected — ${list.length} entities` });
+    } catch (err) {
+      setTest({ ok: false, text: (err as Error).message });
+    } finally {
+      setTesting(false);
+    }
+  };
+  const save = async () => {
+    const next = await api<HomeAssistantSettings>('/api/settings/homeassistant', { method: 'PUT', body: { url, ...(token && { token }) } });
+    setS(next);
+    setToken('');
+    toast('Home Assistant settings saved', 'ok');
+    if (next.url && next.hasToken) runTest();
+  };
+  return (
+    <div className="card max-w-2xl space-y-3">
+      <h2 className="font-semibold">Home Assistant</h2>
+      <p className="text-sm text-slate-400">
+        For Home Assistant blocks (read sensors, switch lights, send notifications). In Home Assistant: your profile → Security → Long-lived access
+        tokens → Create token. The token is stored encrypted. To use HiveMind <em>from</em> Home Assistant, install the HiveMind integration (see the
+        README) with an API token from Settings → API tokens.
+      </p>
+      {isAdmin ? (
+        <div className="space-y-2 text-sm">
+          <label className="flex items-center gap-2">
+            <span className="w-32 shrink-0 text-slate-400">Address</span>
+            <input className="input py-1" placeholder="http://192.168.1.20:8123" value={url} onChange={(e) => setUrl(e.target.value)} />
+          </label>
+          <label className="flex items-center gap-2">
+            <span className="w-32 shrink-0 text-slate-400">Token</span>
+            <input
+              className="input py-1"
+              type="password"
+              placeholder={s.hasToken ? 'saved — type to replace' : 'long-lived access token'}
+              value={token}
+              onChange={(e) => setToken(e.target.value)}
+            />
+          </label>
+          <div className="flex items-center gap-2">
+            <button className="btn" onClick={() => save().catch(() => {})}>
+              Save
+            </button>
+            {s.hasToken && (
+              <button
+                className="btn-ghost text-red-400"
+                onClick={async () => {
+                  setS(await api<HomeAssistantSettings>('/api/settings/homeassistant', { method: 'PUT', body: { token: '' } }));
+                  setTest(null);
+                }}
+              >
+                Remove token
+              </button>
+            )}
+          </div>
+        </div>
+      ) : (
+        <p className="text-sm text-slate-400">{s.url ? `Connected to ${s.url}` : 'Not connected yet'} — only an admin can change this.</p>
+      )}
+      <div className="flex items-center gap-2">
+        <button className="btn-ghost" disabled={testing || !s.url || !s.hasToken} onClick={runTest}>
+          {testing ? 'Testing…' : 'Test connection'}
+        </button>
+        {test && <span className={`text-xs ${test.ok ? 'text-emerald-400' : 'text-red-400'}`}>{test.text}</span>}
       </div>
     </div>
   );

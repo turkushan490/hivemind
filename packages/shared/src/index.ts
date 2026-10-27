@@ -1,7 +1,7 @@
 // Types shared by the server, the web UI and (later) the Android app.
 // The canvas format and run events are the contract between them.
 
-export const NODE_TYPES = ['input', 'llm', 'review', 'judge', 'output', 'router', 'debate', 'vote', 'template', 'file', 'search', 'memory', 'save', 'image'] as const;
+export const NODE_TYPES = ['input', 'llm', 'review', 'judge', 'output', 'router', 'debate', 'vote', 'template', 'file', 'search', 'memory', 'save', 'image', 'homeassistant', 'webhook', 'discord'] as const;
 export type NodeType = (typeof NODE_TYPES)[number];
 
 /** Which model a node uses: a configured provider plus a model id on it. */
@@ -49,6 +49,31 @@ export interface NodeConfig {
   lora?: string;
   loraStrength?: number;
   negative?: string;
+  /** Home Assistant: read entity states, or call a service. */
+  haOp?: 'state' | 'service';
+  /** Home Assistant: entity ids to read (comma or newline separated; templates allowed). */
+  entities?: string;
+  /** Home Assistant: the service to call, e.g. "light.turn_on". */
+  service?: string;
+  /** Webhook: where to send it, and how. Discord: the channel's webhook URL. */
+  url?: string;
+  method?: HttpMethod;
+  /** Webhook: one "Name: value" per line. */
+  headers?: string;
+  /**
+   * Webhook body, Home Assistant service data (JSON) or Discord message.
+   * {{input}}, {{question}} and {{inputs}} are filled in (JSON-escaped when the template is JSON).
+   */
+  body?: string;
+}
+
+export const HTTP_METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'] as const;
+export type HttpMethod = (typeof HTTP_METHODS)[number];
+
+/** Home Assistant connection (GET/PUT /api/settings/homeassistant); the token is never sent back. */
+export interface HomeAssistantSettings {
+  url?: string;
+  hasToken: boolean;
 }
 
 export const SAVE_FORMATS = ['auto', 'md', 'txt', 'html', 'json', 'csv', 'code'] as const;

@@ -229,6 +229,7 @@ export async function runGraph(graph: CanvasGraph, question: string, deps: Engin
           return saved;
         },
         services: deps.services ?? {},
+        signal,
       });
 
       // A model that only "thought" (or returned nothing) must not pass an empty answer on to the judge.

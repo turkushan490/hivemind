@@ -1,4 +1,4 @@
-import { NODE_TYPES, SEARCH_SOURCES, type CanvasGraph, type CanvasNode, type ModelInfo, type ModelRef, type NodeConfig, type NodeType } from '@hivemind/shared';
+import { HTTP_METHODS, NODE_TYPES, SEARCH_SOURCES, type CanvasGraph, type CanvasNode, type ModelInfo, type ModelRef, type NodeConfig, type NodeType } from '@hivemind/shared';
 import { validateGraph } from '../engine/graph.js';
 import { NODES } from '../nodes/index.js';
 
@@ -25,6 +25,12 @@ export interface BuilderCanvas {
     mode?: string;
     format?: string;
     fileName?: string;
+    haOp?: string;
+    entities?: string;
+    service?: string;
+    url?: string;
+    method?: string;
+    body?: string;
   }[];
   edges: [string, string][];
 }
@@ -48,6 +54,9 @@ const BLOCKS: Record<NodeType, string> = {
   search: `web search for the question (or the text of the block before it). Optional "source": ${SEARCH_SOURCES.join(' | ')}, "count" 1-10.`,
   memory: '"mode": "recall" brings back what was saved under "key"; "mode": "save" remembers what flows through it under "key".',
   save: `saves what is wired into it as a file. "format": auto | md | txt | html | json | csv | code (auto = html for websites). Optional "fileName".`,
+  homeassistant: 'Home Assistant action. "haOp": "state" reads "entities" (comma separated entity ids like sensor.temperature) and passes their states on; "haOp": "service" calls "service" (e.g. light.turn_on) with "body" as JSON data ({{input}} = text wired in). Only use when the user mentions Home Assistant or their smart home.',
+  webhook: 'calls an HTTP "url" with "method" (GET/POST/PUT/PATCH/DELETE) and an optional "body" template ({{input}}, {{question}}); passes the response on.',
+  discord: 'posts "body" (default {{input}}) to a Discord channel; the user pastes the webhook URL later. Put it after the block whose answer should be posted.',
   image: 'makes an image. Needs "model" (an image model from the list). Draws "prompt" if set, else the text of the block before it (put a model before it that writes an image prompt).',
 };
 
@@ -80,6 +89,11 @@ export function toBuilderCanvas(g: CanvasGraph): BuilderCanvas {
         ...(c.key && { key: c.key }),
         ...(c.mode && { mode: c.mode }),
         ...(c.format && { format: c.format }),
+        ...(c.haOp && { haOp: c.haOp }),
+        ...(c.entities && { entities: c.entities }),
+        ...(c.service && { service: c.service }),
+        ...(c.method && { method: c.method }),
+        ...(c.body && { body: c.body }),
       };
     }),
     edges: g.edges.map((e) => [e.source, e.target]),
@@ -198,6 +212,17 @@ export function toGraph(c: BuilderCanvas, models: ModelInfo[]): { graph: CanvasG
     if (type === 'memory') {
       config.key = String(raw.key || 'default');
       config.mode = raw.mode === 'save' ? 'save' : 'recall';
+    }
+    if (type === 'homeassistant') {
+      config.haOp = raw.haOp === 'service' ? 'service' : 'state';
+      if (raw.entities) config.entities = String(raw.entities);
+      if (raw.service) config.service = String(raw.service);
+      if (raw.body) config.body = typeof raw.body === 'string' ? raw.body : JSON.stringify(raw.body);
+    }
+    if (type === 'webhook' || type === 'discord') {
+      if (type === 'webhook' && raw.url) config.url = String(raw.url);
+      if (type === 'webhook') config.method = (HTTP_METHODS as readonly string[]).includes(String(raw.method).toUpperCase()) ? (String(raw.method).toUpperCase() as NodeConfig['method']) : 'POST';
+      if (raw.body) config.body = typeof raw.body === 'string' ? raw.body : JSON.stringify(raw.body);
     }
     nodes.push({ id, type, label: raw.label ? String(raw.label).slice(0, 60) : undefined, position: { x: 0, y: 0 }, config });
   }

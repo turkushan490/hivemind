@@ -1,6 +1,6 @@
 import type { NodeType } from '@hivemind/shared';
 
-export type NodeGroup = 'Core' | 'Logic' | 'Data' | 'Create';
+export type NodeGroup = 'Core' | 'Logic' | 'Data' | 'Create' | 'Action';
 
 export interface NodeMeta {
   title: string;
@@ -144,6 +144,33 @@ export const NODE_META: Record<NodeType, NodeMeta> = {
     hasInput: true,
     hasOutput: true,
   },
+  homeassistant: {
+    title: 'Home Assistant',
+    color: '#41bdf5',
+    group: 'Action',
+    description: 'Reads the state of your smart-home entities (to give the models live facts), or calls a service like light.turn_on with the text wired into it. Connect Home Assistant in Settings first.',
+    usesModel: false,
+    hasInput: true,
+    hasOutput: true,
+  },
+  webhook: {
+    title: 'Webhook / HTTP',
+    color: '#f97316',
+    group: 'Action',
+    description: 'Calls any web address (GET, POST, …) with your headers and a body template, and passes the response on — to trigger automations or fetch data from an API.',
+    usesModel: false,
+    hasInput: true,
+    hasOutput: true,
+  },
+  discord: {
+    title: 'Discord',
+    color: '#5865f2',
+    group: 'Action',
+    description: 'Posts the text wired into it (or your message template) to a Discord channel through a webhook, then passes it on.',
+    usesModel: false,
+    hasInput: true,
+    hasOutput: true,
+  },
 };
 
 export const PALETTE: { group: NodeGroup; types: NodeType[] }[] = [
@@ -151,10 +178,11 @@ export const PALETTE: { group: NodeGroup; types: NodeType[] }[] = [
   { group: 'Logic', types: ['router', 'debate', 'vote'] },
   { group: 'Data', types: ['template', 'file', 'search', 'memory'] },
   { group: 'Create', types: ['image', 'save'] },
+  { group: 'Action', types: ['homeassistant', 'webhook', 'discord'] },
 ];
 
 /** Planned blocks, shown in the palette so the roadmap is visible. */
-export const COMING_SOON: { group: string; items: string[] }[] = [{ group: 'Action', items: ['Home Assistant', 'Webhook', 'Discord'] }];
+export const COMING_SOON: { group: string; items: string[] }[] = [];
 
 /** One-line summary of a block's settings, shown under its name on the canvas. */
 export function summary(kind: NodeType, c: import('@hivemind/shared').NodeConfig): { text: string; missing?: boolean } | undefined {
@@ -184,6 +212,18 @@ export function summary(kind: NodeType, c: import('@hivemind/shared').NodeConfig
       return { text: `${c.source ?? 'default source'} · ${c.count ?? 5} results` };
     case 'memory':
       return { text: `${c.mode === 'save' ? 'Save to' : 'Recall'} "${c.key || 'default'}"` };
+    case 'homeassistant':
+      return (c.haOp ?? 'state') === 'state'
+        ? c.entities?.trim()
+          ? { text: `Read ${c.entities.trim().replace(/\s+/g, ' ')}` }
+          : { text: 'Pick entities to read →', missing: true }
+        : c.service?.trim()
+          ? { text: `Call ${c.service.trim()}` }
+          : { text: 'Pick a service →', missing: true };
+    case 'webhook':
+      return c.url?.trim() ? { text: `${c.method ?? 'POST'} ${c.url.replace(/^https?:\/\//, '')}` } : { text: 'Fill in the URL →', missing: true };
+    case 'discord':
+      return c.url?.trim() ? { text: (c.body ?? '{{input}}').replace(/\s+/g, ' ').slice(0, 40) } : { text: 'Paste the webhook URL →', missing: true };
     case 'template':
       return { text: (c.prompt ?? '{{question}} {{inputs}}').replace(/\s+/g, ' ').slice(0, 40) };
   }

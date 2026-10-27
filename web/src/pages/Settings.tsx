@@ -1,10 +1,10 @@
 import { useStored } from '../stored';
 import { Models } from './Models';
 import { Providers } from './Providers';
-import { BuilderSettings, MemorySettings, SearchSettingsPanel } from './SettingsExtra';
+import { BuilderSettings, MemorySettings, OpenAIApiSettings, SearchSettingsPanel } from './SettingsExtra';
 import { Tokens } from './Tokens';
 
-const SECTIONS = { providers: 'AI providers', models: 'Download models', builder: 'Builder AI', search: 'Web search', memory: 'Memory', tokens: 'API tokens' } as const;
+const SECTIONS = { providers: 'AI providers', models: 'Download models', builder: 'Builder AI', search: 'Web search', memory: 'Memory', tokens: 'API tokens', api: 'OpenAI API' } as const;
 type Section = keyof typeof SECTIONS;
 
 export function Settings({ isAdmin, active, onWizard }: { isAdmin: boolean; active: boolean; onWizard: () => void }) {
@@ -41,6 +41,9 @@ export function Settings({ isAdmin, active, onWizard }: { isAdmin: boolean; acti
         </div>
         <div hidden={section !== 'tokens'}>
           <Tokens />
+        </div>
+        <div hidden={section !== 'api'}>
+          <OpenAIApiSettings active={active && section === 'api'} onTokens={() => setSection('tokens')} />
         </div>
       </div>
     </div>

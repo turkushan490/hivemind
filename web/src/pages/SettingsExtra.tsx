@@ -174,3 +174,85 @@ export function MemorySettings({ active }: { active: boolean }) {
     </div>
   );
 }
+
+/** A code block with a Copy button. */
+export function CopyBlock({ text }: { text: string }) {
+  return (
+    <div className="relative">
+      <pre className="overflow-x-auto rounded-md border border-[#30363d] bg-[#0d1117] p-3 pr-16 text-xs text-slate-300">{text}</pre>
+      <button
+        className="btn-ghost absolute top-1.5 right-1.5 px-2 py-0.5 text-xs"
+        onClick={() =>
+          navigator.clipboard
+            .writeText(text)
+            .then(() => toast('Copied', 'ok'))
+            .catch(() => toast('Copy failed: the browser only allows copying on HTTPS or localhost. Select the text instead.'))
+        }
+      >
+        Copy
+      </button>
+    </div>
+  );
+}
+
+/** Settings → OpenAI API: every saved canvas is a model for any OpenAI-compatible app. */
+export function OpenAIApiSettings({ active, onTokens }: { active: boolean; onTokens: () => void }) {
+  const [models, setModels] = useState<{ id: string; name: string; slug: string }[]>([]);
+  useEffect(() => {
+    if (!active) return;
+    fetch('/v1/models')
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
+      .then((d) => setModels(d.data))
+      .catch((err) => toast(`Could not list the canvases: ${(err as Error).message}`));
+  }, [active]);
+  const base = `${location.origin}/v1`;
+  const model = models[0]?.id ?? '<canvas id>';
+  const curl = `curl ${base}/chat/completions \\
+  -H "Authorization: Bearer hm_YOUR_TOKEN" \\
+  -H "Content-Type: application/json" \\
+  -d '{"model": "${model}", "messages": [{"role": "user", "content": "Hello!"}]}'`;
+  const python = `from openai import OpenAI
+
+client = OpenAI(base_url="${base}", api_key="hm_YOUR_TOKEN")
+reply = client.chat.completions.create(
+    model="${model}",
+    messages=[{"role": "user", "content": "Hello!"}],
+)
+print(reply.choices[0].message.content)`;
+  return (
+    <div className="card max-w-2xl space-y-3">
+      <h2 className="font-semibold">OpenAI-compatible API</h2>
+      <p className="text-sm text-slate-400">
+        Every saved canvas works as a “model” for apps that speak the OpenAI API (Home Assistant, Open WebUI, scripts). The last user message is the
+        question, the Final answer is the reply. Streaming works too. Log in with an{' '}
+        <button className="text-indigo-400 hover:underline" onClick={onTokens}>
+          API token
+        </button>
+        .
+      </p>
+      <div className="space-y-1">
+        <div className="text-xs font-semibold text-slate-300">Base URL</div>
+        <CopyBlock text={base} />
+      </div>
+      <div className="space-y-1">
+        <div className="text-xs font-semibold text-slate-300">Your canvases (model ids)</div>
+        {models.length === 0 && <p className="text-sm text-slate-500">No saved canvases yet.</p>}
+        {models.map((m) => (
+          <div key={m.id} className="flex items-center gap-2 border-t border-[#30363d] pt-1 text-sm">
+            <span className="font-medium">{m.name}</span>
+            <code className="ml-auto text-xs text-slate-400">{m.id}</code>
+          </div>
+        ))}
+        {models.length > 0 && <p className="text-xs text-slate-500">The name as a slug works too, e.g. “{models[0].slug}”.</p>}
+      </div>
+      <div className="space-y-1">
+        <div className="text-xs font-semibold text-slate-300">Example (curl)</div>
+        <CopyBlock text={curl} />
+      </div>
+      <div className="space-y-1">
+        <div className="text-xs font-semibold text-slate-300">Example (Python, openai package)</div>
+        <CopyBlock text={python} />
+      </div>
+    </div>
+  );
+}

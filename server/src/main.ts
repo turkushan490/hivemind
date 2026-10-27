@@ -15,6 +15,7 @@ import { settingsRoutes } from './api/settings.js';
 import { builderRoutes } from './api/builder.js';
 import { fileRoutes } from './api/files.js';
 import { exportRoutes } from './api/exports.js';
+import { v1Routes } from './api/v1.js';
 
 const app = Fastify({ logger: { level: process.env.LOG_LEVEL || 'info' }, trustProxy: true, bodyLimit: 5 * 1024 * 1024 });
 
@@ -98,6 +99,7 @@ settingsRoutes(app);
 builderRoutes(app);
 fileRoutes(app);
 exportRoutes(app);
+v1Routes(app);
 seedProviders(config.ollamaUrl, config.comfyUrl);
 
 if (existsSync(config.webDir)) {
@@ -111,7 +113,7 @@ if (existsSync(config.webDir)) {
   // Single-page app: page routes get index.html; a missing file (old script after an update) is a real 404.
   app.setNotFoundHandler((req, reply) => {
     const path = req.url.split('?')[0];
-    if (path.startsWith('/api/') || /\.[a-z0-9]+$/i.test(path)) return reply.code(404).send({ error: 'Not found' });
+    if (path.startsWith('/api/') || path.startsWith('/v1/') || /\.[a-z0-9]+$/i.test(path)) return reply.code(404).send({ error: 'Not found' });
     return reply.header('cache-control', 'no-cache').sendFile('index.html');
   });
 }

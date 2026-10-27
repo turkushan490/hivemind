@@ -1,0 +1,126 @@
+import type { CanvasGraph, RunEvent } from '@hivemind/shared';
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
+import { db } from '../db/index.js';
+import { validateGraph } from '../engine/graph.js';
+import { cancelRun, startRun, subscribe } from '../events/runs.js';
+import { apiError, chunk, completion, findCanvas, modelList, questionFrom, streamSource, usageOf, type CanvasModelRow } from '../services/openaiCompat.js';
+import { authenticate } from './auth.js';
+import { gpuFreerFor, resolverFor } from './providers.js';
+
+interface CanvasRow {
+  id: string;
+  name: string;
+  description: string | null;
+  graph: string;
+  updated_at: string;
+}
+
+/** Bearer API token (or the web session), answered in OpenAI's error format. */
+async function requireToken(req: FastifyRequest, reply: FastifyReply) {
+  req.user = authenticate(req);
+  if (!req.user) return reply.code(401).send(apiError('Missing or wrong API token. Send "Authorization: Bearer hm_…" (Settings → API tokens).', 'authentication_error', 'invalid_api_key'));
+}
+
+const canvasesOf = (userId: string) => db.prepare('SELECT * FROM canvases WHERE owner_id = ? ORDER BY updated_at DESC').all(userId) as unknown as CanvasRow[];
+
+/**
+ * OpenAI-compatible API: every saved canvas is a model. Works with any OpenAI client
+ * (Home Assistant, Open WebUI, scripts) pointed at http://<hivemind>/v1.
+ */
+export function v1Routes(app: FastifyInstance) {
+  app.get('/v1/models', { preHandler: requireToken }, async (req) =>
+    modelList(canvasesOf(req.user!.id).map((r): CanvasModelRow => ({ id: r.id, name: r.name, description: r.description, updatedAt: r.updated_at }))),
+  );
+
+  app.post('/v1/chat/completions', { preHandler: requireToken }, async (req, reply) => {
+    const body = (req.body ?? {}) as { model?: string; messages?: unknown; stream?: boolean };
+    if (!body.model) return reply.code(400).send(apiError('"model" is required: the id or name of a saved canvas (see GET /v1/models)'));
+    let question: string;
+    try {
+      question = questionFrom(body.messages);
+    } catch (err) {
+      return reply.code(400).send(apiError((err as Error).message));
+    }
+    const row = findCanvas(canvasesOf(req.user!.id), body.model);
+    if (!row) return reply.code(404).send(apiError(`No canvas "${body.model}". GET /v1/models lists yours.`, 'invalid_request_error', 'model_not_found'));
+    const graph = JSON.parse(row.graph) as CanvasGraph;
+    try {
+      validateGraph(graph);
+    } catch (err) {
+      return reply.code(400).send(apiError(`Canvas "${row.name}" can't run: ${(err as Error).message}`));
+    }
+
+    const user = req.user!;
+    const runId = startRun({ ownerId: user.id, canvasId: row.id, graph, question, resolve: resolverFor(user), freeGpu: gpuFreerFor(user) });
+    const model = body.model;
+    const live = streamSource(graph);
+    const events: RunEvent[] = [];
+    const errors: string[] = [];
+
+    // Client went away before the answer: stop the run (its GPU time is better spent elsewhere).
+    let finished = false;
+    reply.raw.on('close', () => {
+      if (!finished) cancelRun(runId, user.id);
+    });
+
+    if (!body.stream) {
+      const done = await new Promise<RunEvent | undefined>((resolve) => {
+        const sub = subscribe(
+          runId,
+          user.id,
+          (ev) => {
+            events.push(ev);
+            if (ev.type === 'error' && ev.error) errors.push(ev.error);
+            if (ev.type === 'run_done' && ev.seq >= 0) resolve(ev);
+          },
+          () => resolve(undefined),
+        );
+        if (!sub) resolve(undefined);
+      });
+      finished = true;
+      if (!done || done.final === undefined)
+        return reply.code(500).send(apiError(`The canvas "${row.name}" gave no answer${errors.length ? `: ${errors.join('; ')}` : ''} (run ${runId}, see Problems)`, 'server_error', 'run_failed'));
+      return completion(runId, model, done.final, usageOf(events));
+    }
+
+    // Streaming: the only block feeding the Final answer streams live; otherwise the answer comes in one piece at the end.
+    reply.hijack();
+    const res = reply.raw;
+    res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive', 'x-accel-buffering': 'no' });
+    const send = (data: unknown) => res.write(`data: ${JSON.stringify(data)}\n\n`);
+    send(chunk(runId, model, { role: 'assistant', content: '' }));
+    const ping = setInterval(() => res.write(': working\n\n'), 10_000);
+    let streamed = '';
+    await new Promise<void>((resolve) => {
+      const sub = subscribe(
+        runId,
+        user.id,
+        (ev) => {
+          events.push(ev);
+          if (ev.type === 'error' && ev.error) errors.push(ev.error);
+          if (ev.type === 'token' && ev.nodeId === live && ev.text) {
+            streamed += ev.text;
+            send(chunk(runId, model, { content: ev.text }));
+          }
+          if (ev.type === 'run_done' && ev.seq >= 0) {
+            if (ev.final !== undefined) {
+              // Whatever was not streamed live (all of it, or a tail the provider sent only at the end).
+              const rest = ev.final.startsWith(streamed) ? ev.final.slice(streamed.length) : streamed ? '' : ev.final;
+              if (rest) send(chunk(runId, model, { content: rest }));
+              send(chunk(runId, model, {}, 'stop'));
+            } else {
+              send(apiError(`The canvas "${row.name}" gave no answer${errors.length ? `: ${errors.join('; ')}` : ''} (run ${runId}, see Problems)`, 'server_error', 'run_failed'));
+            }
+            resolve();
+          }
+        },
+        () => resolve(),
+      );
+      if (!sub) resolve();
+    });
+    finished = true;
+    clearInterval(ping);
+    res.write('data: [DONE]\n\n');
+    res.end();
+  });
+}

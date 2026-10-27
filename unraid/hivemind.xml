@@ -4,22 +4,49 @@
   <Repository>ghcr.io/turkushan490/hivemind:latest</Repository>
   <Registry>https://github.com/turkushan490/hivemind/pkgs/container/hivemind</Registry>
   <Network>bridge</Network>
+  <MyIP/>
+  <Shell>bash</Shell>
   <Privileged>false</Privileged>
-  <Icon>https://raw.githubusercontent.com/turkushan490/hivemind/main/icon.svg</Icon>
-  <WebUI>http://[IP]:[PORT:4820]/</WebUI>
-  <Overview>HiveMind lets several AI models work together: ask one question, local Ollama models and cloud models (OpenRouter free models, Groq, Gemini, OpenAI, Claude, any OpenAI-compatible API) answer, review each other, and a judge model merges the best final answer. Live view of every model streaming, with tokens, speed, time and cost. Single container, SQLite in /data. Early version (council test page); the drag-and-drop canvas is coming.</Overview>
   <Support>https://github.com/turkushan490/hivemind/issues</Support>
   <Project>https://github.com/turkushan490/hivemind</Project>
+  <ReadMe>https://github.com/turkushan490/hivemind#readme</ReadMe>
+  <Overview>HiveMind lets several AI models work together on a drag-and-drop canvas, and you watch them think.&#xD;
+&#xD;
+Chain local Ollama models and cloud AIs (OpenRouter free models, Groq, Google Gemini, OpenAI, Claude, any OpenAI-compatible API) into teams: models answer, review each other anonymously, debate or vote, and a judge merges the best final answer. Every step streams live with GPU loading bars, tokens, speed and cost.&#xD;
+&#xD;
+Also: images with your own ComfyUI, web search, files and website previews, memory, a Builder AI that designs canvases from one sentence, voice in and out, Home Assistant / webhook / Discord action blocks, an OpenAI-compatible API (every canvas is a model) with a Home Assistant integration, users with admin / user / viewer roles, cost and speed stats with a model leaderboard, and run export to Markdown, JSON or PDF.&#xD;
+&#xD;
+One container, everything in /data (SQLite). Open the WebUI and create the admin account; the setup wizard does the rest.</Overview>
+  <Category>AI: Tools: HomeAutomation: Productivity:</Category>
+  <WebUI>http://[IP]:[PORT:4820]/</WebUI>
   <TemplateURL>https://raw.githubusercontent.com/turkushan490/hivemind/main/unraid/hivemind.xml</TemplateURL>
-  <ReadMe>https://raw.githubusercontent.com/turkushan490/hivemind/main/README.md</ReadMe>
-  <Category>AI: Tools:</Category>
-  <ExtraSearchTerms>llm ai ollama council openai claude openrouter groq gemini multi-model judge</ExtraSearchTerms>
+  <Icon>https://raw.githubusercontent.com/turkushan490/hivemind/main/unraid/icon.png</Icon>
+  <ExtraParams>--restart=unless-stopped</ExtraParams>
+  <PostArgs/>
+  <CPUset/>
+  <DonateText/>
+  <DonateLink/>
+  <Requires>Optional: an Ollama container (or any machine running Ollama) for local models, and ComfyUI for local images. Cloud AIs only need an API key; several have free tiers.</Requires>
+  <ExtraSearchTerms>llm ai ollama council openai claude anthropic openrouter groq gemini comfyui multi-model judge agent canvas home-assistant voice whisper</ExtraSearchTerms>
   <Beta>true</Beta>
   <License>AGPL-3.0</License>
-  <Config Name="Web port" Target="4820" Default="4820" Mode="tcp" Description="Web UI port." Type="Port" Display="always" Required="true" Mask="false">4820</Config>
-  <Config Name="Data" Target="/data" Default="/mnt/user/appdata/hivemind" Mode="rw" Description="Database, run history and generated secret." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/hivemind</Config>
-  <Config Name="OLLAMA_URL" Target="OLLAMA_URL" Default="" Mode="" Description="Your Ollama server, e.g. http://192.168.1.10:11434. Added as the first provider on first start; change it later in the Providers tab." Type="Variable" Display="always" Required="false" Mask="false"></Config>
-  <Config Name="COMFYUI_URL" Target="COMFYUI_URL" Default="" Mode="" Description="Optional: your ComfyUI, e.g. http://192.168.1.10:8188. Its checkpoints become local image models for Image blocks. Added once; manage it later in Settings." Type="Variable" Display="always" Required="false" Mask="false"></Config>
-  <Config Name="SECURE_COOKIES" Target="SECURE_COOKIES" Default="false" Mode="" Description="Set to true when you open HiveMind over HTTPS (e.g. behind Nginx Proxy Manager)." Type="Variable" Display="advanced" Required="false" Mask="false">false</Config>
-  <Config Name="SECRET_KEY" Target="SECRET_KEY" Default="" Mode="" Description="Optional. Encrypts stored API keys. Empty = generated once and stored in /data/secret.key." Type="Variable" Display="advanced" Required="false" Mask="true"></Config>
+  <Changes>
+### Milestone 6
+- Roles: admin, user and viewer; shared canvases; user management in Settings
+- Stats page: cost per day, provider and model, tokens/sec, Judge/Vote leaderboard
+- Export a run as Markdown, JSON or PDF
+### Milestone 5
+- OpenAI-compatible API: every canvas is a model (/v1/models, /v1/chat/completions)
+- Voice: speech to text (Groq Whisper, OpenAI, local) and text to speech
+- Action blocks: Home Assistant, Webhook / HTTP, Discord
+- Home Assistant custom integration (Assist agent, buttons, run_canvas action)
+  </Changes>
+  <Config Name="Web port" Target="4820" Default="4820" Mode="tcp" Description="Port of the web interface and the API (http://[IP]:port/v1 for OpenAI-compatible apps). If you change the container side, set PORT to the same number." Type="Port" Display="always" Required="true" Mask="false">4820</Config>
+  <Config Name="Data" Target="/data" Default="/mnt/user/appdata/hivemind" Mode="rw" Description="Database (canvases, runs, users, settings), the files folder (uploads, images, saved answers) and the generated secret key. Back this up." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/hivemind</Config>
+  <Config Name="Ollama URL" Target="OLLAMA_URL" Default="" Mode="" Description="Your Ollama server, e.g. http://192.168.1.10:11434 (use the LAN IP, not localhost). Added as the first AI provider on the first start; change it later in Settings → AI providers. Leave empty to use only cloud AIs." Type="Variable" Display="always" Required="false" Mask="false"></Config>
+  <Config Name="ComfyUI URL" Target="COMFYUI_URL" Default="" Mode="" Description="Optional: your ComfyUI, e.g. http://192.168.1.10:8188. Its checkpoints and LoRAs become local image models for Image blocks. Added once; manage it later in Settings." Type="Variable" Display="always" Required="false" Mask="false"></Config>
+  <Config Name="Secure cookies" Target="SECURE_COOKIES" Default="false|true" Mode="" Description="true when you open HiveMind over HTTPS (e.g. behind Nginx Proxy Manager or SWAG). HTTPS also lets browsers use the microphone for voice input." Type="Variable" Display="advanced" Required="false" Mask="false">false</Config>
+  <Config Name="Secret key" Target="SECRET_KEY" Default="" Mode="" Description="Optional. Encrypts stored API keys and tokens (AES-256-GCM). Empty = one is generated once and kept in /data/secret.key. If you set it, never lose or change it: saved keys can't be read without it." Type="Variable" Display="advanced" Required="false" Mask="true"></Config>
+  <Config Name="Internal port" Target="PORT" Default="4820" Mode="" Description="Port HiveMind listens on inside the container. Only change it together with the container side of Web port." Type="Variable" Display="advanced" Required="false" Mask="false">4820</Config>
+  <Config Name="Log level" Target="LOG_LEVEL" Default="info|warn|error|debug" Mode="" Description="How much the container log shows. Problems are always also listed in the Problems tab." Type="Variable" Display="advanced" Required="false" Mask="false">info</Config>
 </Container>

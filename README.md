@@ -21,10 +21,13 @@
 
 HiveMind is a self-hosted web app where several AI models work together. Ask one question: local models (Ollama) and cloud models answer it, review each other anonymously, and a judge model merges the best parts into one final answer, noting where they disagreed. Every step streams live with tokens, speed, time and cost.
 
-> **Status: milestone 5.** The engine, providers, login, the drag-and-drop canvas, live animations, replay, the Builder AI, Use mode, logic/data blocks, voice, action blocks, the OpenAI-compatible API and the Home Assistant integration work. Roles/cost stats and the Android app are on the [roadmap](#roadmap).
+> **Status: milestone 6.** The engine, providers, the drag-and-drop canvas, live animations, replay, the Builder AI, Use mode, logic/data/action blocks, voice, the OpenAI-compatible API, the Home Assistant integration, roles, cost stats and run export work. The Android app is next on the [roadmap](#roadmap).
 
 ## Features (now)
 
+- **Roles:** admin (everything), user (own canvases and AI keys), viewer (only uses shared canvases in Use mode, with voice and API tokens). Admins manage people in **Settings → Users**; the server checks the role on every write. **Share** on a canvas lets everyone use it (it runs with the sharer's AI providers).
+- **Stats:** every model call is counted: tokens in/out, cost (provider prices, else a [pricing table](server/src/services/pricing.ts) for OpenAI / Anthropic; free and local models count as $0) and speed. The **Stats** tab shows cost per day, provider and model, tokens/sec per model, and a **leaderboard** of how often each model's answer is picked by a Judge (it names the best answer) or wins a Vote.
+- **Export a run** as Markdown, JSON or PDF (the browser's print view → Save as PDF), from History, Use mode and the canvas answer — or as a ZIP with its files.
 - **OpenAI-compatible API:** every saved canvas is a “model” at `http://<server>:4820/v1` — `GET /v1/models`, `POST /v1/chat/completions` (streaming too) with your API token. Works with Home Assistant, Open WebUI, the `openai` package or anything that speaks OpenAI. See [docs/openai-api.md](docs/openai-api.md).
 - **Voice:** 🎤 in Use mode and on the Question block (record → transcribe → run) and 🔊 Read aloud on answers. Speech to text through any OpenAI-compatible server (Groq Whisper free, OpenAI, a local speaches / faster-whisper); text to speech with the browser's voice or an OpenAI-compatible speech server (OpenAI, local Kokoro / Piper). See [docs/voice.md](docs/voice.md).
 - **Action blocks:** **Home Assistant** (read entity states, call services with templated JSON), **Webhook / HTTP** (any method, headers, body template; passes the response on) and **Discord** (post to a channel webhook). Failures show on the block and in Problems. See [docs/action-blocks.md](docs/action-blocks.md).
@@ -80,14 +83,25 @@ Add the template URL in Docker → Add Container → Template repositories, or i
 https://raw.githubusercontent.com/turkushan490/hivemind/main/unraid/hivemind.xml
 ```
 
-Set `OLLAMA_URL` to your Ollama container (e.g. `http://192.168.1.10:11434`).
+Set `OLLAMA_URL` to your Ollama container (e.g. `http://192.168.1.10:11434`). Update later with [`unraid/update.sh`](unraid/update.sh) or *Check for updates* in the Docker tab.
+
+#### Getting listed in Community Applications
+
+The template ([`unraid/hivemind.xml`](unraid/hivemind.xml)) and the maintainer profile ([`ca_profile.xml`](ca_profile.xml), in the repository root where CA looks for it) are ready. To submit:
+
+1. **Check the template.** In Unraid, add the template URL above under Docker → Template repositories and install it once. Every field should show a description, the icon should load, and the WebUI link should work.
+2. **Open a support thread.** Post in the Unraid forum's *Docker Containers* section ("[Support] HiveMind"). CA moderators expect one per app. Put its URL in `<Support>` in `hivemind.xml` (it points at GitHub issues now) and push.
+3. **Submit the repository.** Use the Community Applications submission form linked from the CA policies post in the Unraid forum. Give it this repository's URL; CA reads every `*.xml` template in it plus `ca_profile.xml`.
+4. **Keep it current.** CA re-reads the template from `main` automatically. Update `<Changes>` with each release, and keep `<Beta>true</Beta>` until a tagged stable version exists.
 
 | Variable | Default | What it does |
 |---|---|---|
 | `PORT` | `4820` | Web port |
 | `OLLAMA_URL` | `http://localhost:11434` | First Ollama provider on a fresh install |
 | `SECRET_KEY` | generated in `/data` | Encrypts stored API keys |
-| `SECURE_COOKIES` | `false` | `true` when served over HTTPS |
+| `SECURE_COOKIES` | `false` | `true` when served over HTTPS (also needed for the microphone on other devices) |
+| `COMFYUI_URL` | empty | Optional ComfyUI, added once as an image provider |
+| `LOG_LEVEL` | `info` | Container log detail (`debug`, `info`, `warn`, `error`) |
 
 ### Home Assistant
 
@@ -148,7 +162,7 @@ Layout: `packages/shared` (canvas + event types), `server` (Fastify, providers, 
 3. ✅ Neon live view: particles running along wires, timings, camera following the active step, replay
 4. ✅ Helper AI that builds canvases for you, setup wizard, simple "Use" mode, logic and data nodes
 5. ✅ Voice (speech in/out), OpenAI-compatible API per canvas, Home Assistant integration, action nodes
-6. Roles, cost stats, judge winner stats, export
+6. ✅ Roles, cost stats, judge winner stats, export, Unraid Community Apps template
 7. Android app
 
 ## License

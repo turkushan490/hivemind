@@ -409,3 +409,25 @@ export function councilGraph(models: ModelRef[], judge: ModelRef, withReview = f
   edges.push({ id: 'j-out', source: 'j', target: 'out' });
   return { nodes, edges };
 }
+
+// ---- Stats (GET /api/stats) ----
+
+export interface StatsReport {
+  days: number;
+  totals: { cost: number; inputTokens: number; outputTokens: number; runs: number; calls: number; unpricedCalls: number };
+  byDay: { day: string; cost: number; tokens: number; runs: number }[];
+  byProvider: { providerId: string; name: string; cost: number; inputTokens: number; outputTokens: number; calls: number }[];
+  byModel: {
+    providerId: string;
+    model: string;
+    cost: number;
+    /** False when some calls had no known price (counted as 0). */
+    priced: boolean;
+    inputTokens: number;
+    outputTokens: number;
+    calls: number;
+    tokensPerSec?: number;
+  }[];
+  /** Judge / Vote picks: how often each model's answer was chosen as best. */
+  leaderboard: { model: string; wins: number; contests: number; winRate: number }[];
+}

@@ -2,7 +2,7 @@ import type { CanvasGraph, RunEvent } from '@hivemind/shared';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { validateGraph } from '../engine/graph.js';
 import { cancelRun, startRun, subscribe } from '../events/runs.js';
-import { apiError, chunk, completion, findCanvas, modelList, questionFrom, streamSource, usageOf, type CanvasModelRow } from '../services/openaiCompat.js';
+import { apiError, chunk, LiveText, completion, findCanvas, modelList, questionFrom, streamSource, usageOf, type CanvasModelRow } from '../services/openaiCompat.js';
 import { authenticate } from './auth.js';
 import { gpuFreerFor, resolverFor } from './providers.js';
 import { canvasesFor, runSetup } from './runs.js';
@@ -83,7 +83,7 @@ export function v1Routes(app: FastifyInstance) {
     const send = (data: unknown) => res.write(`data: ${JSON.stringify(data)}\n\n`);
     send(chunk(runId, model, { role: 'assistant', content: '' }));
     const ping = setInterval(() => res.write(': working\n\n'), 10_000);
-    let streamed = '';
+    const liveText = new LiveText();
     await new Promise<void>((resolve) => {
       const sub = subscribe(
         runId,
@@ -92,13 +92,13 @@ export function v1Routes(app: FastifyInstance) {
           events.push(ev);
           if (ev.type === 'error' && ev.error) errors.push(ev.error);
           if (ev.type === 'token' && ev.nodeId === live && ev.text) {
-            streamed += ev.text;
-            send(chunk(runId, model, { content: ev.text }));
+            const out = liveText.push(ev.text);
+            if (out) send(chunk(runId, model, { content: out }));
           }
           if (ev.type === 'run_done' && ev.seq >= 0) {
             if (ev.final !== undefined) {
-              // Whatever was not streamed live (all of it, or a tail the provider sent only at the end).
-              const rest = ev.final.startsWith(streamed) ? ev.final.slice(streamed.length) : streamed ? '' : ev.final;
+              // Whatever was not streamed live (all of it, or a tail held back or sent only at the end).
+              const rest = liveText.finish(ev.final);
               if (rest) send(chunk(runId, model, { content: rest }));
               send(chunk(runId, model, {}, 'stop'));
             } else {

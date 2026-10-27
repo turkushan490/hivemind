@@ -8,6 +8,7 @@ import { Login } from './pages/Login';
 import { Problems } from './pages/Problems';
 import { RunPage } from './pages/Run';
 import { Settings } from './pages/Settings';
+import { Stats } from './pages/Stats';
 import { SetupWizard } from './pages/SetupWizard';
 import { UsePage } from './pages/UsePage';
 import { useStored } from './stored';
@@ -18,7 +19,7 @@ interface Me {
   role: 'admin' | 'user' | 'viewer';
 }
 
-const TABS = { use: 'Use', canvas: 'Canvas', files: 'Files', run: 'Quick council', settings: 'Settings', problems: 'Problems' } as const;
+const TABS = { use: 'Use', canvas: 'Canvas', files: 'Files', run: 'Quick council', stats: 'Stats', settings: 'Settings', problems: 'Problems' } as const;
 type Tab = keyof typeof TABS;
 /** Viewers only use canvases. */
 const VIEWER_TABS: Tab[] = ['use', 'settings', 'problems'];
@@ -145,6 +146,11 @@ export function App() {
         {opened.has('run') && (
           <div hidden={tab !== 'run'}>
             <RunPage active={tab === 'run'} onProblem={() => setUnseen((n) => n + 1)} />
+          </div>
+        )}
+        {opened.has('stats') && (
+          <div hidden={tab !== 'stats'}>
+            <Stats active={tab === 'stats'} isAdmin={me.role === 'admin'} />
           </div>
         )}
         {opened.has('settings') && (

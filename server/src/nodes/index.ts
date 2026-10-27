@@ -37,6 +37,8 @@ export interface NodeContext {
   choose(targetIds: string[]): void;
   /** A short status line shown on the block while it works. */
   progress(note: string): void;
+  /** Judge / Vote: which wired-in block gave the best answer, out of which ones (for the leaderboard). */
+  pickWinner?(winnerNodeId: string, contenderNodeIds: string[]): void;
   /** Makes images with the block's (image) model; they are saved and attached to the block. */
   generateImage(prompt: string): Promise<OutputFile[]>;
   /** Shows a file this block wrote on the block and in the final answer. */
@@ -80,6 +82,18 @@ function fenced(text: string, langs?: string[]): string | undefined {
 
 const letter = (i: number) => String.fromCharCode(65 + (i % 26)) + (i >= 26 ? Math.floor(i / 26) : '');
 const modelName = (m: ModelRef) => m.model.split('/').pop()!.replace(/:latest$/, '');
+
+/** Takes the judge's "BEST: 2" line off its answer. */
+export function splitBest(reply: string): { text: string; best?: number } {
+  let best: number | undefined;
+  const text = reply
+    .replace(/^[ \t>*_#]*best(?: answer)?[*_]*\s*[:=]\s*[*_]*\s*(?:answer\s*)?#?(\d+)[^\n]*$/gim, (_, n: string) => {
+      best = Number(n);
+      return '';
+    })
+    .trimEnd();
+  return { text, best };
+}
 
 /** Extra material (search results, files, memory) wired into a block, as a context section. */
 function context(inputs: NodeInput[]): string {
@@ -128,8 +142,17 @@ export const NODES: Record<NodeType, NodeDefinition> = {
       const body = prev
         .map((p, i) => (p.type === 'review' ? `### Review (${p.label})\n${p.text}` : `### Answer ${i + 1} (${p.label})\n${p.text}`))
         .join('\n\n');
-      const user = fill(ctx.node.config.prompt ?? 'Question: {{question}}\n\n{{inputs}}', ctx.question, body);
-      return ctx.callModel(withSystem(ctx.node.config.system ?? JUDGE_SYSTEM, user));
+      const contenders = prev.map((p, i) => ({ p, n: i + 1 })).filter(({ p }) => p.type !== 'review');
+      let user = fill(ctx.node.config.prompt ?? 'Question: {{question}}\n\n{{inputs}}', ctx.question, body);
+      // With two or more answers the judge also names the best one, for the leaderboard; that line is removed again.
+      if (contenders.length >= 2) user += `\n\nAfter your final answer, add one last line exactly like "BEST: <number>" with the number of the best single answer (${contenders.map((c) => c.n).join(', ')}).`;
+      const { text, best } = splitBest(await ctx.callModel(withSystem(ctx.node.config.system ?? JUDGE_SYSTEM, user)));
+      const winner = contenders.find((c) => c.n === best);
+      if (winner) {
+        ctx.pickWinner?.(winner.p.nodeId, contenders.map((c) => c.p.nodeId));
+        ctx.progress(`Best answer: ${winner.p.label}`);
+      }
+      return text;
     },
   },
 
@@ -232,6 +255,7 @@ export const NODES: Record<NodeType, NodeDefinition> = {
         }
       }
       const best = tally.indexOf(Math.max(...tally));
+      if (counted) ctx.pickWinner?.(candidates[best].nodeId, candidates.map((c) => c.nodeId));
       const score = tally.map((t, i) => `${letter(i)} ${t}`).join(', ');
       ctx.progress(counted ? `Winner: ${candidates[best].label} · ${score}` : `No valid votes — passed on ${candidates[0].label}`);
       return candidates[best].text;

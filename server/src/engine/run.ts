@@ -1,6 +1,7 @@
 import type { CanvasGraph, CanvasNode, ModelInfo, ModelRef, OutputFile, RunEvent, RunStatus } from '@hivemind/shared';
 import { NODES, type NodeInput, type NodeServices } from '../nodes/index.js';
 import type { ChatMessage, ProviderAdapter } from '../providers/types.js';
+import { callCost } from '../services/pricing.js';
 import { validateGraph } from './graph.js';
 
 export interface ResolvedProvider {
@@ -18,10 +19,41 @@ export interface ResolvedProvider {
   };
 }
 
+/** One model call: what it used and cost (for the Stats page). */
+export interface UsageRecord {
+  nodeId: string;
+  nodeType: string;
+  providerId: string;
+  model: string;
+  inputTokens: number;
+  outputTokens: number;
+  /** USD; undefined when the price is unknown. */
+  cost?: number;
+  /** Pure generation time, when the provider reports it. */
+  genMs?: number;
+}
+
+/** A Judge or Vote picked the best of the answers wired into it. */
+export interface WinnerRecord {
+  nodeId: string;
+  nodeType: string;
+  /** The winning upstream block, its name and model. */
+  winnerNodeId: string;
+  winnerLabel: string;
+  winnerModel?: string;
+  /** Model (or block name) of every answer it chose from, the winner included. */
+  contenders: string[];
+}
+
 export interface EngineDeps {
   resolve(providerId: string): Promise<ResolvedProvider>;
   emit(ev: Omit<RunEvent, 'seq' | 'ts' | 'runId'>): void;
   services?: NodeServices;
+  /** Gets every model call and every Judge/Vote pick, to store for stats. */
+  record?: {
+    usage(u: UsageRecord): void;
+    winner(w: WinnerRecord): void;
+  };
 }
 
 export interface RunResult {
@@ -125,6 +157,8 @@ export async function runGraph(graph: CanvasGraph, question: string, deps: Engin
         let callLoad: number | undefined;
         let callTokens = 0;
         let callGen: number | undefined;
+        let callIn = 0;
+        let callCostUsd: number | undefined;
         for await (const chunk of p.adapter.stream({ model: ref.model, messages, temperature: node.config.temperature, think }, signal)) {
           if (chunk.type === 'loading') {
             loading = true;
@@ -162,11 +196,19 @@ export async function runGraph(graph: CanvasGraph, question: string, deps: Engin
             if (chunk.loadMs && chunk.loadMs > 300) callLoad = chunk.loadMs;
             if (callLoad && loadMs === undefined) loadMs = callLoad;
             inputTokens = (inputTokens ?? 0) + (chunk.inputTokens ?? 0);
+            callIn += chunk.inputTokens ?? 0;
+            // Provider prices first (OpenRouter), then the pricing table (OpenAI, Anthropic); free models cost 0.
             const info = await p.modelInfo(ref.model).catch(() => undefined);
-            if (info?.free) nodeCost ??= 0;
-            else if (info?.price) nodeCost = (nodeCost ?? 0) + ((chunk.inputTokens ?? 0) * info.price.input + callTokens * info.price.output) / 1e6;
+            const c = callCost(info, ref.model, chunk.inputTokens ?? 0, callTokens);
+            if (c !== undefined) {
+              nodeCost = (nodeCost ?? 0) + c;
+              callCostUsd = (callCostUsd ?? 0) + c;
+            }
           }
         }
+        try {
+          deps.record?.usage({ nodeId: node.id, nodeType: node.type, providerId: ref.providerId, model: ref.model, inputTokens: callIn, outputTokens: callTokens, cost: callCostUsd, genMs: callGen });
+        } catch {}
         p.stats?.record(ref.model, { loadMs: callLoad, tokensPerSec: callGen ? callTokens / (callGen / 1000) : undefined });
         // Small local thinking models sometimes think until they stop and never answer: ask once more without thinking.
         if (!out.trim() && thought && think === undefined && p.local && !signal.aborted) {
@@ -198,6 +240,24 @@ export async function runGraph(graph: CanvasGraph, question: string, deps: Engin
           for (const c of children.get(node.id)!) if (!ids.includes(c)) blocked.add(`${node.id}->${c}`);
         },
         progress: (note) => deps.emit({ ...base, type: 'node_progress', note }),
+        pickWinner: (winnerId, contenderIds) => {
+          const nameOf = (id: string) => {
+            const n = byId.get(id);
+            return n ? n.config.model?.model ?? n.label ?? n.type : id;
+          };
+          const w = byId.get(winnerId);
+          if (!w) return;
+          try {
+            deps.record?.winner({
+              nodeId: node.id,
+              nodeType: node.type,
+              winnerNodeId: winnerId,
+              winnerLabel: w.label || w.config.model?.model || w.type,
+              winnerModel: w.config.model?.model,
+              contenders: contenderIds.map(nameOf),
+            });
+          } catch {}
+        },
         attach: (f) => {
           files.push(f);
           allFiles.push(f);

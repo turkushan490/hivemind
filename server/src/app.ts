@@ -12,6 +12,7 @@ import { problemRoutes } from './api/problems.js';
 import { providerRoutes } from './api/providers.js';
 import { runRoutes } from './api/runs.js';
 import { settingsRoutes } from './api/settings.js';
+import { statsRoutes } from './api/stats.js';
 import { v1Routes } from './api/v1.js';
 import { voiceRoutes } from './api/voice.js';
 import { config } from './config.js';
@@ -64,6 +65,7 @@ export async function buildApp(opts: { logger?: boolean; web?: boolean; onRoute?
   exportRoutes(app);
   v1Routes(app);
   voiceRoutes(app);
+  statsRoutes(app);
 
   if (opts.web !== false && existsSync(config.webDir)) {
     await app.register(staticFiles, {

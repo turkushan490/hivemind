@@ -127,3 +127,53 @@ export function chunk(id: string, model: string, delta: { role?: 'assistant'; co
 
 /** OpenAI-style error body. */
 export const apiError = (message: string, type = 'invalid_request_error', code?: string) => ({ error: { message, type, code: code ?? null } });
+
+const BEST_LINE = /^[ \t>*_#]*best(?: answer)?[*_]*\s*[:=]\s*[*_]*\s*(?:answer\s*)?#?\d+/i;
+
+/**
+ * Streams a block's tokens to an API client, but holds back a line that may be the judge's "BEST: 2"
+ * marker (it is removed from the final answer). finish() returns whatever of the final answer was not sent.
+ */
+export class LiveText {
+  private buffer = '';
+  private lineOpen = false;
+  sent = '';
+
+  push(text: string): string {
+    this.buffer += text;
+    let out = '';
+    for (;;) {
+      const nl = this.buffer.indexOf('\n');
+      if (this.lineOpen) {
+        if (nl < 0) {
+          out += this.buffer;
+          this.buffer = '';
+          break;
+        }
+        out += this.buffer.slice(0, nl + 1);
+        this.buffer = this.buffer.slice(nl + 1);
+        this.lineOpen = false;
+        continue;
+      }
+      const head = (nl < 0 ? this.buffer : this.buffer.slice(0, nl)).replace(/^[ \t>*_#]+/, '').toLowerCase();
+      if (nl < 0 && (head.length < 4 ? 'best'.startsWith(head) : head.startsWith('best'))) break; // wait: may become "BEST: 2"
+      if (nl >= 0 && BEST_LINE.test(this.buffer.slice(0, nl))) {
+        this.buffer = this.buffer.slice(nl + 1); // never sent
+        continue;
+      }
+      if (!this.buffer) break;
+      this.lineOpen = true;
+    }
+    this.sent += out;
+    return out;
+  }
+
+  finish(final: string): string {
+    const base = this.sent.trimEnd();
+    if (!final.startsWith(base)) return this.sent ? '' : final;
+    let rest = final.slice(base.length);
+    const ws = this.sent.slice(base.length);
+    if (rest.startsWith(ws)) rest = rest.slice(ws.length);
+    return rest;
+  }
+}

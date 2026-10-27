@@ -51,6 +51,17 @@ export function startRun(opts: {
   runGraph(opts.graph, opts.question, {
       resolve: opts.resolve,
       emit,
+      // Stats: every model call and every Judge/Vote pick, kept even when the run is deleted from History.
+      record: {
+        usage: (u) =>
+          db
+            .prepare('INSERT INTO run_usage (run_id, owner_id, node_id, node_type, provider_id, model, input_tokens, output_tokens, cost, gen_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+            .run(id, opts.ownerId, u.nodeId, u.nodeType, u.providerId, u.model, u.inputTokens, u.outputTokens, u.cost ?? null, u.genMs ?? null),
+        winner: (w) =>
+          db
+            .prepare('INSERT INTO run_winners (run_id, owner_id, node_id, node_type, winner_node, winner_label, winner_model, contenders) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+            .run(id, opts.ownerId, w.nodeId, w.nodeType, w.winnerNodeId, w.winnerLabel, w.winnerModel ?? null, JSON.stringify(w.contenders)),
+      },
       services: {
         search: webSearch,
         memory: memoryFor(opts.ownerId),

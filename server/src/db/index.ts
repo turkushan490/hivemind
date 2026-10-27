@@ -99,6 +99,37 @@ const MIGRATIONS = [
   `
   ALTER TABLE canvases ADD COLUMN shared INTEGER NOT NULL DEFAULT 0;
   `,
+  `
+  CREATE TABLE run_usage (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id TEXT NOT NULL,
+    owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    node_id TEXT NOT NULL,
+    node_type TEXT NOT NULL,
+    provider_id TEXT NOT NULL,
+    model TEXT NOT NULL,
+    input_tokens INTEGER NOT NULL DEFAULT 0,
+    output_tokens INTEGER NOT NULL DEFAULT 0,
+    cost REAL,
+    gen_ms REAL,
+    at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  CREATE INDEX run_usage_owner ON run_usage(owner_id, at);
+  CREATE INDEX run_usage_run ON run_usage(run_id);
+  CREATE TABLE run_winners (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id TEXT NOT NULL,
+    owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    node_id TEXT NOT NULL,
+    node_type TEXT NOT NULL,
+    winner_node TEXT NOT NULL,
+    winner_label TEXT NOT NULL,
+    winner_model TEXT,
+    contenders TEXT NOT NULL,
+    at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  CREATE INDEX run_winners_owner ON run_winners(owner_id, at);
+  `,
 ];
 
 export const db = new DatabaseSync(join(config.dataDir, 'hivemind.db'));

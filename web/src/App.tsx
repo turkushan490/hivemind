@@ -15,17 +15,20 @@ import { useStored } from './stored';
 interface Me {
   id: string;
   username: string;
-  role: 'admin' | 'user';
+  role: 'admin' | 'user' | 'viewer';
 }
 
 const TABS = { use: 'Use', canvas: 'Canvas', files: 'Files', run: 'Quick council', settings: 'Settings', problems: 'Problems' } as const;
 type Tab = keyof typeof TABS;
+/** Viewers only use canvases. */
+const VIEWER_TABS: Tab[] = ['use', 'settings', 'problems'];
 
 export function App() {
   const [me, setMe] = useState<Me | null | undefined>(undefined);
   const [needsSetup, setNeedsSetup] = useState(false);
   const [storedTab, setTab] = useStored<Tab>('tab', 'canvas');
-  const tab: Tab = storedTab in TABS ? storedTab : 'canvas';
+  const allowed = (t: Tab) => t in TABS && (me?.role !== 'viewer' || VIEWER_TABS.includes(t));
+  const tab: Tab = allowed(storedTab) ? storedTab : me?.role === 'viewer' ? 'use' : 'canvas';
   // Tabs stay mounted once opened, so switching never loses what you picked or a running council.
   const [opened, setOpened] = useState<Set<Tab>>(() => new Set([tab]));
   useEffect(() => setOpened((o) => (o.has(tab) ? o : new Set(o).add(tab))), [tab]);
@@ -49,7 +52,7 @@ export function App() {
 
   // First login: the setup wizard (once per user; Settings → Builder AI shows it again).
   useEffect(() => {
-    if (!me) return;
+    if (!me || me.role === 'viewer') return;
     api<{ setupDone?: boolean }>('/api/me/prefs', { quiet: true })
       .then((p) => !p.setupDone && setWizard(true))
       .catch(() => {});
@@ -97,7 +100,7 @@ export function App() {
           <img src="/icon.svg" className="h-8 w-8" alt="" />
           <h1 className="text-xl font-semibold">HiveMind</h1>
           <nav className="ml-4 flex gap-1">
-            {(Object.keys(TABS) as Tab[]).map((t) => (
+            {(Object.keys(TABS) as Tab[]).filter(allowed).map((t) => (
               <button
                 key={t}
                 onClick={() => setTab(t)}
@@ -109,8 +112,11 @@ export function App() {
             ))}
           </nav>
           <span className="ml-auto" />
-          <MemoryButton />
-          <span className="text-sm text-slate-400">{me.username}</span>
+          {me.role !== 'viewer' && <MemoryButton />}
+          <span className="text-sm text-slate-400" title={`Role: ${me.role}`}>
+            {me.username}
+            {me.role !== 'user' && <span className="ml-1.5 rounded bg-[#21262d] px-1.5 py-0.5 text-xs text-slate-400">{me.role}</span>}
+          </span>
           <button
             className="btn-ghost"
             onClick={async () => {
@@ -123,7 +129,7 @@ export function App() {
         </header>
         {opened.has('use') && (
           <div hidden={tab !== 'use'}>
-            <UsePage active={tab === 'use'} onProblem={() => setUnseen((n) => n + 1)} onBuild={() => setTab('canvas')} />
+            <UsePage active={tab === 'use'} viewer={me.role === 'viewer'} onProblem={() => setUnseen((n) => n + 1)} onBuild={() => setTab('canvas')} />
           </div>
         )}
         {opened.has('canvas') && (
@@ -143,7 +149,7 @@ export function App() {
         )}
         {opened.has('settings') && (
           <div hidden={tab !== 'settings'}>
-            <Settings isAdmin={me.role === 'admin'} active={tab === 'settings'} onWizard={() => setWizard(true)} />
+            <Settings role={me.role} meId={me.id} active={tab === 'settings'} onWizard={() => setWizard(true)} />
           </div>
         )}
         {opened.has('problems') && (

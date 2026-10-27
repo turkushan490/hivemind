@@ -96,6 +96,9 @@ const MIGRATIONS = [
   `
   ALTER TABLE providers ADD COLUMN parallel INTEGER NOT NULL DEFAULT 0;
   `,
+  `
+  ALTER TABLE canvases ADD COLUMN shared INTEGER NOT NULL DEFAULT 0;
+  `,
 ];
 
 export const db = new DatabaseSync(join(config.dataDir, 'hivemind.db'));

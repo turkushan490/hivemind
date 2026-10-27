@@ -3,10 +3,14 @@ import { config } from '../config.js';
 import { hashPassword, newId, randomToken, sha256, verifyPassword } from '../crypto.js';
 import { db } from '../db/index.js';
 
+export const ROLES = ['admin', 'user', 'viewer'] as const;
+export type Role = (typeof ROLES)[number];
+
 export interface User {
   id: string;
   username: string;
-  role: 'admin' | 'user';
+  /** admin: everything; user: builds and runs own canvases; viewer: only uses canvases in Use mode. */
+  role: Role;
 }
 
 declare module 'fastify' {
@@ -54,6 +58,38 @@ export async function requireAdmin(req: FastifyRequest, reply: FastifyReply) {
   if (req.user.role !== 'admin') return reply.code(403).send({ error: 'Admins only' });
 }
 
+/**
+ * The only writes a viewer may make: log in and out, run (saved) canvases, cancel and clear their own runs,
+ * voice, their own API tokens, and the Problems list. Everything else is refused for viewers in viewerGuard.
+ */
+export const VIEWER_WRITES = new Set([
+  'POST /api/auth/login',
+  'POST /api/auth/logout',
+  'POST /api/setup',
+  'POST /api/problems/report',
+  'POST /api/problems/seen',
+  'POST /api/runs',
+  'POST /api/runs/:id/cancel',
+  'DELETE /api/runs/:id',
+  'DELETE /api/runs',
+  'POST /api/voice/transcribe',
+  'POST /api/voice/speak',
+  'POST /api/tokens',
+  'DELETE /api/tokens/:id',
+  'POST /v1/chat/completions',
+]);
+
+const WRITE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+
+/** onRequest hook: checks the role on every write route, before the route runs. */
+export async function viewerGuard(req: FastifyRequest, reply: FastifyReply) {
+  if (!WRITE_METHODS.has(req.method)) return;
+  const route = `${req.method} ${req.routeOptions.url ?? req.url.split('?')[0]}`;
+  if (VIEWER_WRITES.has(route)) return;
+  const user = authenticate(req);
+  if (user?.role === 'viewer') return reply.code(403).send({ error: 'Viewers can only use canvases (ask an admin for more rights)' });
+}
+
 // Simple in-memory brute-force guard: 10 failed logins per IP per 15 minutes.
 const failures = new Map<string, { n: number; until: number }>();
 function tooManyFailures(ip: string): boolean {
@@ -77,7 +113,7 @@ function startSession(reply: FastifyReply, userId: string) {
   reply.setCookie(COOKIE, token, { path: '/', httpOnly: true, sameSite: 'strict', secure: config.secureCookies, maxAge: SESSION_DAYS * 86400 });
 }
 
-export function createUser(username: string, pwHash: string, role: 'admin' | 'user'): string {
+export function createUser(username: string, pwHash: string, role: Role): string {
   const id = newId();
   db.prepare('INSERT INTO users (id, username, pw_hash, role) VALUES (?, ?, ?, ?)').run(id, username, pwHash, role);
   return id;
@@ -128,10 +164,30 @@ export function authRoutes(app: FastifyInstance) {
     const bad = validCredentials(username, password);
     if (bad) return reply.code(400).send({ error: bad });
     try {
-      return { id: createUser(username as string, await hashPassword(password as string), role === 'admin' ? 'admin' : 'user') };
+      return { id: createUser(username as string, await hashPassword(password as string), ROLES.includes(role as Role) ? (role as Role) : 'user') };
     } catch {
       return reply.code(409).send({ error: 'Username already taken' });
     }
+  });
+
+  /** Change a user's role and/or set a new password. */
+  app.patch('/api/users/:id', { preHandler: requireAdmin }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const { role, password } = (req.body ?? {}) as { role?: string; password?: string };
+    const target = db.prepare('SELECT id, role FROM users WHERE id = ?').get(id) as { id: string; role: Role } | undefined;
+    if (!target) return reply.code(404).send({ error: 'No such user' });
+    if (role !== undefined) {
+      if (!ROLES.includes(role as Role)) return reply.code(400).send({ error: `Role must be one of ${ROLES.join(', ')}` });
+      if (id === req.user!.id && role !== 'admin') return reply.code(400).send({ error: "You can't take away your own admin rights" });
+      db.prepare('UPDATE users SET role = ? WHERE id = ?').run(role, id);
+    }
+    if (password !== undefined) {
+      if (typeof password !== 'string' || password.length < 8) return reply.code(400).send({ error: 'Password must be at least 8 characters' });
+      db.prepare('UPDATE users SET pw_hash = ? WHERE id = ?').run(await hashPassword(password), id);
+      // Logged out everywhere except the admin's own session.
+      if (id !== req.user!.id) db.prepare('DELETE FROM sessions WHERE user_id = ?').run(id);
+    }
+    return db.prepare('SELECT id, username, role, created_at AS createdAt FROM users WHERE id = ?').get(id);
   });
 
   app.delete('/api/users/:id', { preHandler: requireAdmin }, async (req, reply) => {

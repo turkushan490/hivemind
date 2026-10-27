@@ -230,14 +230,17 @@ function Editor({ active, onProblem }: { active: boolean; onProblem: () => void 
     setSaved(JSON.stringify({ name: c.name, graph: { nodes: c.nodes, edges: c.edges } }));
   };
 
-  const save = async () => {
+  const save = async (shared?: boolean) => {
     const name = doc.name.trim() || 'My canvas';
-    const c = await api<Canvas>(`/api/canvases${doc.id ? `/${doc.id}` : ''}`, { method: 'PUT', body: { name, ...graph } });
+    const c = await api<Canvas>(`/api/canvases${doc.id ? `/${doc.id}` : ''}`, { method: 'PUT', body: { name, ...graph, ...(shared !== undefined && { shared }) } });
     setDoc({ id: c.id, name: c.name });
     setSaved(JSON.stringify({ name: c.name, graph: { nodes: c.nodes, edges: c.edges } }));
     setCanvases(await api<Canvas[]>('/api/canvases', { quiet: true }).catch(() => canvases));
-    toast(`Saved "${c.name}"`, 'ok');
+    toast(shared === undefined ? `Saved "${c.name}"` : c.shared ? `Saved "${c.name}" — everyone can use it now` : `Saved "${c.name}" — only you can use it now`, 'ok');
   };
+  // Canvases others shared show up in Use mode, not here: only your own can be edited.
+  const mine = canvases.filter((c) => c.mine !== false);
+  const sharedNow = !!canvases.find((c) => c.id === doc.id)?.shared;
 
   const remove = async () => {
     if (!doc.id || !confirm(`Delete the canvas "${doc.name}"?`)) return;
@@ -392,10 +395,11 @@ function Editor({ active, onProblem }: { active: boolean; onProblem: () => void 
             if (c) openCanvas(c);
           }}
         >
-          <option value="">Open… ({canvases.length})</option>
-          {canvases.map((c) => (
+          <option value="">Open… ({mine.length})</option>
+          {mine.map((c) => (
             <option key={c.id} value={c.id}>
               {c.name}
+              {c.shared ? ' (shared)' : ''}
             </option>
           ))}
         </select>
@@ -493,6 +497,15 @@ function Editor({ active, onProblem }: { active: boolean; onProblem: () => void 
             </div>
           )}
         </div>
+        {doc.id && (
+          <button
+            className={`btn-ghost ${sharedNow ? 'border-emerald-700 text-emerald-300' : ''}`}
+            title={sharedNow ? 'Everyone (also viewers) can use this canvas in Use mode and through the API. Click to make it private (saves).' : 'Let everyone (also viewers) use this canvas in Use mode and through the API — it runs with your AI providers. Saves the canvas.'}
+            onClick={() => save(!sharedNow).catch(() => {})}
+          >
+            {sharedNow ? 'Shared' : 'Share'}
+          </button>
+        )}
         {doc.id && (
           <button className="btn-ghost text-red-400" onClick={() => remove().catch(() => {})}>
             Delete

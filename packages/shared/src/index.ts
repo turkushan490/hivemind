@@ -131,6 +131,12 @@ export interface Canvas extends CanvasGraph {
   name: string;
   description?: string;
   updatedAt: string;
+  /** Everyone (also viewers) can use it in Use mode and through the API. */
+  shared?: boolean;
+  /** Yours to edit; false for a canvas someone else shared. */
+  mine?: boolean;
+  /** Who shared it (only for canvases of others). */
+  ownerName?: string;
 }
 
 // ---- Providers ----

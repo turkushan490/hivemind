@@ -1,19 +1,12 @@
 import type { CanvasGraph, RunEvent } from '@hivemind/shared';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import { db } from '../db/index.js';
 import { validateGraph } from '../engine/graph.js';
 import { cancelRun, startRun, subscribe } from '../events/runs.js';
 import { apiError, chunk, completion, findCanvas, modelList, questionFrom, streamSource, usageOf, type CanvasModelRow } from '../services/openaiCompat.js';
 import { authenticate } from './auth.js';
 import { gpuFreerFor, resolverFor } from './providers.js';
+import { canvasesFor, runSetup } from './runs.js';
 
-interface CanvasRow {
-  id: string;
-  name: string;
-  description: string | null;
-  graph: string;
-  updated_at: string;
-}
 
 /** Bearer API token (or the web session), answered in OpenAI's error format. */
 async function requireToken(req: FastifyRequest, reply: FastifyReply) {
@@ -21,7 +14,6 @@ async function requireToken(req: FastifyRequest, reply: FastifyReply) {
   if (!req.user) return reply.code(401).send(apiError('Missing or wrong API token. Send "Authorization: Bearer hm_…" (Settings → API tokens).', 'authentication_error', 'invalid_api_key'));
 }
 
-const canvasesOf = (userId: string) => db.prepare('SELECT * FROM canvases WHERE owner_id = ? ORDER BY updated_at DESC').all(userId) as unknown as CanvasRow[];
 
 /**
  * OpenAI-compatible API: every saved canvas is a model. Works with any OpenAI client
@@ -29,7 +21,7 @@ const canvasesOf = (userId: string) => db.prepare('SELECT * FROM canvases WHERE 
  */
 export function v1Routes(app: FastifyInstance) {
   app.get('/v1/models', { preHandler: requireToken }, async (req) =>
-    modelList(canvasesOf(req.user!.id).map((r): CanvasModelRow => ({ id: r.id, name: r.name, description: r.description, updatedAt: r.updated_at }))),
+    modelList(canvasesFor(req.user!).map((r): CanvasModelRow => ({ id: r.id, name: r.name, description: r.description, updatedAt: r.updated_at }))),
   );
 
   app.post('/v1/chat/completions', { preHandler: requireToken }, async (req, reply) => {
@@ -41,9 +33,10 @@ export function v1Routes(app: FastifyInstance) {
     } catch (err) {
       return reply.code(400).send(apiError((err as Error).message));
     }
-    const row = findCanvas(canvasesOf(req.user!.id), body.model);
+    const row = findCanvas(canvasesFor(req.user!), body.model);
     if (!row) return reply.code(404).send(apiError(`No canvas "${body.model}". GET /v1/models lists yours.`, 'invalid_request_error', 'model_not_found'));
-    const graph = JSON.parse(row.graph) as CanvasGraph;
+    // A canvas from the API always runs as saved (shared ones with their owner's providers).
+    const { graph = JSON.parse(row.graph) as CanvasGraph, providerUser } = runSetup(req.user!, row, undefined);
     try {
       validateGraph(graph);
     } catch (err) {
@@ -51,7 +44,7 @@ export function v1Routes(app: FastifyInstance) {
     }
 
     const user = req.user!;
-    const runId = startRun({ ownerId: user.id, canvasId: row.id, graph, question, resolve: resolverFor(user), freeGpu: gpuFreerFor(user) });
+    const runId = startRun({ ownerId: user.id, canvasId: row.id, graph, question, resolve: resolverFor(providerUser), freeGpu: gpuFreerFor(providerUser) });
     const model = body.model;
     const live = streamSource(graph);
     const events: RunEvent[] = [];

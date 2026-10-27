@@ -10,7 +10,7 @@ import { useStored } from '../stored';
 import { MicButton, speak, SpeakButton, useVoice } from '../voice';
 
 /** The simple screen: pick a saved canvas, ask, get the answer. What a phone or Home Assistant user sees. */
-export function UsePage({ active, onProblem, onBuild }: { active: boolean; onProblem: () => void; onBuild: () => void }) {
+export function UsePage({ active, viewer, onProblem, onBuild }: { active: boolean; viewer?: boolean; onProblem: () => void; onBuild: () => void }) {
   const [canvases, setCanvases] = useState<Canvas[] | null>(null);
   const [canvasId, setCanvasId] = useStored('use.canvas', '');
   const [question, setQuestion] = useState('');
@@ -57,10 +57,16 @@ export function UsePage({ active, onProblem, onBuild }: { active: boolean; onPro
     return (
       <div className="card mx-auto mt-10 max-w-lg space-y-3 text-center">
         <h2 className="text-lg font-semibold">No canvases yet</h2>
-        <p className="text-sm text-slate-400">Build one on the Canvas (or let the ✨ Builder do it) and save it — it shows up here as an app.</p>
-        <button className="btn" onClick={onBuild}>
-          Open the Canvas
-        </button>
+        {viewer ? (
+          <p className="text-sm text-slate-400">Nothing is shared with you yet. Ask someone to press “Share” on a canvas — it shows up here.</p>
+        ) : (
+          <>
+            <p className="text-sm text-slate-400">Build one on the Canvas (or let the ✨ Builder do it) and save it — it shows up here as an app.</p>
+            <button className="btn" onClick={onBuild}>
+              Open the Canvas
+            </button>
+          </>
+        )}
       </div>
     );
 
@@ -77,6 +83,7 @@ export function UsePage({ active, onProblem, onBuild }: { active: boolean; onPro
             className={`shrink-0 rounded-full border px-4 py-2 text-sm ${c.id === canvas?.id ? 'border-indigo-500 bg-indigo-500/20 font-semibold text-indigo-100' : 'border-[#30363d] bg-[#161b22] text-slate-400 hover:text-slate-200'}`}
           >
             {c.name}
+            {c.ownerName && <span className="ml-1.5 text-xs font-normal text-slate-500">· {c.ownerName}</span>}
           </button>
         ))}
       </div>

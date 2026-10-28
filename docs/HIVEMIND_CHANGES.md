@@ -18,7 +18,6 @@ Rules for all work in this file:
 - Keep the HiveMind style: Node 24 + TS, Fastify, `node:sqlite`, React/Vite/Tailwind, tests in `server/test/`.
 - Add a DB migration to `MIGRATIONS` in `server/src/db/index.ts`, guarded by `PRAGMA user_version`.
 - Don't break existing canvases. Every new config field is optional and defaults to today's behaviour.
-- Commits carry no Claude co-author line.
 
 ---
 
@@ -239,7 +238,7 @@ DungeonMind shows what's missing and refuses to start a game until the required 
 9. §2 history passthrough
 10. §10 nice to have
 
-Each step is one commit with its tests, CI green, then deploy to Unraid (template `my-hivemind.xml` + rebuild_container).
+Each step is one commit with its tests and CI green.
 
 ## How to test with curl
 
@@ -317,22 +316,22 @@ Every prompt gets `{{vars.campaign}}`, `{{vars.party}}`, `{{vars.recent}}` and `
 - **Compare runs:** the same seeded scenarios run on several models, so the comparison is fair. Candidates are picked from what is installed. Suggested ones to try: Qwen 8B/14B, Gemma 12B, Mistral Small / Cydonia 24B, gpt-oss 20B.
 - The winner becomes the default model in the DungeonMind canvases, with a "Set as DungeonMind default" button.
 
-## L3 — Local fine-tune (Unraid T4)
+## L3 — Local fine-tune (own GPU)
 
 - **Unsloth Docker container** (`unsloth/unsloth`) as a separate Unraid template. HiveMind starts the job over its API, or through `docker exec` from a small helper script on Unraid.
-- **QLoRA SFT** on the L1 dataset: T4 = fp16, 4-bit load. 7–9B fits comfortably, and 12–14B is tight.
+- **QLoRA SFT** on the L1 dataset: on a 16 GB card such as a Tesla T4: fp16, 4-bit load. 7–9B fits comfortably, and 12–14B is tight.
 - **GPU:** HiveMind takes the GPU host lock for the whole job and unloads Ollama and ComfyUI first, using the existing `freeGpu`. The UI shows "Training — local AI paused".
 - **Output:** a LoRA → merge → **GGUF** (q4_k_m and q8_0) → `ollama create dungeonmind-dm:<version>` from a Modelfile. The new model shows up in HiveMind and on the scoreboard straight away.
 
 ## L4 — Hugging Face training + publishing
 
-- **Settings → Hugging Face:** the token is stored encrypted like other provider keys, and there's a **daily GPU-minutes limit**. The default is 40 min/day, matching his plan, and a usage bar shows today's minutes.
+- **Settings → Hugging Face:** the token is stored encrypted like other provider keys, and there's a **daily GPU-minutes limit**. The default is 40 min/day, and a usage bar shows today's minutes.
 - Before **every** job, HiveMind shows the estimated minutes and cost, and the user must confirm.
 - ⚠️ **Check first:** HF Pro's daily minutes are **ZeroGPU quota for Spaces**, while **HF Jobs** (`hf jobs uv run` with a TRL/Unsloth script) are billed per use. Find out which one fits:
   - (a) HF Jobs within the budget;
   - (b) a private ZeroGPU Space that trains in short chunks with checkpoints pushed to the Hub;
-  - (c) fall back to L3 on the T4.
-- **Publish:** the merged GGUF goes **public** to his HF account (e.g. `turkushan490/dungeonmind-dm-8b-gguf`). It gets a model card (base model, dataset description, scores from L2, license) and is pulled with `ollama pull hf.co/turkushan490/…`. DungeonMind's setup offers this as a one-click model download.
+  - (c) fall back to L3 on the local GPU.
+- **Publish:** the merged GGUF goes **public** to the configured HF account (e.g. `turkushan490/dungeonmind-dm-8b-gguf`). It gets a model card (base model, dataset description, scores from L2, license) and is pulled with `ollama pull hf.co/turkushan490/…`. DungeonMind's setup offers this as a one-click model download.
 - **Base model licenses:** only use base models whose license allows publishing fine-tunes (Apache-2.0/MIT, e.g. Qwen, Mistral). Record the license in the model card.
 
 ## Lab order

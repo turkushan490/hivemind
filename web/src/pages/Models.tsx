@@ -118,7 +118,7 @@ export function Models({ active }: { active: boolean }) {
           <input className="input w-20 py-1" type="number" min={0} max={512} value={vram} onChange={(e) => setVram(Math.max(0, Number(e.target.value) || 0))} />
           GB
         </label>
-        <span className="text-xs text-slate-500">Used to tell what fits. Your Tesla T4 has 16 GB.</span>
+        <span className="text-xs text-slate-500">Used to tell what fits (e.g. Tesla T4 or RTX 4080: 16 GB, RTX 4090: 24 GB).</span>
       </div>
 
       {hostJobs.length > 0 && (

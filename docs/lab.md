@@ -79,4 +79,4 @@ Per model and prompt version, best first:
 ## Not built yet (L3 / L4)
 
 See the TODO at the end of [HIVEMIND_CHANGES.md](HIVEMIND_CHANGES.md): local QLoRA fine-tuning with Unsloth on
-the T4, and Hugging Face training and publishing.
+a local GPU, and Hugging Face training and publishing.

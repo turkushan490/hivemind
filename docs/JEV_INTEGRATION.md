@@ -38,7 +38,7 @@ There are four question types:
 Other services offer the same idea:
 - **OpenAI Decisions API** (cloud). It uses different words, for example `predicate` where Jev says `noul`.
 - **Cloudflare Clef / Clef-flash** (open weights).
-- **Ollama decision models Nimble / Tev1** (local, so they also run on the T4).
+- **Ollama decision models Nimble / Tev1** (local, on your own GPU).
 
 **Before coding an adapter, check the real request and response shape in each service's own docs.**
 
@@ -125,6 +125,6 @@ All tests run against a mocked fetch:
 - cost recorded in `run_usage`;
 - an error is visible + logged when the key is missing or the API returns 4xx.
 
-## Not testable from the cloud
+## Needs a real setup to test
 
-Real Jev calls need a TypeSafe key, which the owner adds in Settings. Ollama decision models and the T4 can only be tested on Unraid.
+Real Jev calls need a TypeSafe key, added in Settings → Providers. Ollama decision models need an Ollama server with a GPU.

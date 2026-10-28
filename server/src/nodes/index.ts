@@ -16,6 +16,8 @@ export interface NodeServices {
   memory?: {
     recall(key: string, limit: number): { text: string; at: string }[];
     save(key: string, text: string): void;
+    /** The best matches for a query (full-text, BM25). */
+    search?(key: string, query: string, limit: number): { text: string; score: number; at: string }[];
   };
   /** Writes into the files folder without overwriting; returns the path used. */
   saveFile?(path: string, data: Buffer | string): OutputFile;
@@ -430,7 +432,18 @@ export const NODES: Record<NodeType, NodeDefinition> = {
         ctx.progress(`Saved to "${key}"`);
         return text;
       }
-      const items = mem.recall(key, Math.max(1, Math.min(50, ctx.node.config.limit ?? 5)));
+      const limit = Math.max(1, Math.min(50, ctx.node.config.limit ?? 5));
+      if (ctx.node.config.mode === 'search') {
+        if (!mem.search) throw new Error('Memory search is not available here');
+        // What to look up: the query template (e.g. {{vars.actions}}), else what the block before wrote, else the question.
+        const prev = answers(ctx.inputs);
+        const query = (ctx.node.config.query ? fill(ctx.node.config.query, ctx, labelled(prev)) : prev.length ? prev[prev.length - 1].text : ctx.question).trim().slice(0, 2000);
+        if (!query) throw new Error('Nothing to search for: the query is empty');
+        const hits = mem.search(key, query, limit);
+        ctx.progress(hits.length ? `Found ${hits.length} in "${key}"` : `No match in "${key}"`);
+        return hits.length ? `Found in memory (${key}) for "${query.slice(0, 80)}":\n\n${hits.map((h) => h.text).join('\n\n---\n\n')}` : `(nothing in "${key}" matches "${query.slice(0, 80)}")`;
+      }
+      const items = mem.recall(key, limit);
       ctx.progress(items.length ? `Recalled ${items.length} from "${key}"` : `Nothing in "${key}" yet`);
       return items.length ? `Remembered from earlier (${key}):\n\n${items.map((m) => `[${m.at}]\n${m.text}`).join('\n\n')}` : '(nothing remembered yet)';
     },

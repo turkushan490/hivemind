@@ -133,6 +133,15 @@ const MIGRATIONS = [
   `
   ALTER TABLE runs ADD COLUMN vars TEXT;
   `,
+  `
+  ALTER TABLE memory ADD COLUMN tags TEXT;
+  CREATE TABLE memory_keys (
+    owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    key TEXT NOT NULL,
+    pinned INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (owner_id, key)
+  );
+  `,
 ];
 
 export const db = new DatabaseSync(join(config.dataDir, 'hivemind.db'));
@@ -150,6 +159,42 @@ for (let i = version; i < MIGRATIONS.length; i++) {
     throw err;
   }
 }
+
+/**
+ * Full-text search over memory (Memory blocks in search mode): an FTS5 table kept in sync by triggers.
+ * Created outside the migrations because a SQLite build without FTS5 must still start; then
+ * hasFts is false and search falls back to BM25 in JavaScript.
+ */
+export const hasFts = (() => {
+  try {
+    if (db.prepare("SELECT 1 FROM sqlite_master WHERE name = 'memory_fts'").get()) return true;
+    db.exec('BEGIN');
+    try {
+      db.exec(`
+        CREATE VIRTUAL TABLE memory_fts USING fts5(text, content='memory', content_rowid='id', tokenize='porter unicode61');
+        CREATE TRIGGER memory_fts_ai AFTER INSERT ON memory BEGIN
+          INSERT INTO memory_fts(rowid, text) VALUES (new.id, new.text);
+        END;
+        CREATE TRIGGER memory_fts_ad AFTER DELETE ON memory BEGIN
+          INSERT INTO memory_fts(memory_fts, rowid, text) VALUES ('delete', old.id, old.text);
+        END;
+        CREATE TRIGGER memory_fts_au AFTER UPDATE OF text ON memory BEGIN
+          INSERT INTO memory_fts(memory_fts, rowid, text) VALUES ('delete', old.id, old.text);
+          INSERT INTO memory_fts(rowid, text) VALUES (new.id, new.text);
+        END;
+        INSERT INTO memory_fts(memory_fts) VALUES ('rebuild');
+      `);
+      db.exec('COMMIT');
+    } catch (err) {
+      db.exec('ROLLBACK');
+      throw err;
+    }
+    return true;
+  } catch (err) {
+    console.warn(`SQLite has no FTS5 (${(err as Error).message}); memory search uses the built-in BM25 instead`);
+    return false;
+  }
+})();
 
 export function getSetting(key: string): string | undefined {
   return (db.prepare('SELECT value FROM settings WHERE key = ?').get(key) as { value: string } | undefined)?.value;

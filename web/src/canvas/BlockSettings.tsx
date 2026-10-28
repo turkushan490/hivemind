@@ -159,23 +159,39 @@ function KindSettings(p: Props) {
             </span>
           </label>
           <div className="flex gap-1">
-            {(['recall', 'save'] as const).map((m) => (
+            {(['recall', 'search', 'save'] as const).map((m) => (
               <button
                 key={m}
                 className={`flex-1 rounded-md border px-2 py-1.5 text-sm ${(p.config.mode ?? 'recall') === m ? 'border-lime-500 bg-lime-500/15 text-lime-200' : 'border-[#30363d] text-slate-400'}`}
                 onClick={() => p.onChange({ mode: m })}
               >
-                {m === 'recall' ? 'Recall' : 'Save'}
+                {m === 'recall' ? 'Recall' : m === 'search' ? 'Search' : 'Save'}
               </button>
             ))}
           </div>
-          {(p.config.mode ?? 'recall') === 'recall' ? (
-            <label className="block space-y-1">
-              <span className="text-xs text-slate-400">Bring back the last {p.config.limit ?? 5}</span>
-              <input type="range" className="w-full" min={1} max={20} value={p.config.limit ?? 5} onChange={(e) => p.onChange({ limit: Number(e.target.value) })} />
-            </label>
-          ) : (
+          {(p.config.mode ?? 'recall') === 'save' ? (
             <p className="text-xs text-slate-500">Saves the question and what is wired into this block, then passes it on. A Recall block with the same name brings it back next time.</p>
+          ) : (
+            <>
+              {p.config.mode === 'search' && (
+                <label className="hm-pop block space-y-1">
+                  <Label>Search for</Label>
+                  <input
+                    className="input text-xs"
+                    placeholder="Empty = the text wired in, else the question. Or e.g. {{vars.actions}}"
+                    value={p.config.query ?? ''}
+                    onChange={(e) => p.onChange({ query: e.target.value || undefined })}
+                  />
+                  <span className="text-xs text-slate-500">Finds the best matching entries (full-text, ranked), e.g. the rules an action needs. Import a whole rulebook with POST /api/memory/keys/&lt;name&gt;/import.</span>
+                </label>
+              )}
+              <label className="block space-y-1">
+                <span className="text-xs text-slate-400">
+                  {p.config.mode === 'search' ? `Bring back the best ${p.config.limit ?? 5}` : `Bring back the last ${p.config.limit ?? 5}`}
+                </span>
+                <input type="range" className="w-full" min={1} max={20} value={p.config.limit ?? 5} onChange={(e) => p.onChange({ limit: Number(e.target.value) })} />
+              </label>
+            </>
           )}
         </div>
       );

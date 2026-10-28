@@ -23,6 +23,7 @@ export interface BuilderCanvas {
     count?: number;
     key?: string;
     mode?: string;
+    query?: string;
     format?: string;
     fileName?: string;
     haOp?: string;
@@ -52,7 +53,7 @@ const BLOCKS: Record<NodeType, string> = {
   template: 'fixed text in "prompt" with {{question}} and {{inputs}} filled in.',
   file: 'text from a file the user loads later. No inputs. Leave its content empty.',
   search: `web search for the question (or the text of the block before it). Optional "source": ${SEARCH_SOURCES.join(' | ')}, "count" 1-10.`,
-  memory: '"mode": "recall" brings back what was saved under "key"; "mode": "save" remembers what flows through it under "key".',
+  memory: '"mode": "recall" brings back what was saved under "key"; "mode": "search" finds the best matching entries under "key" for "query" (default: the text wired in), e.g. rules from a rulebook; "mode": "save" remembers what flows through it under "key".',
   save: `saves what is wired into it as a file. "format": auto | md | txt | html | json | csv | code (auto = html for websites). Optional "fileName".`,
   homeassistant: 'Home Assistant action. "haOp": "state" reads "entities" (comma separated entity ids like sensor.temperature) and passes their states on; "haOp": "service" calls "service" (e.g. light.turn_on) with "body" as JSON data ({{input}} = text wired in). Only use when the user mentions Home Assistant or their smart home.',
   webhook: 'calls an HTTP "url" with "method" (GET/POST/PUT/PATCH/DELETE) and an optional "body" template ({{input}}, {{question}}); passes the response on.',
@@ -88,6 +89,7 @@ export function toBuilderCanvas(g: CanvasGraph): BuilderCanvas {
         ...(c.count && { count: c.count }),
         ...(c.key && { key: c.key }),
         ...(c.mode && { mode: c.mode }),
+        ...(c.query && { query: c.query }),
         ...(c.format && { format: c.format }),
         ...(c.haOp && { haOp: c.haOp }),
         ...(c.entities && { entities: c.entities }),
@@ -211,7 +213,8 @@ export function toGraph(c: BuilderCanvas, models: ModelInfo[]): { graph: CanvasG
     if (type === 'save') config.format = (['auto', 'md', 'txt', 'html', 'json', 'csv', 'code'] as const).find((f) => f === raw.format) ?? 'auto';
     if (type === 'memory') {
       config.key = String(raw.key || 'default');
-      config.mode = raw.mode === 'save' ? 'save' : 'recall';
+      config.mode = raw.mode === 'save' ? 'save' : raw.mode === 'search' ? 'search' : 'recall';
+      if (raw.mode === 'search' && raw.query) config.query = String(raw.query);
     }
     if (type === 'homeassistant') {
       config.haOp = raw.haOp === 'service' ? 'service' : 'state';

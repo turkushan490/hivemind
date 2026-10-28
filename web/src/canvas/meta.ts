@@ -121,7 +121,7 @@ export const NODE_META: Record<NodeType, NodeMeta> = {
     title: 'Memory',
     color: '#a3e635',
     group: 'Data',
-    description: 'Recall: brings back what was saved earlier under a name. Save: remembers what flows through it for next time.',
+    description: 'Recall: brings back what was saved earlier under a name. Search: finds the best matching entries (e.g. one rule out of a whole rulebook). Save: remembers what flows through it for next time.',
     usesModel: false,
     hasInput: true,
     hasOutput: true,
@@ -211,7 +211,7 @@ export function summary(kind: NodeType, c: import('@hivemind/shared').NodeConfig
     case 'search':
       return { text: `${c.source ?? 'default source'} · ${c.count ?? 5} results` };
     case 'memory':
-      return { text: `${c.mode === 'save' ? 'Save to' : 'Recall'} "${c.key || 'default'}"` };
+      return { text: `${c.mode === 'save' ? 'Save to' : c.mode === 'search' ? 'Search' : 'Recall'} "${c.key || 'default'}"` };
     case 'homeassistant':
       return (c.haOp ?? 'state') === 'state'
         ? c.entities?.trim()

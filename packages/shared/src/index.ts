@@ -46,8 +46,10 @@ export interface NodeConfig {
   count?: number;
   /** Memory: what to remember under (may use {{vars.name}}, e.g. "dnd:{{vars.tableId}}"), recall or save, how many to recall. */
   key?: string;
-  mode?: 'recall' | 'save';
+  mode?: 'recall' | 'save' | 'search';
   limit?: number;
+  /** Memory search: what to look up ({{vars.x}}, {{question}}, {{inputs}}); empty = the text wired in, else the question. */
+  query?: string;
   /** Save file: the name (may use {{date}} and {{question}}) and the format. */
   format?: SaveFormat;
   /** Image: size, steps, guidance, LoRA (ComfyUI), and what not to draw. */

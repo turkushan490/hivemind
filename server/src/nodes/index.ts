@@ -70,6 +70,11 @@ export const fill = (tpl: string, ctx: Pick<NodeContext, 'question' | 'vars'>, i
 const withSystem = (system: string | undefined, user: string): ChatMessage[] =>
   system ? [{ role: 'system', content: system }, { role: 'user', content: user }] : [{ role: 'user', content: user }];
 
+/** The memory key after filling in {{vars.name}} (one memory per campaign: "dnd:{{vars.tableId}}"); trimmed, at most 120 chars, "default" when empty. */
+export function memoryKey(tpl: string | undefined, ctx: Pick<NodeContext, 'question' | 'vars'>): string {
+  return fill(tpl ?? '', ctx).trim().slice(0, 120).trim() || 'default';
+}
+
 /** Upstream results that are more than the bare question. */
 const answers = (inputs: NodeInput[]) => inputs.filter((i) => i.type !== 'input');
 
@@ -357,7 +362,7 @@ export const NODES: Record<NodeType, NodeDefinition> = {
     async execute(ctx) {
       const mem = ctx.services.memory;
       if (!mem) throw new Error('Memory is not available here');
-      const key = (ctx.node.config.key || 'default').trim();
+      const key = memoryKey(ctx.node.config.key, ctx);
       if (ctx.node.config.mode === 'save') {
         const prev = answers(ctx.inputs);
         const text = prev.length ? prev.map((p) => p.text).join('\n\n') : ctx.question;

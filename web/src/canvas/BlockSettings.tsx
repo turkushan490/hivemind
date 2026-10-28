@@ -47,7 +47,7 @@ export function BlockSettings(p: Props) {
             onChange={(e) => p.onChange({ prompt: e.target.value || undefined })}
           />
           <span className="text-xs text-slate-500">
-            <code>{'{{question}}'}</code> = the question, <code>{'{{inputs}}'}</code> = what is wired into this block.
+            <code>{'{{question}}'}</code> = the question, <code>{'{{inputs}}'}</code> = what is wired into this block, <code>{'{{vars.name}}'}</code> = a value sent with the run.
           </span>
         </label>
       );
@@ -80,6 +80,9 @@ export function BlockSettings(p: Props) {
           <label className="block space-y-1">
             <Label>Memory name</Label>
             <input className="input" placeholder="default" value={p.config.key ?? ''} onChange={(e) => p.onChange({ key: e.target.value || undefined })} />
+            <span className="text-xs text-slate-500">
+              May use run variables, e.g. <code>{'dnd:{{vars.tableId}}'}</code> for one memory per campaign.
+            </span>
           </label>
           <div className="flex gap-1">
             {(['recall', 'save'] as const).map((m) => (
@@ -114,7 +117,7 @@ export function BlockSettings(p: Props) {
               onChange={(e) => p.onChange({ fileName: e.target.value || undefined })}
             />
             <span className="text-xs text-slate-500">
-              <code>{'{{date}}'}</code> and <code>{'{{question}}'}</code> are filled in. Saved in the files folder under <code>outputs/</code>, never overwriting.
+              <code>{'{{date}}'}</code>, <code>{'{{question}}'}</code> and <code>{'{{vars.name}}'}</code> are filled in. Saved in the files folder under <code>outputs/</code>, never overwriting.
             </span>
           </label>
           <label className="block space-y-1">

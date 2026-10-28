@@ -79,6 +79,7 @@ Apps that need more than one answer text (like [DungeonMind](https://github.com/
 | Feature flag | What it adds |
 |---|---|
 | `vars` | `POST /api/runs {canvasId, question, vars:{name:"…"}}` fills `{{vars.name}}` in prompts, system prompts, the image prompt, the Save file name and Webhook/Home Assistant/Discord templates (JSON-escaped in JSON bodies). Unknown vars are empty. |
+| `memoryKeyTemplate` | A Memory block's key is filled too, so one canvas keeps one memory per campaign: `dnd:{{vars.tableId}}`. Trimmed, at most 120 chars, `default` when empty. |
 
 ```bash
 H=http://server:4820; T="Authorization: Bearer hm_..."

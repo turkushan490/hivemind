@@ -35,7 +35,7 @@ export interface NodeConfig {
   /** Web search: where to search, and how many results. */
   source?: SearchSource;
   count?: number;
-  /** Memory: what to remember under, recall or save, how many to recall. */
+  /** Memory: what to remember under (may use {{vars.name}}, e.g. "dnd:{{vars.tableId}}"), recall or save, how many to recall. */
   key?: string;
   mode?: 'recall' | 'save';
   limit?: number;

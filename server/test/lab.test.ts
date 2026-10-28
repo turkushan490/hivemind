@@ -39,7 +39,7 @@ function sim(opts: { delay?: number; local?: boolean; log?: string[] } = {}) {
     return 'I attack!';
   };
   const base = fakeProvider(reply, { local: opts.local });
-  const p: ResolvedProvider = {
+  const p: ResolvedProvider & { calls: typeof base.calls } = {
     ...base,
     adapter: {
       ...base.adapter,
@@ -68,6 +68,11 @@ describe('Lab simulator', () => {
     expect(turns[0].input).toContain('Party state:\n');
     expect(turns[0].input).toMatch(/d20=\d+/);
     expect(turns[0].input).toContain('I attack!');
+    // Fake players answer short and without thinking; every call has a length cap.
+    const playerCalls = p.calls.filter((c) => c.model === 'player');
+    expect(playerCalls.length).toBeGreaterThan(0);
+    expect(playerCalls.every((c) => c.think === false && c.maxTokens === 160)).toBe(true);
+    expect(p.calls.every((c) => typeof c.maxTokens === 'number')).toBe(true);
     const jsonl = data.exportJsonl('u1', run.id);
     const lines = jsonl.split('\n');
     expect(lines.length).toBeGreaterThan(0);

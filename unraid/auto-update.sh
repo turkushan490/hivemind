@@ -42,6 +42,7 @@ fi
 prevprev=$(docker image inspect "$PREVIOUS" --format '{{.Id}}' 2>/dev/null || true)
 [ -n "$old" ] && docker tag "$old" "$PREVIOUS"
 log "New version ${new:7:12} found, deploying..."
+docker stop -t 30 "$NAME" >/dev/null 2>&1 || true
 "$REBUILD" "$NAME" >/dev/null 2>&1
 
 if healthy; then
@@ -60,6 +61,7 @@ echo "$new" >>"$BAD"
 docker logs --tail 40 "$NAME" >>"$LOG" 2>&1
 if [ -n "$old" ]; then
   docker tag "$old" "$IMAGE"
+  docker stop -t 30 "$NAME" >/dev/null 2>&1 || true
   "$REBUILD" "$NAME" >/dev/null 2>&1
   if healthy; then log "Rolled back to ${old:7:12}, health OK."; else log "Rollback is not healthy either!"; fi
 fi

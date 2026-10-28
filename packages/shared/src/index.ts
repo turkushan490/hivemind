@@ -30,6 +30,10 @@ export interface NodeConfig {
   jsonSchema?: string;
   /** Context size in tokens for local (Ollama) models; default = the model's own. */
   numCtx?: number;
+  /** At most this many tokens per answer (a thinking model can't go on forever); default = no limit. */
+  maxTokens?: number;
+  /** false: thinking models answer straight away, without thinking first. */
+  think?: boolean;
   /** LLM: send the chat history from /v1 as real messages instead of one prompt. */
   useMessages?: boolean;
   /** Image: how many pictures per run (1-8). */

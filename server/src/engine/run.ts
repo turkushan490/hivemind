@@ -87,6 +87,12 @@ const numCtxOf = (node: CanvasNode) => {
   return n && Number.isFinite(n) ? Math.round(Math.min(131072, Math.max(2048, n))) : undefined;
 };
 
+/** Answer length cap (16 to 32768 tokens); undefined = no cap. */
+const maxTokensOf = (node: CanvasNode) => {
+  const n = node.config.maxTokens;
+  return n && Number.isFinite(n) ? Math.round(Math.min(32768, Math.max(16, n))) : undefined;
+};
+
 export async function runGraph(
   graph: CanvasGraph,
   question: string,
@@ -173,7 +179,7 @@ export async function runGraph(
         let callGen: number | undefined;
         let callIn = 0;
         let callCostUsd: number | undefined;
-        for await (const chunk of p.adapter.stream({ model: ref.model, messages, temperature: node.config.temperature, think, json, numCtx: numCtxOf(node) }, signal)) {
+        for await (const chunk of p.adapter.stream({ model: ref.model, messages, temperature: node.config.temperature, think, json, numCtx: numCtxOf(node), maxTokens: maxTokensOf(node) }, signal)) {
           if (chunk.type === 'loading') {
             loading = true;
             sizeBytes = (await p.modelInfo(ref.model).catch(() => undefined))?.sizeBytes;
@@ -250,8 +256,8 @@ export async function runGraph(
           // Another AI server on the same GPU (ComfyUI) gives its memory back before a local model loads.
           if (p.local && p.exclusive !== false) await deps.services?.freeGpu?.(p.hostKey, m.providerId).catch(() => {});
           // A different local GPU than the one this block holds: wait for that GPU too.
-          if (p.local && p.exclusive !== false && p.hostKey !== heldHost) return withHostLock(p.hostKey, () => call(messages, m, undefined, json));
-          return call(messages, m, undefined, json);
+          if (p.local && p.exclusive !== false && p.hostKey !== heldHost) return withHostLock(p.hostKey, () => call(messages, m, node.config.think === false ? false : undefined, json));
+          return call(messages, m, node.config.think === false ? false : undefined, json);
         },
         decide: async (req, ref) => {
           const m = ref ?? primary;

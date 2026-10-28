@@ -60,6 +60,10 @@ export interface LabDeps {
 }
 
 const LOCAL_EXCLUSIVE = (p: ResolvedProvider) => p.local && p.exclusive !== false;
+
+/** One simulated turn (players + DM) or one judge check may take this long; then it is skipped as a failed turn. */
+export const TURN_MINUTES = 10;
+const turnSignal = (stop: AbortSignal) => AbortSignal.any([stop, AbortSignal.timeout(TURN_MINUTES * 60_000)]);
 const label = (m: ModelRef) => `${m.providerId}|${m.model}`;
 
 export class LabRun {
@@ -156,8 +160,10 @@ export class LabRun {
     const events: RunEvent[] = [];
     const graph = simGraph(t.personas, this.cfg.players, t.dm);
     const deps: EngineDeps = { resolve: this.deps.resolve, emit: (e) => events.push(e as RunEvent), services: this.deps.services, record: this.deps.record };
-    const res = await runGraph(graph, question, deps, this.abort.signal, vars);
+    const limit = turnSignal(this.abort.signal);
+    const res = await runGraph(graph, question, deps, limit, vars);
     if (this.stopped) return;
+    if (limit.aborted) throw new Error(`The turn took longer than ${TURN_MINUTES} minutes (a model kept writing); skipped`);
     const done = (id: string) => events.find((e) => e.type === 'node_done' && e.nodeId === id);
     const players: NodeInput[] = t.personas.flatMap((p) => {
       const ev = done(`p_${p.id}`);
@@ -275,12 +281,15 @@ export class LabRun {
             prompt: `Check this turn:\n{{question}}${bookkeeper.length ? `\n\nThe bookkeeper already found: ${bookkeeper.join('; ')}` : ''}\n\nThe DM turn must follow this shape: ${DM_SCHEMA}`,
             json: true,
             jsonSchema: JUDGE_SCHEMA,
+            maxTokens: 4096,
           },
         },
       ],
       edges: [{ id: 'e', source: 'q', target: 'judge' }],
     };
-    await runGraph(graph, state, { resolve: this.deps.resolve, emit: (e) => events.push(e as RunEvent), services: this.deps.services, record: this.deps.record }, this.abort.signal);
+    const limit = turnSignal(this.abort.signal);
+    await runGraph(graph, state, { resolve: this.deps.resolve, emit: (e) => events.push(e as RunEvent), services: this.deps.services, record: this.deps.record }, limit);
+    if (limit.aborted && !this.stopped) throw new Error(`Judge ${this.cfg.judge!.model} took longer than ${TURN_MINUTES} minutes`);
     const out = events.find((e) => e.type === 'node_done' && e.nodeId === 'judge')?.text;
     if (!out) throw new Error(`Judge ${this.cfg.judge!.model}: ${events.find((e) => e.type === 'error')?.error ?? 'no verdict'}`);
     return parseVerdict(out);

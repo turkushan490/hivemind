@@ -17,6 +17,9 @@ if [ "$old" = "$new" ]; then
   exit 0
 fi
 
+# Stop it cleanly first: rebuild_container force-removes a running container, which HiveMind would
+# report as a crash at the next start.
+docker stop -t 30 "$NAME" >/dev/null 2>&1 || true
 # Recreate the container from its Unraid template (keeps Edit, icon and autostart working).
 "$REBUILD" "$NAME" >/dev/null 2>&1
 

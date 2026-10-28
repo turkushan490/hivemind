@@ -93,9 +93,12 @@ export function simGraph(personas: Persona[], players: ModelRef, dm: ModelRef): 
       system: `${p.prompt} You play ${p.name} the ${p.cls} in a D&D game. Stay in character.`,
       prompt: '{{question}}\n\nYour state:\n{{vars.party}}\n\nSay what you do this turn in one or two sentences, in character. No dice, no numbers.',
       temperature: 0.9,
+      // One or two sentences: no thinking, and a hard cap so a looping small model can't hold the turn forever.
+      think: false,
+      maxTokens: 160,
     },
   }));
-  const dmNode = { id: 'dm', type: 'llm' as const, label: 'dm', position: { x: 680, y: 200 }, config: { model: dm, system: DM_SYSTEM, prompt: DM_PROMPT, json: true, jsonSchema: DM_SCHEMA, numCtx: 16384 } };
+  const dmNode = { id: 'dm', type: 'llm' as const, label: 'dm', position: { x: 680, y: 200 }, config: { model: dm, system: DM_SYSTEM, prompt: DM_PROMPT, json: true, jsonSchema: DM_SCHEMA, numCtx: 16384, maxTokens: 4096 } };
   const out = { id: 'out', type: 'output' as const, label: 'Final answer', position: { x: 1000, y: 200 }, config: {} };
   return {
     nodes: [q, ...ps, dmNode, out],

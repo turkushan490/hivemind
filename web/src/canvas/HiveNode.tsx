@@ -77,7 +77,7 @@ function HiveNodeImpl({ id, data, selected }: NodeProps<HiveFlowNode>) {
           {usesModels && view.state !== 'idle' && view.state !== 'skipped' && (
             <div className="space-y-1.5 pt-0.5">
               <GpuBar v={view} />
-              <WorkBar v={view} />
+              {data.kind !== 'decide' && <WorkBar v={view} />}
             </div>
           )}
           {view.files?.some((f) => f.kind === 'image') && (

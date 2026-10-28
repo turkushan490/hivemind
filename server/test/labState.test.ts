@@ -23,7 +23,7 @@ describe('Lab bookkeeper', () => {
     expect(p.spend('Turks', '2nd level spell slot').ok).toBe(true);
     expect(p.spend('Turks', 'slot 2')).toEqual({ ok: false, error: 'Turks used a level 2 slot while at 0/2' });
     expect(p.spend('Turks', 'Bardic Inspiration', 2).ok).toBe(true);
-    expect(p.spend('Turks', 'Bardic Inspiration', 2)).toEqual({ ok: false, error: 'Bardic Inspiration used while at 1/3' });
+    expect(p.spend('Turks', 'Bardic Inspiration', 2)).toEqual({ ok: false, error: 'Bardic Inspiration used 2× while at 1/3' });
     expect(p.spend('Brakka', 'spell slot')).toEqual({ ok: false, error: 'Brakka has no level 1 spell slots' });
     expect(p.spend('Nobody', 'x').ok).toBe(false);
   });

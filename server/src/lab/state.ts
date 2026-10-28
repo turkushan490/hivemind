@@ -72,14 +72,14 @@ export class Party {
       const lvl = slotLevel?.[1] ?? slotLevel?.[2] ?? Object.keys(pc.slots).find((k) => pc.slots[k].current > 0) ?? '1';
       const s = pc.slots[lvl];
       if (!s) return { ok: false, error: `${pc.name} has no level ${lvl} spell slots` };
-      if (s.current < n) return { ok: false, error: `${pc.name} used a level ${lvl} slot while at ${s.current}/${s.max}` };
+      if (s.current < n) return { ok: false, error: `${pc.name} used ${n > 1 ? `${n} level ${lvl} slots` : `a level ${lvl} slot`} while at ${s.current}/${s.max}` };
       s.current -= n;
       return { ok: true };
     }
     const key = Object.keys(pc.counters).find((k) => norm(k) === r) ?? Object.keys(pc.counters).find((k) => r.includes(norm(k)) || norm(k).includes(r));
     if (!key) return { ok: false, error: `${pc.name} has no "${resource}"` };
     const c = pc.counters[key];
-    if (c.current < n) return { ok: false, error: `${key} used while at ${c.current}/${c.max}` };
+    if (c.current < n) return { ok: false, error: `${key} used${n > 1 ? ` ${n}×` : ''} while at ${c.current}/${c.max}` };
     c.current -= n;
     return { ok: true };
   }

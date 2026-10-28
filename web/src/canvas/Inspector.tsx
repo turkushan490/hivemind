@@ -137,7 +137,7 @@ export function Inspector(props: {
           {(meta.usesModel || !!meta.multiModel) && view.state !== 'skipped' && (
             <div className="space-y-2">
               <GpuBar v={view} big />
-              <WorkBar v={view} big />
+              {node.data.kind !== 'decide' && <WorkBar v={view} big />}
             </div>
           )}
           {view.error && <p className="rounded bg-red-950/60 px-2 py-1 text-xs break-words text-red-300">{view.error}</p>}

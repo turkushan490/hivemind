@@ -17,6 +17,80 @@ const Label = ({ children }: { children: React.ReactNode }) => <div className="t
 
 /** The settings each kind of block has, beyond its name and single model. */
 export function BlockSettings(p: Props) {
+  return (
+    <>
+      <ModelOptions {...p} />
+      <KindSettings {...p} />
+    </>
+  );
+}
+
+const CONTEXT_SIZES: [string, number | undefined][] = [
+  ['Model default', undefined],
+  ['8K', 8192],
+  ['16K', 16384],
+  ['32K', 32768],
+  ['64K', 65536],
+  ['128K', 131072],
+];
+
+/** Output and context options for blocks that call a model: JSON output, context size, chat messages. */
+function ModelOptions(p: Props) {
+  const c = p.config;
+  const json = p.kind === 'llm' || p.kind === 'judge';
+  const ctx = ['llm', 'judge', 'review', 'router'].includes(p.kind);
+  if (!json && !ctx) return null;
+  return (
+    <div className="space-y-2 rounded-lg border border-[#30363d] p-2.5">
+      {json && (
+        <>
+          <label className="flex items-center gap-2 text-xs font-semibold text-slate-300">
+            <input type="checkbox" checked={!!c.json} onChange={(e) => p.onChange({ json: e.target.checked || undefined })} />
+            JSON output
+            <span className="font-normal text-slate-500">checked, fixed once if broken</span>
+          </label>
+          {c.json && (
+            <label className="hm-pop block space-y-1">
+              <span className="text-xs text-slate-400">Shape (optional) — shown to the model; a JSON Schema works too</span>
+              <textarea
+                className="input min-h-20 font-mono text-xs"
+                placeholder={'{"deltas": [{"pc": "name", "hp": -3}], "sceneEnd": false}'}
+                value={c.jsonSchema ?? ''}
+                onChange={(e) => p.onChange({ jsonSchema: e.target.value || undefined })}
+              />
+            </label>
+          )}
+        </>
+      )}
+      {ctx && (
+        <label className="block space-y-1">
+          <span className="text-xs font-semibold text-slate-300">Context size</span>
+          <select className="input text-xs" value={c.numCtx ?? ''} onChange={(e) => p.onChange({ numCtx: e.target.value ? Number(e.target.value) : undefined })}>
+            {CONTEXT_SIZES.map(([name, n]) => (
+              <option key={name} value={n ?? ''}>
+                {name}
+              </option>
+            ))}
+          </select>
+          <span className={`text-xs ${c.numCtx && c.numCtx > 32768 ? 'text-amber-300' : 'text-slate-500'}`}>
+            Local (Ollama) models only. More context fits longer prompts but needs more GPU memory (VRAM); too little cuts the prompt off silently.
+          </span>
+        </label>
+      )}
+      {p.kind === 'llm' && (
+        <label className="flex items-start gap-2 text-xs text-slate-300">
+          <input type="checkbox" className="mt-0.5" checked={!!c.useMessages} onChange={(e) => p.onChange({ useMessages: e.target.checked || undefined })} />
+          <span>
+            <span className="font-semibold">Use chat messages</span>
+            <span className="block text-slate-500">Over the /v1 API: send the whole conversation as real messages, not one prompt.</span>
+          </span>
+        </label>
+      )}
+    </div>
+  );
+}
+
+function KindSettings(p: Props) {
   switch (p.kind) {
     case 'router':
       return (

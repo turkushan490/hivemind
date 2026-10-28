@@ -157,7 +157,7 @@ export function Inspector(props: {
           </label>
           <label className="block space-y-1">
             <span className="text-xs text-slate-400">
-              Prompt template — <code>{'{{question}}'}</code> and <code>{'{{inputs}}'}</code> are filled in
+              Prompt template — <code>{'{{question}}'}</code>, <code>{'{{inputs}}'}</code>, <code>{'{{vars.name}}'}</code>, <code>{'{{history}}'}</code> are filled in
             </span>
             <textarea
               className="input min-h-20 text-xs"

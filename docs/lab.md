@@ -76,7 +76,28 @@ Per model and prompt version, best first:
 | `GET /api/lab/scoreboard?runId=` | The scoreboard |
 | `POST /api/lab/default` | `{model}`: set as the DungeonMind default |
 
-## Not built yet (L3 / L4)
+## New model (L3)
 
-See the TODO at the end of [HIVEMIND_CHANGES.md](HIVEMIND_CHANGES.md): local QLoRA fine-tuning with Unsloth on
-a local GPU, and Hugging Face training and publishing.
+**Lab → New model** trains a base model on the dataset (clean turns plus accepted corrections) and puts the result
+into Ollama under its own name, e.g. `dungeonmind-dm:20261028`. Your existing models are not changed.
+
+- **Trainer:** the `hivemind-trainer` container (template `unraid/hivemind-trainer.xml`, image `unsloth/unsloth:core`).
+  It mounts HiveMind's `lab` folder as `/lab`. HiveMind copies the trainer scripts (`server/trainer/server.py`,
+  `train.py`) and a token into that folder at every start, so the trainer always runs this HiveMind's version.
+  Set its address under Lab → New model (or `TRAINER_URL`).
+- **Base models** (Apache-2.0, fit a 16 GB GPU): Qwen3.5 9B (default), Qwen3.5 4B, Qwen3 8B, Qwen3.5 2B, and
+  Qwen3.5 0.8B for a quick end-to-end test. Any Hugging Face model Unsloth can train works.
+  A GGUF-only model (such as most `hf.co/...` Ollama models) can't be trained; pick its base instead.
+- **How:** QLoRA (4-bit, LoRA rank 16, fp16 on a T4), then a `q4_k_m` GGUF. HiveMind uploads it to Ollama
+  (`/api/blobs` + `/api/create`), which reads the chat template from the GGUF.
+- **GPU:** HiveMind takes the GPU lock for the whole job and frees Ollama and ComfyUI first; a running simulation
+  is stopped. Runs started meanwhile wait in line. Cancel stops the trainer.
+- **Data:** at least 20 examples; a few hundred or more is what makes a difference.
+- After a HiveMind restart, a job that is still training is followed again.
+- Errors (out of GPU memory, a base that can't load, a failed GGUF export) show on the job and in **Problems**,
+  with the trainer log.
+
+## Not built yet (L4)
+
+Training on Hugging Face and publishing the GGUF there: see the TODO at the end of
+[HIVEMIND_CHANGES.md](HIVEMIND_CHANGES.md).

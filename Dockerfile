@@ -19,6 +19,8 @@ COPY server/package.json server/
 COPY web/package.json web/
 RUN npm ci --omit=dev -w server && npm cache clean --force
 COPY --from=build /app/server/dist ./server/dist
+# Scripts for the trainer container (copied into the Lab folder at start).
+COPY --from=build /app/server/trainer ./server/trainer
 COPY --from=build /app/web/dist ./web
 ARG APP_VERSION=dev
 ENV APP_VERSION=$APP_VERSION

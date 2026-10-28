@@ -1,11 +1,12 @@
 import type { CanvasGraph, ModelRef } from '@hivemind/shared';
 import type { FastifyInstance } from 'fastify';
-import { db } from '../db/index.js';
+import { db, setSetting } from '../db/index.js';
 import { logError } from '../errors.js';
 import { exportJsonl, scoreboard } from '../lab/data.js';
 import { activeLab, recoverLab, startLab, type LabConfig } from '../lab/runner.js';
+import { cancelTrain, installTrainerScripts, overview, resumeTrains, startTrain, type TrainDeps } from '../lab/train.js';
 import { memoryFor } from '../services/memory.js';
-import { requireUser } from './auth.js';
+import { requireAdmin, requireUser, type User } from './auth.js';
 import { adapterFor, gpuFreerFor, resolverFor, visibleRows } from './providers.js';
 
 const isRef = (m: unknown): m is ModelRef => !!m && typeof (m as ModelRef).providerId === 'string' && typeof (m as ModelRef).model === 'string';
@@ -13,6 +14,37 @@ const isRef = (m: unknown): m is ModelRef => !!m && typeof (m as ModelRef).provi
 /** The Lab (D&D only): simulated games, datasets, review queue, JSONL export and the scoreboard. */
 export function labRoutes(app: FastifyInstance) {
   recoverLab();
+
+  // ---- New model (fine-tune on the Lab dataset; admin only, it takes the GPU for hours) ----
+  const trainDeps = (user: User): TrainDeps => ({
+    resolve: resolverFor(user),
+    freeGpu: gpuFreerFor(user),
+    ollamaUrl: (id) => visibleRows(user).find((r) => r.id === id && r.kind === 'ollama' && r.enabled)?.base_url,
+  });
+  try {
+    installTrainerScripts();
+    resumeTrains((ownerId) => trainDeps((db.prepare('SELECT id, username, role FROM users WHERE id = ?').get(ownerId) as unknown as User) ?? { id: ownerId, username: '?', role: 'admin' }));
+  } catch (err) {
+    logError({ source: 'server', message: `Lab: trainer setup failed: ${(err as Error).message}` });
+  }
+
+  app.get('/api/lab/train', { preHandler: requireAdmin }, async (req) => overview(req.user!.id));
+
+  app.put('/api/lab/train/settings', { preHandler: requireAdmin }, async (req, reply) => {
+    const url = String((req.body as { url?: string } | undefined)?.url ?? '').trim();
+    if (url && !/^https?:\/\/[^\s/]+(:\d+)?\/?$/.test(url)) return reply.code(400).send({ error: 'The trainer address looks like http://192.168.1.10:8765' });
+    setSetting('lab.trainerUrl', url);
+    return overview(req.user!.id);
+  });
+
+  app.post('/api/lab/train', { preHandler: requireAdmin }, async (req) => {
+    const body = (req.body ?? {}) as { base?: string; name?: string; providerId?: string; epochs?: number; maxSeqLength?: number; maxSteps?: number; allowSmall?: boolean };
+    return startTrain(req.user!.id, { base: String(body.base ?? ''), name: String(body.name ?? '').trim().toLowerCase(), providerId: String(body.providerId ?? ''), epochs: body.epochs, maxSeqLength: body.maxSeqLength, maxSteps: body.maxSteps, allowSmall: body.allowSmall }, trainDeps(req.user!));
+  });
+
+  app.post('/api/lab/train/:id/cancel', { preHandler: requireAdmin }, async (req, reply) =>
+    cancelTrain((req.params as { id: string }).id, req.user!.id) ? { ok: true } : reply.code(404).send({ error: 'That job is not running' }),
+  );
 
   app.get('/api/lab', { preHandler: requireUser }, async (req) => {
     const a = activeLab();

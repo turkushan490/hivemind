@@ -1,6 +1,6 @@
 # HiveMind changes for DungeonMind
 
-**Status:** Part 1 (M0 §1–§10) and Lab **L1–L2** are built (HiveMind milestone 7). **L3–L4 are not built yet**: see the TODO at the end. Notes on how it was built are marked *Built:*. User guides: [lab.md](lab.md), [decisions.md](decisions.md).
+**Status:** Part 1 (M0 §1–§10) and Lab **L1–L2** are built (HiveMind milestone 7). **L3 is built** (Lab → New model, see [lab.md](lab.md)); **L4 is not built yet**: see the TODO at the end. Notes on how it was built are marked *Built:*. User guides: [lab.md](lab.md), [decisions.md](decisions.md).
 
 ## Why
 

@@ -181,6 +181,22 @@ const MIGRATIONS = [
   CREATE INDEX lab_turns_run ON lab_turns(run_id, id);
   CREATE INDEX lab_turns_review ON lab_turns(review);
   `,
+  `
+  CREATE TABLE lab_trains (
+    id TEXT PRIMARY KEY,
+    owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    base TEXT NOT NULL,
+    name TEXT NOT NULL,
+    provider_id TEXT NOT NULL,
+    settings TEXT NOT NULL,
+    rows INTEGER NOT NULL,
+    state TEXT NOT NULL,
+    progress TEXT,
+    error TEXT,
+    started_at TEXT NOT NULL DEFAULT (datetime('now')),
+    finished_at TEXT
+  );
+  `,
 ];
 
 export const db = new DatabaseSync(join(config.dataDir, 'hivemind.db'));

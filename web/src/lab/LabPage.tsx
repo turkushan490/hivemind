@@ -4,6 +4,7 @@ import { api } from '../api';
 import { ModelPicker } from '../canvas/ModelPicker';
 import { toast } from '../notify';
 import { useStored } from '../stored';
+import { NewModel } from './NewModel';
 
 /** The Training Lab (D&D only): simulate games with fake players, check every DM turn, build a dataset, compare models. */
 
@@ -56,7 +57,7 @@ interface Score {
 }
 
 const ERROR_LABEL: Record<string, string> = { json: 'invalid JSON', roll: 'missing roll', resource: 'resource', number: 'invented number', contradiction: 'contradiction' };
-const TABS = { sim: 'Simulator', data: 'Datasets', score: 'Scoreboard' } as const;
+const TABS = { sim: 'Simulator', data: 'Datasets', score: 'Scoreboard', train: 'New model' } as const;
 type LabTab = keyof typeof TABS;
 
 export function LabPage({ active }: { active: boolean }) {
@@ -87,6 +88,7 @@ export function LabPage({ active }: { active: boolean }) {
       </div>
       <div hidden={tab !== 'data'}>{tab === 'data' && <Datasets />}</div>
       <div hidden={tab !== 'score'}>{tab === 'score' && <Scoreboard />}</div>
+      <div hidden={tab !== 'train'}>{tab === 'train' && <NewModel active={active} providers={providers} />}</div>
     </div>
   );
 }

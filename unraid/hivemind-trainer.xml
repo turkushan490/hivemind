@@ -1,0 +1,21 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>hivemind-trainer</Name>
+  <Repository>unsloth/unsloth:core</Repository>
+  <Registry>https://hub.docker.com/r/unsloth/unsloth</Registry>
+  <Network>bridge</Network>
+  <Privileged>false</Privileged>
+  <Support>https://github.com/turkushan490/hivemind/blob/main/docs/lab.md</Support>
+  <Project>https://github.com/turkushan490/hivemind</Project>
+  <Overview>The trainer for HiveMind's Lab → New model: fine-tunes a base model (QLoRA with Unsloth) on the Lab dataset and makes a GGUF that HiveMind puts into Ollama. HiveMind starts and watches the jobs; the trainer only runs while you train. Needs an NVIDIA GPU (16 GB is enough for 9B models). Point "Lab folder" at the lab folder inside HiveMind's appdata.</Overview>
+  <Category>AI: Tools:</Category>
+  <WebUI/>
+  <Icon>https://raw.githubusercontent.com/turkushan490/hivemind/main/unraid/icon.png</Icon>
+  <ExtraParams>--gpus=all --ipc=host --ulimit memlock=-1 --ulimit stack=67108864 --entrypoint python</ExtraParams>
+  <PostArgs>/lab/trainer/server.py</PostArgs>
+  <Config Name="Trainer port" Target="8765" Default="8765" Mode="tcp" Description="HiveMind talks to the trainer here (Lab → New model → Trainer address, e.g. http://your-server:8765)." Type="Port" Display="always" Required="true" Mask="false">8765</Config>
+  <Config Name="Lab folder" Target="/lab" Default="/mnt/user/appdata/hivemind/lab" Mode="rw" Description="The lab folder inside HiveMind's appdata: HiveMind puts the trainer scripts, its token and the datasets here; finished models come back here." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/hivemind/lab</Config>
+  <Config Name="Model cache" Target="/workspace" Default="/mnt/user/appdata/hivemind-trainer" Mode="rw" Description="Downloaded base models (Hugging Face cache) and training files." Type="Path" Display="advanced" Required="true" Mask="false">/mnt/user/appdata/hivemind-trainer</Config>
+  <Config Name="Hugging Face cache" Target="HF_HOME" Default="/workspace/.cache/huggingface" Mode="" Description="Where base models are kept, inside the model cache folder." Type="Variable" Display="advanced" Required="false" Mask="false">/workspace/.cache/huggingface</Config>
+  <Config Name="NVIDIA devices" Target="NVIDIA_VISIBLE_DEVICES" Default="all" Mode="" Description="Which GPU to use (all, or a GPU UUID)." Type="Variable" Display="advanced" Required="false" Mask="false">all</Config>
+</Container>

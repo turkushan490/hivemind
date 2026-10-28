@@ -180,7 +180,7 @@ Layout: `packages/shared` (canvas + event types), `server` (Fastify, providers, 
 5. ✅ Voice (speech in/out), OpenAI-compatible API per canvas, Home Assistant integration, action nodes
 6. ✅ Roles, cost stats, judge winner stats, export, Unraid Community Apps template
 7. ✅ API for DungeonMind (M0), decision models (Jev, Decide block, Auto model), Training Lab L1–L2
-8. Lab L3–L4 (fine-tuning on a local GPU / Hugging Face) · Android app
+8. Lab L4 (training on Hugging Face) · Android app
 
 ## License
 

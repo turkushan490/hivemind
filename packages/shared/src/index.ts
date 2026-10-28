@@ -536,6 +536,48 @@ export function councilGraph(models: ModelRef[], judge: ModelRef, withReview = f
   return { nodes, edges };
 }
 
+// ---- Lab: make a new model (GET /api/lab/train) ----
+
+export type TrainState = 'starting' | 'waiting' | 'loading' | 'training' | 'exporting' | 'importing' | 'done' | 'error' | 'cancelled' | 'interrupted';
+
+export interface TrainJob {
+  id: string;
+  base: string;
+  /** The new model's name in Ollama, e.g. dungeonmind-dm:v1. */
+  name: string;
+  providerId: string;
+  rows: number;
+  state: TrainState;
+  step?: number;
+  totalSteps?: number;
+  loss?: number;
+  etaS?: number;
+  note?: string;
+  error?: string;
+  /** The last lines the trainer printed. */
+  log?: string;
+  startedAt: string;
+  finishedAt?: string;
+}
+
+/** A base model that fits a 16 GB GPU and may be fine-tuned and shared (Apache-2.0). */
+export interface TrainBase {
+  id: string;
+  name: string;
+  note: string;
+  /** Rough seconds per training step on a Tesla T4 (for the estimate). */
+  secPerStep: number;
+}
+
+export interface TrainOverview {
+  trainer: { url?: string; ok: boolean; error?: string; gpu?: { name: string; usedMb: number; totalMb: number }; busy?: string | null };
+  /** Training examples ready: clean turns plus accepted corrections. */
+  rows: number;
+  minRows: number;
+  bases: TrainBase[];
+  jobs: TrainJob[];
+}
+
 // ---- Stats (GET /api/stats) ----
 
 export interface StatsReport {

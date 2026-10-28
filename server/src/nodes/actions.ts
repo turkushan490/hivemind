@@ -72,6 +72,18 @@ const parseJson = (text: string, what: string): unknown => {
   }
 };
 
+/** {"service": "light.turn_on", "data": {...}} from an AI answer (``` fences allowed), or undefined. */
+export function serviceFromInput(text: string): { service: string; data: unknown } | undefined {
+  const body = text.match(/```(?:json)?\s*\n?([\s\S]*?)```/)?.[1] ?? text;
+  try {
+    const v = JSON.parse(body.trim()) as { service?: unknown; data?: unknown };
+    if (typeof v?.service !== 'string') return undefined;
+    return { service: v.service.trim(), data: v.data && typeof v.data === 'object' ? v.data : {} };
+  } catch {
+    return undefined;
+  }
+}
+
 interface HaState {
   entity_id: string;
   state: string;
@@ -117,10 +129,12 @@ export const ACTION_NODES: Record<'homeassistant' | 'webhook' | 'discord', NodeD
         return lines.join('\n');
       }
 
-      const service = fillTemplate(c.service ?? '', ctx, 'none').trim();
+      // No service set: an AI block before this one names it, as JSON {"service": "light.turn_on", "data": {...}}.
+      const fromInput = c.service?.trim() ? undefined : serviceFromInput(inputText(ctx));
+      const service = fromInput?.service ?? fillTemplate(c.service ?? '', ctx, 'none').trim();
       const m = service.match(/^([a-z0-9_]+)\.([a-z0-9_]+)$/i);
-      if (!m) throw new Error(`Name the service as domain.service, e.g. light.turn_on${service ? ` (got "${service}")` : ''}`);
-      const data = c.body?.trim() ? parseJson(fillTemplate(c.body, ctx, 'json'), 'The service data') : {};
+      if (!m) throw new Error(`Name the service as domain.service, e.g. light.turn_on${service ? ` (got "${service}")` : ' — or let the block before send {"service": "light.turn_on", "data": {…}}'}`);
+      const data = fromInput ? fromInput.data : c.body?.trim() ? parseJson(fillTemplate(c.body, ctx, 'json'), 'The service data') : {};
       ctx.progress(`Calling ${service}…`);
       const res = await send(`${ha.url}/api/services/${m[1]}/${m[2]}`, { method: 'POST', headers, body: JSON.stringify(data) }, ctx.signal, 'Home Assistant');
       if (res.status === 400) {

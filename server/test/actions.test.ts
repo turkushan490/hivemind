@@ -71,6 +71,15 @@ describe('Home Assistant block', () => {
     expect(out).toContain('Called notify.mobile_app');
   });
 
+  it('takes the service from the AI answer when none is set', async () => {
+    const fetch = mockFetch(json([]));
+    const { c } = ctx('homeassistant', { haOp: 'service' }, { input: '```json\n{"service": "light.turn_off", "data": {"entity_id": "light.kitchen"}}\n```' });
+    expect(await NODES.homeassistant.execute(c)).toBe('Called light.turn_off.');
+    const [url, init] = fetch.mock.calls[0];
+    expect(url).toBe('http://ha.local:8123/api/services/light/turn_off');
+    expect(JSON.parse(init!.body as string)).toEqual({ entity_id: 'light.kitchen' });
+  });
+
   it('fails clearly when not connected, on a wrong token or a missing entity', async () => {
     await expect(NODES.homeassistant.execute(ctx('homeassistant', { entities: 'light.x' }, { services: {} }).c)).rejects.toThrow(/not connected/);
     mockFetch(new Response('401: Unauthorized', { status: 401 }));

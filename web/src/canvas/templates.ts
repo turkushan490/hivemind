@@ -9,7 +9,7 @@ export interface TemplateModels {
   decision?: ModelRef;
 }
 
-export const TEMPLATE_GROUPS = ['Everyday', 'Coding', 'Creative', 'Home / research', 'Website', 'Decisions', 'Tabletop'] as const;
+export const TEMPLATE_GROUPS = ['Everyday', 'Voice', 'Coding', 'Creative', 'Home / research', 'Website', 'Decisions', 'Tabletop'] as const;
 export type TemplateGroup = (typeof TEMPLATE_GROUPS)[number];
 
 export interface Template {
@@ -135,6 +135,55 @@ const DECISIONS: Template[] = [
       const refuse = node('template', 640, 300, 'yes', { prompt: 'Not doing that: the guard flagged this request as unsafe.' });
       const out = node('output', 1280, 160, 'Final answer');
       return { nodes: [q, guard, act, ha, refuse, out], edges: [wire(q, guard), wire(guard, act), wire(act, ha), wire(guard, refuse), wire(ha, out), wire(refuse, out)] };
+    },
+  },
+];
+
+// ---- Voice (use with 🎤 in Use mode; answers are read aloud) ----
+
+const SPOKEN =
+  'You are a voice assistant. Your answer is read aloud: reply in one to three short, natural sentences, ' +
+  'in the language of the question. No markdown, lists, emoji, links or code.';
+
+const HOME_COMMAND =
+  'Turn this spoken smart-home request into one Home Assistant service call. Reply with only JSON like ' +
+  '{"service": "light.turn_on", "data": {"entity_id": "light.living_room", "brightness_pct": 60}}.\n\n' +
+  'My devices (edit this list to match your Home Assistant):\n' +
+  'light.living_room, light.kitchen, light.bedroom, switch.coffee_machine, climate.living_room, media_player.living_room\n\n' +
+  'Request: {{question}}';
+
+const VOICE: Template[] = [
+  {
+    id: 'voice-assistant',
+    group: 'Voice',
+    name: 'Voice assistant',
+    description: 'Ask out loud, get a short spoken answer. Remembers the last few things you talked about.',
+    build: (m) => {
+      const q = node('input', 0, 160, 'Spoken question');
+      const recall = node('memory', 320, 40, 'Recent talk', { key: 'voice', mode: 'recall', limit: 6 });
+      const a = llm(640, 160, 'Assistant', m.text[0], 'Earlier conversation:\n{{inputs}}\n\nNow answer: {{question}}', SPOKEN);
+      const save = node('memory', 960, 160, 'Remember', { key: 'voice', mode: 'save' });
+      const out = node('output', 1280, 160, 'Spoken answer');
+      return { nodes: [q, recall, a, save, out], edges: [wire(q, recall), wire(q, a), wire(recall, a), wire(a, save), wire(save, out)] };
+    },
+  },
+  {
+    id: 'voice-home',
+    group: 'Voice',
+    name: 'Voice smart home',
+    description: 'Say "turn off the kitchen light" and Home Assistant does it; other questions get a spoken answer.',
+    build: (m) => {
+      const q = node('input', 0, 200, 'Spoken request');
+      const route = node('router', 320, 200, 'Command or question?', m.text[0] ? { model: m.text[0] } : {});
+      const cmd = node('llm', 640, 60, 'Smart home command', { ...(m.text[0] && { model: m.text[0] }), prompt: HOME_COMMAND, json: true, jsonSchema: '{"service": "domain.service", "data": {"entity_id": "..."}}' });
+      const ha = node('homeassistant', 960, 60, 'Do it', { haOp: 'service' });
+      const done = llm(1280, 60, 'Confirm', m.text[0], 'Home Assistant did this:\n{{inputs}}\n\nThe user asked: {{question}}\n\nConfirm in one short sentence what was done.', SPOKEN);
+      const answer = llm(640, 340, 'Question or chat', m.text[0], undefined, SPOKEN);
+      const out = node('output', 1600, 200, 'Spoken answer');
+      return {
+        nodes: [q, route, cmd, ha, done, answer, out],
+        edges: [wire(q, route), wire(route, cmd), wire(route, answer), wire(cmd, ha), wire(ha, done), wire(done, out), wire(answer, out)],
+      };
     },
   },
 ];
@@ -545,6 +594,7 @@ export const TEMPLATES: Template[] = [
         node('output', 960, 120, 'Final answer'),
       ),
   },
+  ...VOICE,
   ...DECISIONS,
   ...TABLETOP,
 ];

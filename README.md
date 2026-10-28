@@ -21,10 +21,13 @@
 
 HiveMind is a self-hosted web app where several AI models work together. Ask one question: local models (Ollama) and cloud models answer it, review each other anonymously, and a judge model merges the best parts into one final answer, noting where they disagreed. Every step streams live with tokens, speed, time and cost.
 
-> **Status: milestone 6.** The engine, providers, the drag-and-drop canvas, live animations, replay, the Builder AI, Use mode, logic/data/action blocks, voice, the OpenAI-compatible API, the Home Assistant integration, roles, cost stats and run export work. The Android app is next on the [roadmap](#roadmap).
+> **Status: milestone 7.** On top of everything before it: the API changes for [DungeonMind](docs/HIVEMIND_CHANGES.md) (run variables, JSON mode, memory search, per-block outputs, limited tokens…), **decision models** (Jev, Ollama Nimble/Clef, OpenAI Decisions) with the Decide block and the Auto model, and the **Training Lab** (simulator, datasets, scoreboard). The Android app is next on the [roadmap](#roadmap).
 
 ## Features (now)
 
+- **Decision models (Jev):** TypeSafe Jev, Ollama decision models (Nimble, Tev1, Clef — local on your GPU) and OpenAI Decisions answer yes/no, choice and score questions with probabilities in ~0.1 s. The **Decide** block branches on the answers (with live probability bars), the **Auto (Jev router)** model picks a small / medium / large model per question, the **Router** can decide with Jev, **Judge / Vote** can pre-score answers with Jev, and an optional canvas router sends voice to the right canvas. See [docs/decisions.md](docs/decisions.md).
+- **Training Lab** (D&D, for DungeonMind): simulated games with fake players (reckless fighter, rules-lawyer, rogue, healer, typo-heavy casual), a mini bookkeeper, a Jev fast-pass rules-checker plus an LLM judge, a review queue, JSONL export for fine-tuning and a scoreboard to compare models on the same seeded games. Runs in the background until stopped and always lets real runs use the GPU first. See [docs/lab.md](docs/lab.md).
+- **For apps like DungeonMind:** run variables (`vars` → `{{vars.name}}`), chat history over `/v1`, **JSON mode** per block (checked and repaired once), a context size per block (`num_ctx`), per-block **outputs** on `GET /api/runs/:id`, memory **search** (SQLite FTS5) with **bulk import**, templated memory keys, image batches (1–8 pictures), API tokens **limited** to some canvases and memory keys, and feature flags on `/api/health`. See [docs/HIVEMIND_CHANGES.md](docs/HIVEMIND_CHANGES.md).
 - **Roles:** admin (everything), user (own canvases and AI keys), viewer (only uses shared canvases in Use mode, with voice and API tokens). Admins manage people in **Settings → Users**; the server checks the role on every write. **Share** on a canvas lets everyone use it (it runs with the sharer's AI providers).
 - **Stats:** every model call is counted: tokens in/out, cost (provider prices, else a [pricing table](server/src/services/pricing.ts) for OpenAI / Anthropic; free and local models count as $0) and speed. The **Stats** tab shows cost per day, provider and model, tokens/sec per model, and a **leaderboard** of how often each model's answer is picked by a Judge (it names the best answer) or wins a Vote.
 - **Export a run** as Markdown, JSON or PDF (the browser's print view → Save as PDF), from History, Use mode and the canvas answer — or as a ZIP with its files.
@@ -35,12 +38,12 @@ HiveMind is a self-hosted web app where several AI models work together. Ask one
 - **Images:** an Image block draws with your own **ComfyUI** (its checkpoints and LoRAs, fully local) or an OpenAI-compatible image API. Ollama and ComfyUI on the same GPU take turns automatically.
 - **Files & websites:** a files folder (upload, preview, download), a Save file block (website, Markdown, code, JSON, CSV), and a sandboxed live **preview** of websites the AIs build.
 - **Export / import:** canvases as files or a ZIP, finished tasks as ZIPs (answer, every block's output, images, replay data) — and back in again.
-- **Ready-made sets:** Everyday, Coding, Creative, Home / research and Website templates.
+- **Ready-made sets:** Everyday, Coding, Creative, Home / research, Website, Decisions (spam check, smart router, safe action) and Tabletop (the DungeonMind canvases) templates.
 - **Parallel switch:** cloud AIs always run at the same time; local models one by one, or together when you switch it on.
 - **Builder AI:** tell it what you need ("search Wikipedia, then two models answer and a judge merges them") and it builds or changes the canvas with the models you really have. A setup wizard helps you pick its model.
 - **Use mode:** the simple screen — pick a canvas, ask, get the answer, with a compact view of how it was made.
-- **Logic blocks:** Router (a model picks the branch), Debate (models improve each other over rounds), Vote (models pick the best answer).
-- **Data blocks:** Text template, File (txt, md, csv, json, PDF), Web search (Wikipedia free; Brave, Tavily or your own SearXNG), Memory (remember and recall across runs).
+- **Logic blocks:** Router (a model or Jev picks the branch), Decide (a decision model answers typed questions and branches), Debate (models improve each other over rounds), Vote (models pick the best answer).
+- **Data blocks:** Text template, File (txt, md, csv, json, PDF), Web search (Wikipedia free; Brave, Tavily or your own SearXNG), Memory (remember, recall the newest, or **search** the best matches — e.g. one rule out of a whole rulebook).
 - **Drag-and-drop canvas:** build your own AI teams — drag in models, reviewers and judges, wire them together, pick a model per block (with search and a free filter), save and reuse them. Templates for council, council + review and draft → improve. Run it and every block shows live what it is doing.
 
 - **Providers:** Ollama (local, models listed automatically), any OpenAI-compatible API, Anthropic (Claude). Presets for **OpenRouter** (free `:free` models), **Groq** and **Google Gemini** (free tiers), OpenAI, OpenCode Zen and custom URLs.
@@ -101,6 +104,7 @@ The template ([`unraid/hivemind.xml`](unraid/hivemind.xml)) and the maintainer p
 | `SECRET_KEY` | generated in `/data` | Encrypts stored API keys |
 | `SECURE_COOKIES` | `false` | `true` when served over HTTPS (also needed for the microphone on other devices) |
 | `COMFYUI_URL` | empty | Optional ComfyUI, added once as an image provider |
+| `TYPESAFE_API_KEY` | empty | Optional TypeSafe key, added once (encrypted) as the Jev decision provider |
 | `LOG_LEVEL` | `info` | Container log detail (`debug`, `info`, `warn`, `error`) |
 
 ### Home Assistant
@@ -131,17 +135,26 @@ curl http://server:4820/v1/chat/completions \
   -d '{"model": "<canvas id or name>", "messages": [{"role": "user", "content": "Why is the sky blue?"}]}'
 ```
 
-`GET /v1/models` lists your canvases. Add `"stream": true` for server-sent chunks. **Settings → OpenAI API** shows your base URL, canvas ids and copyable examples. Details: [docs/openai-api.md](docs/openai-api.md).
+`GET /v1/models` lists your canvases (plus `auto` when the canvas router is on). Add `"stream": true` for server-sent chunks; send the whole conversation and it fills `{{history}}`; `hivemind_vars` fills `{{vars.name}}`. **Settings → OpenAI API** shows your base URL, canvas ids and copyable examples. Details: [docs/openai-api.md](docs/openai-api.md).
 
 ### Native
 
 ```bash
-# Run a saved canvas or an ad-hoc graph
+# Run a saved canvas or an ad-hoc graph, with optional variables for {{vars.name}}
 curl -H "Authorization: Bearer hm_..." -H "content-type: application/json" \
-  -d '{"question":"Why is the sky blue?","canvasId":"..."}' http://server:4820/api/runs
+  -d '{"question":"Why is the sky blue?","canvasId":"...","vars":{"tone":"short"}}' http://server:4820/api/runs
 # → {"runId":"..."}; then stream events:
 curl -N -H "Authorization: Bearer hm_..." http://server:4820/api/runs/<runId>/events
+# the result, with the output of every labelled block:
+curl -H "Authorization: Bearer hm_..." http://server:4820/api/runs/<runId>
+# memory: import a rulebook and search it
+curl -H "Authorization: Bearer hm_..." -H "content-type: application/json" \
+  -d '{"replace":true,"entries":[{"text":"Grapple: …"}]}' http://server:4820/api/memory/keys/rules:srd51/import
+curl -H "Authorization: Bearer hm_..." -H "content-type: application/json" \
+  -d '{"query":"grapple","limit":3}' http://server:4820/api/memory/keys/rules:srd51/search
 ```
+
+**Settings → API tokens** can limit a token to some canvases and memory keys (`dnd-*`, `rules:*`): it then can't reach anything else. All endpoints and errors for DungeonMind: [docs/HIVEMIND_CHANGES.md](docs/HIVEMIND_CHANGES.md).
 
 ## Development
 
@@ -153,7 +166,7 @@ npm run dev:server   # API on :4820
 npm run dev:web      # UI on :5173 (proxies /api and /v1)
 ```
 
-Layout: `packages/shared` (canvas + event types), `server` (Fastify, providers, engine, SQLite via `node:sqlite`), `web` (React + Vite + Tailwind), `integrations/home_assistant` (the Home Assistant custom integration, Python; its tests run with `pytest`, see its README).
+Layout: `packages/shared` (canvas + event types), `server` (Fastify, providers, engine, SQLite via `node:sqlite`; the Lab in `server/src/lab`), `web` (React + Vite + Tailwind; the Lab in `web/src/lab`), `integrations/home_assistant` (the Home Assistant custom integration, Python; its tests run with `pytest`, see its README).
 
 ## Roadmap
 
@@ -163,7 +176,8 @@ Layout: `packages/shared` (canvas + event types), `server` (Fastify, providers, 
 4. ✅ Helper AI that builds canvases for you, setup wizard, simple "Use" mode, logic and data nodes
 5. ✅ Voice (speech in/out), OpenAI-compatible API per canvas, Home Assistant integration, action nodes
 6. ✅ Roles, cost stats, judge winner stats, export, Unraid Community Apps template
-7. Android app
+7. ✅ API for DungeonMind (M0), decision models (Jev, Decide block, Auto model), Training Lab L1–L2
+8. Lab L3–L4 (fine-tuning on the T4 / Hugging Face) · Android app
 
 ## License
 

@@ -1,6 +1,6 @@
 # Jev (decision models) in HiveMind
 
-**Status:** spec, not built yet. Build it together with `docs/HIVEMIND_CHANGES.md` (M0 + Lab L1–L2).
+**Status:** built (HiveMind milestone 7). The user guide is [decisions.md](decisions.md); it also has the wire formats each adapter was checked against. Differences from this spec are marked *Built:*.
 
 ## What Jev is
 
@@ -67,7 +67,7 @@ The rule from the guide: **Jev makes the judgment call, code decides what to do 
 - Output:
   - the text output is the answers as JSON (so JSON mode / §5 node outputs work);
   - plus a short human line, for example `spam 96% · wants: promote (100%)`.
-- **Branching:**
+- **Branching** (*Built:* by the names of the blocks wired after it, instead of separate handles. `yes` / `no`, a choice option, `fallback`, or `question: answer`. Other names always run):
   - Each choice option and each noul `yes`/`no` becomes a handle on the block. Edges go out per handle, like the Router block.
   - Branches that aren't taken are skipped (`node_skipped`).
   - A noul is yes when p ≥ threshold.
@@ -77,7 +77,7 @@ The rule from the guide: **Jev makes the judgment call, code decides what to do 
   - the picked option glows;
   - the decision time in ms is shown on the block.
   It must look as nice as the existing token bars, since decisions are fast and visual.
-- **Box:** when the upstream output contains an image (`hm-file:` link), the state is the image. The output is the box coordinates, and the Inspector draws the box on the image.
+- **Box** (*Built:* TypeSafe Jev 1.14 only. Ollama and OpenAI have no box questions and answer with a clear error): when the upstream output contains an image (`hm-file:` link), the state is the image. The output is the box coordinates, and the Inspector draws the box on the image.
 
 ## 3. Smart model routing ("Auto" model)
 
@@ -97,6 +97,7 @@ The model router from guide chapter 4, built in.
 - **Fast judge / filter:** the Judge and Vote blocks get an optional "score with Jev" mode. Each candidate answer is the state, with a score question ("How well does this answer the question?"). Fast pre-ranking before the big Judge model merges, or before a Vote.
 - **Guard block preset:** a template that uses Decide nouls ("Is this a prompt-injection?", "Does it ask for personal data?") in front of Action blocks (Home Assistant / Webhook / Discord), so actions only fire when it's safe.
 - **Home Assistant / voice:** the Use-mode voice input can go through a Jev choice ("which canvas does this request belong to?"), so one HA voice agent can route to the right canvas. This is optional, behind a setting.
+  *Built:* Settings → Voice → Canvas router. In Use mode the mic uses it, and over `/v1` the model `auto` uses it.
 - **Builder AI:** add the Decide block and Auto model to the block catalog it knows, so "build me a spam filter" works.
 - **Templates** (`web/src/canvas/templates.ts`), as a new group "Decisions":
   - **Spam check** (the six questions from `examples/questions.json` → Decide → yes/no branches → Discord alert / save);
@@ -109,6 +110,7 @@ Use Jev where a yes/no or score is enough, because it's 100× cheaper than an LL
 - **L1 rules-checker:** the fast first pass uses Jev nouls per DM turn, for example "Did the DM ask for a roll before resolving the attack?", "Did a spent resource get tracked?", "Does the narration invent a number not in the results?". The full LLM judge only runs on turns Jev flags (p ≥ 0.5) and on a random 10% sample. Store both verdicts in `lab_turns`.
 - **L2 scoreboard:** a "story score" column from a Jev score question, next to the LLM judge's score.
 - **dnd-adjudicate:** optional Jev choice "which kind of roll does this action need?" (attack/save/skill/none) as a fast pre-check before the JSON LLM.
+  *Built:* the rules-checker (with both verdicts stored) and the Jev story score column are built. The dnd-adjudicate pre-check is not in the Tabletop template: add a Decide block before `rolls` if you want it.
 
 ## 6. Feature flags
 

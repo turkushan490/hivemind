@@ -1,5 +1,6 @@
 import type { CanvasGraph, CanvasNode, ModelInfo, ModelRef, OutputFile, RunEvent, RunStatus } from '@hivemind/shared';
 import { NODES, type ChatContext, type NodeInput, type NodeServices } from '../nodes/index.js';
+import type { DecisionRequest, DecisionResult } from '../providers/decisions.js';
 import type { ChatMessage, ProviderAdapter } from '../providers/types.js';
 import { callCost } from '../services/pricing.js';
 import { validateGraph } from './graph.js';
@@ -252,10 +253,32 @@ export async function runGraph(
           if (p.local && p.exclusive !== false && p.hostKey !== heldHost) return withHostLock(p.hostKey, () => call(messages, m, undefined, json));
           return call(messages, m, undefined, json);
         },
+        decide: async (req, ref) => {
+          const m = ref ?? primary;
+          if (!m) throw new Error('Pick a decision model for this block');
+          const p = await deps.resolve(m.providerId);
+          if (!p.adapter.decide) throw new Error(`${m.model} is not a decision model — pick one from a decision provider (Settings → Providers → Decisions)`);
+          const ask = async (): Promise<DecisionResult> => {
+            // A local decision model (Ollama) shares the GPU like any other local model.
+            if (p.local && p.exclusive !== false) await deps.services?.freeGpu?.(p.hostKey, m.providerId).catch(() => {});
+            const r = await p.adapter.decide!({ model: m.model, ...req } as DecisionRequest, signal);
+            markReady();
+            const info = await p.modelInfo(m.model).catch(() => undefined);
+            const c = callCost(info, r.model, r.usage.inputTokens, r.usage.outputTokens) ?? callCost(info, m.model, r.usage.inputTokens, r.usage.outputTokens);
+            if (c !== undefined) nodeCost = (nodeCost ?? 0) + c;
+            inputTokens = (inputTokens ?? 0) + r.usage.inputTokens;
+            try {
+              deps.record?.usage({ nodeId: node.id, nodeType: node.type, providerId: m.providerId, model: m.model, inputTokens: r.usage.inputTokens, outputTokens: r.usage.outputTokens, cost: c, genMs: r.ms });
+            } catch {}
+            return r;
+          };
+          if (p.local && p.exclusive !== false && p.hostKey !== heldHost) return withHostLock(p.hostKey, ask);
+          return ask();
+        },
         choose: (ids) => {
           for (const c of children.get(node.id)!) if (!ids.includes(c)) blocked.add(`${node.id}->${c}`);
         },
-        progress: (note) => deps.emit({ ...base, type: 'node_progress', note }),
+        progress: (note, decision) => deps.emit({ ...base, type: 'node_progress', note, ...(decision && { decision }) }),
         pickWinner: (winnerId, contenderIds) => {
           const nameOf = (id: string) => {
             const n = byId.get(id);

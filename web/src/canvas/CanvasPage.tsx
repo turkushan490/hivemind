@@ -296,9 +296,12 @@ function Editor({ active, onProblem }: { active: boolean; onProblem: () => void 
       for (let i = 0; i < 20 && taken(pos); i++) pos = { x: pos.x + (i % 2 ? 40 : 0), y: pos.y + 120 };
     }
     const id = newNodeId(kind);
-    // New blocks reuse the last model of the same kind: image blocks an image model, the rest a text model.
-    const isImage = (k: NodeType) => k === 'image';
-    const lastModel = [...nodes].reverse().find((n) => n.data.config.model && isImage(n.data.kind) === isImage(kind))?.data.config.model ?? (isImage(kind) ? pickImageModel(models) : undefined);
+    // New blocks reuse the last model of the same kind: image blocks an image model, Decide a decision model, the rest a text model.
+    const modelKind = (k: NodeType) => (k === 'image' ? 'image' : k === 'decide' ? 'decision' : 'text');
+    const firstDecision = models.find((m) => m.kind === 'decision');
+    const lastModel =
+      [...nodes].reverse().find((n) => n.data.config.model && modelKind(n.data.kind) === modelKind(kind))?.data.config.model ??
+      (kind === 'image' ? pickImageModel(models) : kind === 'decide' && firstDecision ? { providerId: firstDecision.providerId, model: firstDecision.model } : undefined);
     const meta = NODE_META[kind];
     const config: NodeConfig = meta.usesModel && lastModel ? { model: lastModel } : {};
     // Debate / Vote start with fast models filled in; change them in the inspector.
@@ -307,6 +310,7 @@ function Editor({ active, onProblem }: { active: boolean; onProblem: () => void 
       config.models = [...new Map(picks.slice(0, 3).map((m) => [`${m!.providerId}|${m!.model}`, m!])).values()].slice(0, Math.max(meta.multiModel, 2));
     }
     if (kind === 'memory') config.key = 'default';
+    if (kind === 'decide') config.questions = [{ name: 'spam', type: 'noul', instructions: 'Is this spam?' }];
     setNodes((ns) => [...ns.map((n) => ({ ...n, selected: false })), { id, type: 'hive', position: pos, selected: true, data: { kind, config } }]);
   };
   const onDrop = (e: DragEvent) => {

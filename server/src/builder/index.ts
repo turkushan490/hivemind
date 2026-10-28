@@ -1,4 +1,4 @@
-import { HTTP_METHODS, NODE_TYPES, SEARCH_SOURCES, type CanvasGraph, type CanvasNode, type ModelInfo, type ModelRef, type NodeConfig, type NodeType } from '@hivemind/shared';
+import { DECISION_TYPES, HTTP_METHODS, NODE_TYPES, SEARCH_SOURCES, type CanvasGraph, type DecideQuestion, type CanvasNode, type ModelInfo, type ModelRef, type NodeConfig, type NodeType } from '@hivemind/shared';
 import { validateGraph } from '../engine/graph.js';
 import { NODES } from '../nodes/index.js';
 
@@ -24,6 +24,8 @@ export interface BuilderCanvas {
     key?: string;
     mode?: string;
     query?: string;
+    questions?: DecideQuestion[];
+    threshold?: number;
     format?: string;
     fileName?: string;
     haOp?: string;
@@ -58,6 +60,7 @@ const BLOCKS: Record<NodeType, string> = {
   homeassistant: 'Home Assistant action. "haOp": "state" reads "entities" (comma separated entity ids like sensor.temperature) and passes their states on; "haOp": "service" calls "service" (e.g. light.turn_on) with "body" as JSON data ({{input}} = text wired in). Only use when the user mentions Home Assistant or their smart home.',
   webhook: 'calls an HTTP "url" with "method" (GET/POST/PUT/PATCH/DELETE) and an optional "body" template ({{input}}, {{question}}); passes the response on.',
   discord: 'posts "body" (default {{input}}) to a Discord channel; the user pastes the webhook URL later. Put it after the block whose answer should be posted.',
+  decide: 'a DECISION model (only "decision" models from the list) answers typed "questions" about the text wired in, in ~0.1 s: [{"name","type":"noul" (yes/no) | "choice" (with "options":[{"name","description"}]) | "score" (with "levels" low→high),"instructions"}]. Optional "threshold" (default 0.6). Blocks wired after it labelled "yes"/"no" (first noul question) or with a choice option name (or "fallback") only run when that answer wins; use it for spam filters, guards before actions and routing.',
   image: 'makes an image. Needs "model" (an image model from the list). Draws "prompt" if set, else the text of the block before it (put a model before it that writes an image prompt).',
 };
 
@@ -66,6 +69,7 @@ const ref = (m: ModelInfo) => `${m.providerId}|${m.model}`;
 function modelLine(m: ModelInfo): string {
   const gb = (m.sizeBytes ?? 0) / 1e9;
   if (m.kind === 'image') return `- ${ref(m)} (IMAGE model, only for "image" blocks)`;
+  if (m.kind === 'decision') return `- ${ref(m)} (DECISION model, only for "decide" blocks and Auto/Jev routing)`;
   const tier = !m.sizeBytes ? 'cloud' : gb < 2 ? 'tiny, fast but weak' : gb < 6 ? 'small' : gb < 12 ? 'medium' : 'large';
   const tags = [m.free ? 'free' : 'paid', m.sizeBytes ? `local ${gb.toFixed(1)} GB` : 'cloud', ...(m.sizeBytes ? [tier] : [])];
   return `- ${ref(m)} (${tags.join(', ')})`;
@@ -90,6 +94,8 @@ export function toBuilderCanvas(g: CanvasGraph): BuilderCanvas {
         ...(c.key && { key: c.key }),
         ...(c.mode && { mode: c.mode }),
         ...(c.query && { query: c.query }),
+        ...(c.questions && { questions: c.questions }),
+        ...(c.threshold !== undefined && { threshold: c.threshold }),
         ...(c.format && { format: c.format }),
         ...(c.haOp && { haOp: c.haOp }),
         ...(c.entities && { entities: c.entities }),
@@ -104,7 +110,7 @@ export function toBuilderCanvas(g: CanvasGraph): BuilderCanvas {
 
 export function builderSystemPrompt(models: ModelInfo[]): string {
   const text = models.filter((m) => !m.kind && !(m.sizeBytes !== undefined && m.sizeBytes < 50e6)).slice(0, 50);
-  const usable = [...text, ...models.filter((m) => m.kind === 'image').slice(0, 12)];
+  const usable = [...text, ...models.filter((m) => m.kind === 'image').slice(0, 12), ...models.filter((m) => m.kind === 'decision').slice(0, 8)];
   return [
     'You are the Builder inside HiveMind, an app where AI models work together on a canvas of blocks wired left to right.',
     'You design or change canvases for the user. Keep them as simple as the request allows.',
@@ -115,6 +121,7 @@ export function builderSystemPrompt(models: ModelInfo[]): string {
     'Models you may use (copy the id before the space exactly; never invent one):',
     ...(usable.length ? usable.map(modelLine) : ['- (no models connected yet: leave "model" out)']),
     ...(usable.some((m) => m.kind === 'image') ? [] : ['(No image models are connected: do not use "image" blocks.)']),
+    ...(usable.some((m) => m.kind === 'decision') ? [] : ['(No decision models are connected: do not use "decide" blocks.)']),
     'Prefer local or free models. Use the strongest local or a cloud model as judge. Avoid "tiny" models for answering when small or medium ones exist; tiny ones are fine for a Router.',
     '',
     'Rules: every canvas has exactly one "input" and one "output"; edges go from earlier to later blocks, no loops; ids are short words like "q", "coder", "judge", "out".',
@@ -168,6 +175,12 @@ export function toGraph(c: BuilderCanvas, models: ModelInfo[]): { graph: CanvasG
   if (!c || !Array.isArray(c.nodes)) throw new Error('"canvas.nodes" must be a list');
   const textModels = models.filter((m) => !m.kind);
   const imageModels = models.filter((m) => m.kind === 'image');
+  const decisionModels = models.filter((m) => m.kind === 'decision');
+  const asDecision = (id: string | undefined): ModelRef | undefined => {
+    const m = (id && decisionModels.find((x) => ref(x) === id || x.model === id)) || decisionModels[0];
+    if (id && m && ref(m) !== id && m.model !== id) fixes.push(`"${id}" is not a decision model; used ${m.model}`);
+    return m ? { providerId: m.providerId, model: m.model } : undefined;
+  };
   const known = new Map(textModels.map((m) => [ref(m), m]));
   const local = textModels.filter((m) => (m.sizeBytes ?? 0) > 50e6).sort((a, b) => a.sizeBytes! - b.sizeBytes!);
   const fallbackSmall = local[0] ?? textModels[0];
@@ -197,6 +210,7 @@ export function toGraph(c: BuilderCanvas, models: ModelInfo[]): { graph: CanvasG
     const def = NODES[type];
     const config: NodeConfig = {};
     if (type === 'image') config.model = asImage(raw.model);
+    else if (type === 'decide') config.model = asDecision(raw.model);
     else if (def.usesModel) config.model = asRef(raw.model, type === 'judge' || type === 'router');
     if (def.minModels) {
       const list = (raw.models ?? []).map((m) => asRef(m, false)).filter((m): m is ModelRef => !!m);
@@ -215,6 +229,18 @@ export function toGraph(c: BuilderCanvas, models: ModelInfo[]): { graph: CanvasG
       config.key = String(raw.key || 'default');
       config.mode = raw.mode === 'save' ? 'save' : raw.mode === 'search' ? 'search' : 'recall';
       if (raw.mode === 'search' && raw.query) config.query = String(raw.query);
+    }
+    if (type === 'decide') {
+      config.questions = (Array.isArray(raw.questions) ? raw.questions : [])
+        .filter((q) => q && typeof q.name === 'string' && typeof q.instructions === 'string')
+        .map((q) => ({
+          name: String(q.name).slice(0, 60),
+          type: (DECISION_TYPES as readonly string[]).includes(q.type) ? q.type : 'noul',
+          instructions: String(q.instructions),
+          ...(Array.isArray(q.options) && { options: q.options.filter((o) => o && o.name).map((o) => ({ name: String(o.name), ...(o.description && { description: String(o.description) }) })) }),
+          ...(Array.isArray(q.levels) && { levels: q.levels.map(String) }),
+        }));
+      if (typeof raw.threshold === 'number') config.threshold = Math.max(0.05, Math.min(0.99, raw.threshold));
     }
     if (type === 'homeassistant') {
       config.haOp = raw.haOp === 'service' ? 'service' : 'state';

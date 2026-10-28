@@ -8,7 +8,8 @@ import { memoryFor } from '../services/memory.js';
 import type { User } from '../api/auth.js';
 import { scopedMemory } from '../api/scope.js';
 import { webSearch } from '../services/search.js';
-import { kindOf, writeUnique } from '../services/files.js';
+import { kindOf, safePath, writeUnique } from '../services/files.js';
+import { readFileSync } from 'node:fs';
 import { homeAssistantConnection } from '../services/homeassistant.js';
 
 type Listener = (ev: RunEvent) => void;
@@ -86,6 +87,7 @@ export function startRun(opts: {
         },
         freeGpu: opts.freeGpu,
         homeAssistant: homeAssistantConnection,
+        readFile: (path) => readFileSync(safePath(path)),
       },
     }, run.abort.signal, opts.vars ?? {}, opts.chat)
     .then((r) => finish(run, r.status, r.final, r.cost))

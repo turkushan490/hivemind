@@ -1,5 +1,7 @@
-import { JUDGE_SYSTEM, REVIEW_SYSTEM, type CanvasNode, type ModelRef, type NodeType, type OutputFile, type SearchSource } from '@hivemind/shared';
+import { JUDGE_SYSTEM, REVIEW_SYSTEM, type CanvasNode, type DecisionEvent, type ModelRef, type NodeType, type OutputFile, type SearchSource } from '@hivemind/shared';
+import type { DecisionRequest, DecisionResult } from '../providers/decisions.js';
 import type { ChatMessage } from '../providers/types.js';
+import { DECIDE_NODE } from './decide.js';
 import { ACTION_NODES } from './actions.js';
 
 /** Output of an upstream node, as seen by the node that runs next. */
@@ -25,6 +27,8 @@ export interface NodeServices {
   freeGpu?(hostKey: string, exceptProviderId?: string): Promise<void>;
   /** Home Assistant address and token (Settings → Home Assistant), or undefined when not set up. */
   homeAssistant?(): { url: string; token: string } | undefined;
+  /** Reads a file from the files folder (images for box questions). */
+  readFile?(path: string): Buffer;
 }
 
 /** A chat sent through /v1: its system messages and the turns before the last question. */
@@ -47,8 +51,10 @@ export interface NodeContext {
   callModel(messages: ChatMessage[], model?: ModelRef, opts?: { json?: boolean }): Promise<string>;
   /** Router: only these outgoing blocks run; the others are skipped. */
   choose(targetIds: string[]): void;
-  /** A short status line shown on the block while it works. */
-  progress(note: string): void;
+  /** A short status line shown on the block while it works (with a decision: the probability bars). */
+  progress(note: string, decision?: DecisionEvent): void;
+  /** Asks a decision model (the block's own, or the one given); usage and cost are recorded like model calls. */
+  decide(req: Omit<DecisionRequest, 'model'>, model?: ModelRef): Promise<DecisionResult>;
   /** Judge / Vote: which wired-in block gave the best answer, out of which ones (for the leaderboard). */
   pickWinner?(winnerNodeId: string, contenderNodeIds: string[]): void;
   /** Makes images with the block's (image) model; they are saved and attached to the block. */
@@ -132,9 +138,9 @@ export function memoryKey(tpl: string | undefined, ctx: Pick<NodeContext, 'quest
 }
 
 /** Upstream results that are more than the bare question. */
-const answers = (inputs: NodeInput[]) => inputs.filter((i) => i.type !== 'input');
+export const answers = (inputs: NodeInput[]) => inputs.filter((i) => i.type !== 'input');
 
-function labelled(inputs: NodeInput[]): string {
+export function labelled(inputs: NodeInput[]): string {
   return inputs.map((i) => `### ${i.label}\n${i.text}`).join('\n\n');
 }
 
@@ -337,6 +343,8 @@ export const NODES: Record<NodeType, NodeDefinition> = {
       return candidates[best].text;
     },
   },
+
+  decide: DECIDE_NODE,
 
   // ---- Data ----
 

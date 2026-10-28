@@ -1,7 +1,7 @@
 // Types shared by the server, the web UI and (later) the Android app.
 // The canvas format and run events are the contract between them.
 
-export const NODE_TYPES = ['input', 'llm', 'review', 'judge', 'output', 'router', 'debate', 'vote', 'template', 'file', 'search', 'memory', 'save', 'image', 'homeassistant', 'webhook', 'discord'] as const;
+export const NODE_TYPES = ['input', 'llm', 'review', 'judge', 'output', 'router', 'debate', 'vote', 'decide', 'template', 'file', 'search', 'memory', 'save', 'image', 'homeassistant', 'webhook', 'discord'] as const;
 export type NodeType = (typeof NODE_TYPES)[number];
 
 /** Which model a node uses: a configured provider plus a model id on it. */
@@ -34,6 +34,20 @@ export interface NodeConfig {
   useMessages?: boolean;
   /** Image: how many pictures per run (1-8). */
   batch?: number;
+  /** Decide: what the decision model reads (template; default the text wired in, else the question). */
+  state?: string;
+  /** Decide: the typed questions. */
+  questions?: DecideQuestion[];
+  /** Decide / Auto / Jev router: how sure the model must be (default 0.6). Under it: no, the fallback, or one size up. */
+  threshold?: number;
+  /** LLM: "Auto (Jev router)": a decision model picks the size of model per question. */
+  auto?: AutoModel;
+  /** Router: who picks the route (default: the block's model). */
+  decideWith?: 'llm' | 'jev';
+  /** Router with Jev: the decision model. */
+  decider?: ModelRef;
+  /** Judge / Vote: a decision model scores every answer first (fast pre-ranking). */
+  jevScore?: ModelRef;
   /** Debate and Vote: the models that take part. */
   models?: ModelRef[];
   /** Debate: how many rounds (1-4). */
@@ -331,7 +345,29 @@ export interface DecideQuestion {
   options?: { name: string; description?: string }[];
   /** score: levels from lowest to highest. */
   levels?: string[];
+  /** choice: the option to take when the model is unsure (under the threshold) and there is no "fallback" branch. */
+  safe?: string;
 }
+
+/** LLM block "Auto (Jev router)": a decision model picks which of these models answers. */
+export interface AutoModel {
+  decider?: ModelRef;
+  local?: ModelRef;
+  small?: ModelRef;
+  medium?: ModelRef;
+  large?: ModelRef;
+}
+
+export const AUTO_TIERS = ['local', 'small', 'medium', 'large'] as const;
+export type AutoTier = (typeof AUTO_TIERS)[number];
+
+/** What each size means to the decision model (from the Jev guide's router, plus a local tier). */
+export const AUTO_TIER_TEXT: Record<AutoTier, string> = {
+  local: 'Private or simple: personal or home questions and quick lookups that should stay on this machine',
+  small: 'Trivial: arithmetic, short facts, greetings, one-line rewrites',
+  medium: 'Everyday: explanations, summaries, short creative writing, simple code',
+  large: 'Hard: math proofs, multi-step reasoning, finding and fixing bugs in code, long or subtle analysis',
+};
 
 /** One answered question, as the block shows it (bars per option). */
 export interface DecisionView {

@@ -20,6 +20,7 @@ function ctx(type: NodeType, config: NodeConfig, opts: { input?: string; service
     ],
     outgoing: [],
     callModel: async () => '',
+    decide: async () => Promise.reject(new Error('no decisions here')),
     choose: () => {},
     progress: (n) => notes.push(n),
     generateImage: async () => [],

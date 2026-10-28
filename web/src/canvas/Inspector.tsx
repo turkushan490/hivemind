@@ -9,6 +9,7 @@ import { BlockSettings } from './BlockSettings';
 import { GpuBar, WorkBar } from './NodeBars';
 import { SpeakButton } from '../voice';
 import { ExportRun } from '../components/ExportRun';
+import { BoxOverlay, DecisionBars } from './DecisionBars';
 
 const SYSTEM_DEFAULT: Partial<Record<string, string>> = { judge: JUDGE_SYSTEM, review: REVIEW_SYSTEM };
 
@@ -96,7 +97,7 @@ export function Inspector(props: {
         <div className="space-y-1">
           <div className="text-xs font-semibold text-slate-300">Model</div>
           {/* Keyed by block, so switching blocks never shows the previous block's open/closed list or search. */}
-          <ModelPicker key={node.id} kind={node.data.kind === 'image' ? 'image' : 'text'} models={props.models} providers={props.providers} value={cfg.model} onChange={(model) => props.onChange({ config: { model } })} />
+          <ModelPicker key={node.id} kind={node.data.kind === 'image' ? 'image' : node.data.kind === 'decide' ? 'decision' : 'text'} models={props.models} providers={props.providers} value={cfg.model} onChange={(model) => props.onChange({ config: { model } })} />
         </div>
       )}
 
@@ -119,6 +120,20 @@ export function Inspector(props: {
             {view.cost !== undefined && view.cost > 0 && <span className="text-slate-400">${view.cost.toFixed(5)}</span>}
           </div>
           {view.note && <p className="text-xs font-medium text-amber-200">{view.note}</p>}
+          {view.decision && (
+            <div className="rounded-md bg-[#0d1117] p-2">
+              <DecisionBars d={view.decision} big />
+            </div>
+          )}
+          {view.decision?.image &&
+            view.decision.answers
+              .filter((a) => a.box)
+              .map((a) => (
+                <div key={a.name} className="space-y-1">
+                  <div className="text-xs text-slate-400">Where “{a.name}” is:</div>
+                  <BoxOverlay image={view.decision!.image!} box={a.box!} />
+                </div>
+              ))}
           {(meta.usesModel || !!meta.multiModel) && view.state !== 'skipped' && (
             <div className="space-y-2">
               <GpuBar v={view} big />
@@ -143,7 +158,7 @@ export function Inspector(props: {
         </div>
       )}
 
-      {meta.usesModel && (
+      {meta.usesModel && node.data.kind !== 'decide' && (
         <details className="space-y-2" open={!!(cfg.system || cfg.prompt || cfg.temperature !== undefined)}>
           <summary className="cursor-pointer text-xs font-semibold text-slate-300">Advanced: prompts and temperature</summary>
           <label className="block space-y-1">

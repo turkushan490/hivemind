@@ -5,6 +5,7 @@ import type { CanvasGraph, CanvasNode, RunEvent } from '@hivemind/shared';
 import type { FastifyInstance } from 'fastify';
 import type { ResolvedProvider } from '../src/engine/run.js';
 import type { ChatRequest } from '../src/providers/types.js';
+import type { DecisionRequest, DecisionResult } from '../src/providers/decisions.js';
 
 /** A full app on a fresh data folder, with users (admin "u1", plus extras) that each have the token hm_<id>. */
 export async function testApp(prefix: string, users: [string, 'admin' | 'user' | 'viewer'][] = [['u1', 'admin']]) {
@@ -60,3 +61,27 @@ export function fakeProvider(reply: (req: ChatRequest, n: number) => string = (r
   };
   return p;
 }
+
+/** A fake decision provider: answers come from answer(req). */
+export function fakeDecider(answer: (req: DecisionRequest) => DecisionResult['answers'], opts: { local?: boolean } = {}) {
+  const calls: DecisionRequest[] = [];
+  const p: ResolvedProvider & { calls: DecisionRequest[] } = {
+    calls,
+    local: !!opts.local,
+    hostKey: 'gpu',
+    modelInfo: async () => ({ providerId: 'ts', model: 'jev-latest', name: 'jev', free: false, kind: 'decision', price: { input: 0.042, output: 0 } }),
+    adapter: {
+      listModels: async () => [],
+      // eslint-disable-next-line require-yield
+      async *stream() {
+        throw new Error('no chat');
+      },
+      decide: async (req) => {
+        calls.push(req);
+        return { answers: answer(req), usage: { inputTokens: 1000, outputTokens: 5 }, model: 'jev-1.14.0', ms: 120 };
+      },
+    },
+  };
+  return p;
+}
+

@@ -6,6 +6,7 @@ import { NODE_META, summary } from './meta';
 import { GpuBar, useNow, WorkBar } from './NodeBars';
 import { Aura, Burst, GpuChip, ThinkingCore, ThoughtWords, WritingTail } from './NodeFx';
 import { MicButton } from '../voice';
+import { DecisionBars } from './DecisionBars';
 
 export type HiveNodeData = { kind: NodeType; label?: string; config: NodeConfig };
 export type HiveFlowNode = Node<HiveNodeData, 'hive'>;
@@ -64,6 +65,12 @@ function HiveNodeImpl({ id, data, selected }: NodeProps<HiveFlowNode>) {
               <ThoughtWords text={view.thinking ?? ''} />
             </div>
           )}
+          {view.decision && view.state !== 'idle' && (
+            <div className="rounded-lg border border-indigo-900/50 bg-indigo-950/25 py-1">
+              <DecisionBars d={view.decision} />
+            </div>
+          )}
+          {data.kind === 'decide' && !view.decision && <BranchChips config={data.config} />}
           {view.state === 'streaming' && <WritingTail text={view.text} />}
           {loadingGpu && <LoadingChip v={view} />}
 
@@ -90,6 +97,22 @@ function HiveNodeImpl({ id, data, selected }: NodeProps<HiveFlowNode>) {
         </div>
       </div>
       {meta.hasOutput && <Handle type="source" position={Position.Right} className="hm-handle" />}
+    </div>
+  );
+}
+
+/** Idle Decide block: the answers its branches can be named after. */
+function BranchChips({ config }: { config: NodeConfig }) {
+  const q = (config.questions ?? []).find((x) => x.type === 'noul' || x.type === 'choice');
+  if (!q) return null;
+  const values = q.type === 'noul' ? ['yes', 'no'] : (q.options ?? []).map((o) => o.name).filter(Boolean);
+  return (
+    <div className="flex flex-wrap gap-1" title="Name the blocks after this one like this; only the winner runs">
+      {[...values, 'fallback'].slice(0, 7).map((v) => (
+        <span key={v} className="rounded-full border border-indigo-800/70 px-1.5 text-[10px] text-indigo-200/80">
+          {v}
+        </span>
+      ))}
     </div>
   );
 }

@@ -1,4 +1,4 @@
-import type { CanvasGraph, ModelRef, OutputFile, RunEvent } from '@hivemind/shared';
+import type { CanvasGraph, DecisionEvent, ModelRef, OutputFile, RunEvent } from '@hivemind/shared';
 import { createContext, useEffect, useRef, useState } from 'react';
 import { api } from '../api';
 import { toast } from '../notify';
@@ -32,6 +32,8 @@ export interface NodeView {
   note?: string;
   /** Files the block wrote (images, saved answers). */
   files?: OutputFile[];
+  /** The latest decision-model answer (Decide, Auto model, Jev router, Jev scoring): drives the probability bars. */
+  decision?: DecisionEvent;
 }
 
 export const IDLE: NodeView = { state: 'idle', text: '' };
@@ -92,7 +94,7 @@ export function applyEvent(views: Record<string, NodeView>, ev: RunEvent): Recor
       next = { ...v, state: 'loading', loadStartedAt: ev.ts, loadExpectedMs: ev.expectedMs, loadEstimated: ev.estimated, sizeBytes: ev.sizeBytes };
       break;
     case 'node_progress':
-      next = { ...v, note: ev.note };
+      next = { ...v, note: ev.note, ...(ev.decision && { decision: ev.decision }) };
       break;
     case 'node_skipped':
       next = { ...v, state: 'skipped' };

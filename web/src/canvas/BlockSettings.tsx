@@ -1,4 +1,4 @@
-import { HTTP_METHODS, SEARCH_SOURCES, type ModelInfo, type ModelRef, type NodeConfig, type NodeType, type ProviderInfo } from '@hivemind/shared';
+import { DECISION_TYPES, HTTP_METHODS, SEARCH_SOURCES, type DecideQuestion, type ModelInfo, type ModelRef, type NodeConfig, type NodeType, type ProviderInfo } from '@hivemind/shared';
 import { useEffect, useState } from 'react';
 import { api } from '../api';
 import { toast } from '../notify';
@@ -98,6 +98,8 @@ function KindSettings(p: Props) {
           Wire the Router to two or more blocks and give each a clear name — the model picks one by its name. The other branches are skipped.
         </p>
       );
+    case 'decide':
+      return <DecideSettings {...p} />;
     case 'debate':
       return (
         <div className="space-y-3">
@@ -669,6 +671,109 @@ function WebhookSettings(p: Props) {
       )}
       <TemplateHelp />
       <p className="text-xs text-slate-500">The response is passed on (JSON pretty-printed). An error status stops the block and shows up in Problems.</p>
+    </div>
+  );
+}
+
+const TYPE_HELP: Record<string, string> = {
+  noul: 'yes / no → a probability',
+  choice: 'pick one option → probability per option',
+  score: 'a level on your scale, low → high',
+  box: 'where something is in the picture wired in (TypeSafe Jev 1.14)',
+};
+
+/** Decide block: what it reads, how sure it must be, and the questions as cards. */
+function DecideSettings(p: Props) {
+  const c = p.config;
+  const qs = c.questions ?? [];
+  const set = (questions: DecideQuestion[]) => p.onChange({ questions });
+  const edit = (i: number, patch: Partial<DecideQuestion>) => set(qs.map((q, j) => (j === i ? { ...q, ...patch } : q)));
+  const threshold = c.threshold ?? 0.6;
+  return (
+    <div className="space-y-3">
+      <label className="block space-y-1">
+        <Label>State (what it reads)</Label>
+        <textarea
+          className="input min-h-14 text-xs"
+          placeholder="Empty = the text wired in, else the question. Or e.g. Comment: {{question}}"
+          value={c.state ?? ''}
+          onChange={(e) => p.onChange({ state: e.target.value || undefined })}
+        />
+      </label>
+      <label className="block space-y-1">
+        <span className="text-xs text-slate-400">
+          Sure enough at <span className="font-mono text-indigo-200">{Math.round(threshold * 100)}%</span> — under it a yes/no is “no”, a choice takes “fallback” or its safe option
+        </span>
+        <input type="range" className="w-full" min={0.3} max={0.95} step={0.05} value={threshold} onChange={(e) => p.onChange({ threshold: Number(e.target.value) })} />
+      </label>
+      <div className="space-y-2">
+        <Label>Questions</Label>
+        {qs.map((q, i) => (
+          <div key={i} className="hm-pop space-y-1.5 rounded-lg border border-indigo-900/60 bg-indigo-950/20 p-2">
+            <div className="flex gap-1">
+              <input className="input py-1 text-xs font-semibold" placeholder="name, e.g. spam" value={q.name} onChange={(e) => edit(i, { name: e.target.value })} />
+              <select className="input w-24 shrink-0 py-1 text-xs" value={q.type} onChange={(e) => edit(i, { type: e.target.value as DecideQuestion['type'] })}>
+                {DECISION_TYPES.map((t) => (
+                  <option key={t}>{t}</option>
+                ))}
+              </select>
+              <button className="px-1 text-slate-500 hover:text-red-400" aria-label="Remove question" onClick={() => set(qs.filter((_, j) => j !== i))}>
+                ✕
+              </button>
+            </div>
+            <input className="input py-1 text-xs" placeholder="The question, e.g. Is this comment spam?" value={q.instructions} onChange={(e) => edit(i, { instructions: e.target.value })} />
+            <p className="text-[11px] text-slate-500">{TYPE_HELP[q.type]}</p>
+            {q.type === 'choice' && (
+              <div className="space-y-1">
+                {(q.options ?? []).map((o, j) => (
+                  <div key={j} className="flex items-center gap-1">
+                    <input
+                      type="radio"
+                      title="Safe option: taken when the model is unsure and there is no fallback branch"
+                      checked={q.safe === o.name && !!o.name}
+                      onChange={() => edit(i, { safe: o.name })}
+                    />
+                    <input
+                      className="input w-24 shrink-0 py-0.5 text-xs"
+                      placeholder="option"
+                      value={o.name}
+                      onChange={(e) => edit(i, { options: (q.options ?? []).map((x, k) => (k === j ? { ...x, name: e.target.value } : x)) })}
+                    />
+                    <input
+                      className="input py-0.5 text-xs"
+                      placeholder="what it means"
+                      value={o.description ?? ''}
+                      onChange={(e) => edit(i, { options: (q.options ?? []).map((x, k) => (k === j ? { ...x, description: e.target.value || undefined } : x)) })}
+                    />
+                    <button className="px-1 text-slate-500 hover:text-red-400" aria-label="Remove option" onClick={() => edit(i, { options: (q.options ?? []).filter((_, k) => k !== j) })}>
+                      ✕
+                    </button>
+                  </div>
+                ))}
+                <button className="text-xs text-indigo-300 hover:underline" onClick={() => edit(i, { options: [...(q.options ?? []), { name: '' }] })}>
+                  + option
+                </button>
+                <p className="text-[11px] text-slate-500">◉ = the safe option when it is unsure.</p>
+              </div>
+            )}
+            {q.type === 'score' && (
+              <textarea
+                className="input min-h-14 text-xs"
+                placeholder={'One level per line, lowest first:\nNegative\nNeutral\nPositive'}
+                value={(q.levels ?? []).join('\n')}
+                onChange={(e) => edit(i, { levels: e.target.value.split('\n') })}
+              />
+            )}
+          </div>
+        ))}
+        <button className="btn-ghost w-full" onClick={() => set([...qs, { name: `q${qs.length + 1}`, type: 'noul', instructions: '' }])}>
+          + Add a question
+        </button>
+      </div>
+      <p className="rounded-md bg-indigo-950/30 p-2 text-xs text-indigo-200/90">
+        Branches: name the blocks wired after it <b>yes</b> / <b>no</b> (first yes/no question), an option of the first choice question, <b>fallback</b>, or{' '}
+        <code>question: answer</code>. Only the winning branch runs; blocks with other names always run. The answers go on as JSON.
+      </p>
     </div>
   );
 }

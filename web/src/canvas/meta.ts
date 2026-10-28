@@ -90,6 +90,16 @@ export const NODE_META: Record<NodeType, NodeMeta> = {
     hasInput: true,
     hasOutput: true,
   },
+  decide: {
+    title: 'Decide',
+    color: '#818cf8',
+    group: 'Logic',
+    description:
+      'A decision model (Jev, Nimble, OpenAI Decisions) answers yes/no, choice and score questions about the text wired in, in about 0.1 s, with probabilities. Name the blocks after it "yes", "no", an option or "fallback": only the winning branch runs.',
+    usesModel: true,
+    hasInput: true,
+    hasOutput: true,
+  },
   template: {
     title: 'Text template',
     color: '#94a3b8',
@@ -175,7 +185,7 @@ export const NODE_META: Record<NodeType, NodeMeta> = {
 
 export const PALETTE: { group: NodeGroup; types: NodeType[] }[] = [
   { group: 'Core', types: ['input', 'llm', 'review', 'judge', 'output'] },
-  { group: 'Logic', types: ['router', 'debate', 'vote'] },
+  { group: 'Logic', types: ['router', 'decide', 'debate', 'vote'] },
   { group: 'Data', types: ['template', 'file', 'search', 'memory'] },
   { group: 'Create', types: ['image', 'save'] },
   { group: 'Action', types: ['homeassistant', 'webhook', 'discord'] },
@@ -224,6 +234,11 @@ export function summary(kind: NodeType, c: import('@hivemind/shared').NodeConfig
       return c.url?.trim() ? { text: `${c.method ?? 'POST'} ${c.url.replace(/^https?:\/\//, '')}` } : { text: 'Fill in the URL →', missing: true };
     case 'discord':
       return c.url?.trim() ? { text: (c.body ?? '{{input}}').replace(/\s+/g, ' ').slice(0, 40) } : { text: 'Paste the webhook URL →', missing: true };
+    case 'decide': {
+      if (!c.model) return { text: 'Pick a decision model →', missing: true };
+      const qs = c.questions ?? [];
+      return qs.length ? { text: `${qs.map((q) => q.name).join(', ')} · ${c.model.model}` } : { text: 'Add a question →', missing: true };
+    }
     case 'template':
       return { text: (c.prompt ?? '{{question}} {{inputs}}').replace(/\s+/g, ' ').slice(0, 40) };
   }

@@ -1,0 +1,8 @@
+# Test environment for the HiveMind integration (Linux; Python 3.14). Checked with Home Assistant 2026.10.4.
+# The conversation component's own requirements (gazetteer-matcher, hassil, home-assistant-intents) must match the HA version;
+# with these pins they do. For another HA version, install the versions listed in
+# homeassistant/components/conversation/manifest.json of that version.
+pytest-homeassistant-custom-component==0.13.375
+gazetteer-matcher==1.1.0
+hassil==3.12.1
+home-assistant-intents==2026.10.6

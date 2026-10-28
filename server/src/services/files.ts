@@ -75,5 +75,7 @@ export function deleteFile(rel: string) {
 
 /** A file name from free text: no slashes or odd characters, at most 80 chars. */
 export function cleanName(name: string): string {
-  return name.replace(/[\\/:*?"<>|\u0000-\u001f]+/g, '-').replace(/\s+/g, ' ').trim().slice(0, 80) || 'file';
+  const clean = name.replace(/[\\/:*?"<>|\u0000-\u001f]+/g, '-').replace(/\s+/g, ' ').trim().slice(0, 80);
+  // "." and ".." are never names of their own (safePath refuses them too, this is the second line of defence).
+  return /^\.+$/.test(clean) || !clean ? 'file' : clean;
 }

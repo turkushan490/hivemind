@@ -100,10 +100,11 @@ actions:
 
 ## Development
 
-The tests use the Home Assistant test harness:
+The tests use the Home Assistant test harness (Linux, Python 3.14). `requirements_test.txt` pins versions that work together; hassil and home-assistant-intents must match the Home Assistant version:
 
 ```bash
 python -m venv venv && . venv/bin/activate
-pip install pytest-homeassistant-custom-component hassil home-assistant-intents
-cd integrations/home_assistant && pytest
+cd integrations/home_assistant
+pip install -r requirements_test.txt
+pytest
 ```

@@ -149,6 +149,9 @@ export function providerRoutes(app: FastifyInstance) {
     if (!preset) return reply.code(400).send({ error: 'Unknown preset' });
     const baseUrl = (body.baseUrl || preset.baseUrl).trim();
     if (!/^https?:\/\//.test(baseUrl)) return reply.code(400).send({ error: 'Base URL must start with http:// or https://' });
+    // The server calls a provider's address itself, so only admins may point one at their own address (or the LAN).
+    if (req.user!.role !== 'admin' && (preset.local || !preset.baseUrl || baseUrl.replace(/\/+$/, '') !== preset.baseUrl.replace(/\/+$/, '')))
+      return reply.code(403).send({ error: 'Only an admin can add local or custom AI servers. You can add cloud providers with your own key.' });
     if (preset.needsKey && !body.apiKey) return reply.code(400).send({ error: `${preset.name} needs an API key` });
     // Only admins add shared providers; everyone can add their own.
     const shared = body.shared !== false && req.user!.role === 'admin';
@@ -171,6 +174,8 @@ export function providerRoutes(app: FastifyInstance) {
     if (!row || !canEdit(req.user!, row)) return reply.code(404).send({ error: 'Not found' });
     const body = (req.body ?? {}) as { name?: string; baseUrl?: string; apiKey?: string; enabled?: boolean; parallel?: boolean };
     if (body.baseUrl !== undefined && !/^https?:\/\//.test(body.baseUrl)) return reply.code(400).send({ error: 'Base URL must start with http:// or https://' });
+    if (body.baseUrl !== undefined && body.baseUrl.trim().replace(/\/+$/, '') !== row.base_url.replace(/\/+$/, '') && req.user!.role !== 'admin')
+      return reply.code(403).send({ error: 'Only an admin can change the address of an AI server' });
     db.prepare('UPDATE providers SET name = ?, base_url = ?, api_key_enc = ?, enabled = ?, parallel = ? WHERE id = ?').run(
       body.name?.trim() || row.name,
       body.baseUrl?.trim() || row.base_url,

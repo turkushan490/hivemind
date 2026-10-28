@@ -59,15 +59,19 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
             entries = [e for e in entries if e.entry_id == wanted]
         if not entries:
             raise ServiceValidationError("No HiveMind server is set up (or it is not loaded)")
-        data: HiveMindData = entries[0].runtime_data
-        canvas = call.data[ATTR_CANVAS]
-        # Accept a canvas name as well as its id.
-        for c in data.canvases:
-            if canvas in (c.id, c.name) or canvas.lower() == c.name.lower():
-                canvas = c.id
+        wanted_canvas = call.data[ATTR_CANVAS]
+        # The server that has this canvas (by id or name); with several servers each is searched, the first match wins.
+        entry, canvas = entries[0], wanted_canvas
+        for e in entries:
+            match = next((c for c in e.runtime_data.canvases if wanted_canvas in (c.id, c.name) or wanted_canvas.lower() == c.name.lower()), None)
+            if match:
+                entry, canvas = e, match.id
                 break
         try:
-            answer = await data.client.run(canvas, call.data[ATTR_TEXT])
+            answer = await entry.runtime_data.client.run(canvas, call.data[ATTR_TEXT])
+        except HiveMindAuthError as err:
+            entry.async_start_reauth(hass)
+            raise HomeAssistantError(f"HiveMind: {err}") from err
         except HiveMindError as err:
             raise HomeAssistantError(f"HiveMind: {err}") from err
         return {"response": answer, "canvas": canvas}

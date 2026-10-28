@@ -105,6 +105,9 @@ The template ([`unraid/hivemind.xml`](unraid/hivemind.xml)) and the maintainer p
 | `SECURE_COOKIES` | `false` | `true` when served over HTTPS (also needed for the microphone on other devices) |
 | `COMFYUI_URL` | empty | Optional ComfyUI, added once as an image provider |
 | `TYPESAFE_API_KEY` | empty | Optional TypeSafe key, added once (encrypted) as the Jev decision provider |
+| `BLOCK_PRIVATE_ADDRESSES` | `false` | `true` stops Webhook blocks and image links from reaching private (LAN) addresses — for servers other people use. Loopback and cloud-metadata addresses are always blocked |
+| `RUN_TIMEOUT_MINUTES` | `30` | A run that takes longer is stopped, so a server that never answers can't hold the GPU |
+| `TRUST_PROXY` | `loopback, linklocal, uniquelocal` | Which reverse proxies may set `X-Forwarded-For` (the client IP for the login limit) |
 | `LOG_LEVEL` | `info` | Container log detail (`debug`, `info`, `warn`, `error`) |
 
 ### Home Assistant

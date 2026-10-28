@@ -48,6 +48,11 @@ export async function scopeGuard(req: FastifyRequest, reply: FastifyReply) {
     if (run && !canvasAllowed(user, run.canvas_id)) return deny('see this run');
   }
   if (params.key !== undefined && !memoryAllowed(user, params.key)) return deny(`use memory "${params.key}"`);
+  // Files: only what blocks made (outputs/…), never the rest of the shared files folder.
+  if (url === '/api/files/raw') {
+    const path = String((req.query as { path?: string }).path ?? '').replace(/\\/g, '/').replace(/^\/+/, '');
+    if (!path.startsWith('outputs/')) return deny('read files outside outputs/');
+  }
   if (req.method === 'POST' && url === '/api/runs') {
     const body = (req.body ?? {}) as { canvasId?: string; graph?: unknown };
     if (body.graph !== undefined) return deny('run a canvas sent in the request; send a canvasId');

@@ -23,7 +23,7 @@ import { FEATURES } from './features.js';
 
 /** The whole web app without listening: main.ts starts it, tests inject requests into it. */
 export async function buildApp(opts: { logger?: boolean; web?: boolean; onRoute?: (r: RouteOptions) => void } = {}): Promise<FastifyInstance> {
-  const app = Fastify({ logger: opts.logger === false ? false : { level: process.env.LOG_LEVEL || 'info' }, trustProxy: true, bodyLimit: 5 * 1024 * 1024 });
+  const app = Fastify({ logger: opts.logger === false ? false : { level: process.env.LOG_LEVEL || 'info' }, trustProxy: process.env.TRUST_PROXY || 'loopback, linklocal, uniquelocal', bodyLimit: 5 * 1024 * 1024 });
 
   if (opts.onRoute) app.addHook('onRoute', opts.onRoute);
   await app.register(cookie);
@@ -49,6 +49,24 @@ export async function buildApp(opts: { logger?: boolean; web?: boolean; onRoute?
         (req.url.startsWith('/api/voice/transcribe') && /^(audio\/|video\/|application\/octet-stream)/.test(type));
       if (hasBody && !upload && !type.startsWith('application/json')) return reply.code(415).send({ error: 'Send JSON' });
     }
+  });
+
+  // Big uploads are read into memory whole: at most two at a time, so several at once can't run the server out of RAM.
+  let bigUploads = 0;
+  app.addHook('onRequest', async (req, reply) => {
+    if (Number(req.headers['content-length'] ?? 0) <= 20 * 1024 * 1024 && !req.headers['transfer-encoding']) return;
+    if (!/^\/api\/(files|import\/)/.test(req.url)) return;
+    if (bigUploads >= 2) return reply.code(503).send({ error: 'Two big uploads are already running — try again in a moment' });
+    bigUploads++;
+    let done = false;
+    const release = () => {
+      if (!done) {
+        done = true;
+        bigUploads--;
+      }
+    };
+    reply.raw.once('close', release);
+    reply.raw.once('finish', release);
   });
 
   // Viewers may only use canvases: every write outside their short list is refused here, in one place.

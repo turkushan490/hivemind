@@ -39,15 +39,20 @@ export function problemRoutes(app: FastifyInstance) {
   });
 
   // The web page reports its own crashes here (also before login, so the login page can't fail silently).
-  const recent: number[] = [];
+  // Per sender (user, else IP): one noisy client can't use up everyone's reports.
+  const recent = new Map<string, number[]>();
   app.post('/api/problems/report', async (req, reply) => {
     const now = Date.now();
-    while (recent.length && recent[0] < now - 60_000) recent.shift();
-    if (recent.length >= 30) return reply.code(429).send({ error: 'Too many reports' });
-    recent.push(now);
+    const user = authenticate(req);
+    const who = user?.id ?? `ip:${req.ip}`;
+    if (recent.size > 5000) for (const [k, list] of recent) if (!list.some((t) => t > now - 60_000)) recent.delete(k);
+    const mine = (recent.get(who) ?? []).filter((t) => t > now - 60_000);
+    if (mine.length >= 30) return reply.code(429).send({ error: 'Too many reports' });
+    mine.push(now);
+    recent.set(who, mine);
     const body = (req.body ?? {}) as { message?: string; detail?: string };
     if (!body.message) return reply.code(400).send({ error: 'message required' });
-    const id = logError({ source: 'web', message: String(body.message), detail: body.detail ? String(body.detail) : undefined, userId: authenticate(req)?.id });
+    const id = logError({ source: 'web', message: String(body.message).slice(0, 2000), detail: body.detail ? String(body.detail).slice(0, 20_000) : undefined, userId: user?.id });
     return { id };
   });
 }

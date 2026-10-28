@@ -64,6 +64,16 @@ export function startRun(opts: {
     for (const l of run.listeners) l(ev);
   };
 
+  // A run that hangs (a server that never answers) is stopped, so it can't hold the GPU forever.
+  const limitMin = Number(process.env.RUN_TIMEOUT_MINUTES) || 30;
+  const limit = setTimeout(() => {
+    if (run.finished) return;
+    emit({ type: 'error', error: `Run stopped: it took longer than ${limitMin} minutes (RUN_TIMEOUT_MINUTES)` });
+    run.abort.abort();
+  }, limitMin * 60_000);
+  limit.unref();
+  run.abort.signal.addEventListener('abort', () => clearTimeout(limit), { once: true });
+
   runGraph(opts.graph, opts.question, {
       resolve: opts.resolve,
       emit,
@@ -90,8 +100,12 @@ export function startRun(opts: {
         readFile: (path) => readFileSync(safePath(path)),
       },
     }, run.abort.signal, opts.vars ?? {}, opts.chat)
-    .then((r) => finish(run, r.status, r.final, r.cost))
+    .then((r) => {
+      clearTimeout(limit);
+      finish(run, r.status, r.final, r.cost);
+    })
     .catch((err) => {
+      clearTimeout(limit);
       emit({ type: 'error', error: (err as Error).message });
       emit({ type: 'run_done', status: 'error' });
       finish(run, 'error');

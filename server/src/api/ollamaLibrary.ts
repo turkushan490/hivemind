@@ -102,7 +102,7 @@ async function cached<T>(key: string, ttlMs: number, load: () => Promise<T>): Pr
 }
 
 async function page(url: string): Promise<string> {
-  const res = await fetch(url, { headers: { accept: 'text/html', 'user-agent': 'HiveMind (+https://github.com/turkushan490/hivemind)' } });
+  const res = await fetch(url, { headers: { accept: 'text/html', 'user-agent': 'HiveMind (+https://github.com/turkushan490/hivemind)' }, signal: AbortSignal.timeout(20_000) });
   if (!res.ok) throw Object.assign(new Error(`ollama.com answered HTTP ${res.status}`), { statusCode: 502 });
   return res.text();
 }

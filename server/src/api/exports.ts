@@ -170,17 +170,28 @@ export function exportRoutes(app: FastifyInstance) {
     const all = readZip(req.body);
     const runs = all.filter((e) => e.name === 'run.json' || e.name.endsWith('/run.json'));
     if (!runs.length) return reply.code(400).send({ error: 'No HiveMind tasks (run.json) found in this ZIP' });
-    let imported = 0;
-    for (const r of runs) {
+    type TaskJson = { question?: string; status?: string; final?: string; cost?: number; startedAt?: string; finishedAt?: string; events?: RunEvent[] };
+    // Everything is checked first (valid JSON, safe file paths), so a bad entry can't leave half an import behind.
+    const tasks = runs.map((r) => {
       const prefix = r.name.slice(0, -'run.json'.length);
-      const data = JSON.parse(r.data.toString('utf8')) as { question?: string; status?: string; final?: string; cost?: number; startedAt?: string; finishedAt?: string; events?: RunEvent[] };
+      let data: TaskJson;
+      try {
+        data = JSON.parse(r.data.toString('utf8')) as TaskJson;
+      } catch {
+        throw Object.assign(new Error(`${r.name} is not valid JSON`), { statusCode: 400 });
+      }
+      const files = all.filter((e) => e.name.startsWith(`${prefix}files/`)).map((f) => ({ original: f.name.slice(`${prefix}files/`.length), data: f.data as Buffer }));
+      for (const f of files) safePath(f.original);
+      return { data, files };
+    });
+    let imported = 0;
+    for (const { data, files } of tasks) {
       if (!Array.isArray(data.events)) continue;
       let events = JSON.stringify(data.events);
       // Bring the task's files back into the folder; if a name is taken, point the task at the new name.
-      for (const f of all.filter((e) => e.name.startsWith(`${prefix}files/`))) {
-        const original = f.name.slice(`${prefix}files/`.length);
-        const saved = writeUnique(original, f.data as Buffer);
-        if (saved !== original) events = events.split(JSON.stringify(original).slice(1, -1)).join(JSON.stringify(saved).slice(1, -1));
+      for (const f of files) {
+        const saved = writeUnique(f.original, f.data);
+        if (saved !== f.original) events = events.split(JSON.stringify(f.original).slice(1, -1)).join(JSON.stringify(saved).slice(1, -1));
       }
       db.prepare('INSERT INTO runs (id, owner_id, question, status, started_at, finished_at, final, cost, events) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)').run(
         newId(),

@@ -57,6 +57,8 @@ export function Providers({ isAdmin }: { isAdmin: boolean }) {
             {g.ids
               .map((id) => presets.find((p) => p.id === id))
               .filter((p): p is ProviderPreset => !!p)
+              // Local and custom AI servers are added by an admin (the server calls their address); users still see the ones that exist.
+              .filter((p) => isAdmin || (!p.local && !!p.baseUrl) || providers.some((x) => x.preset === p.id))
               .map((preset) => (
                 <ProviderCard
                   key={preset.id}

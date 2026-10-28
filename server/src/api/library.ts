@@ -73,7 +73,7 @@ function startPull(user: User, providerId: string, model: string): PullJob {
 const QUANT = /(IQ\d_[A-Z]+|Q\d_K_XL|Q\d_K(?:_[SML])?|Q\d_\d(?:_\d_\d)?|BF16|F16|F32)/i;
 
 async function hfJson(url: string) {
-  const res = await fetch(url, { headers: { accept: 'application/json' } });
+  const res = await fetch(url, { headers: { accept: 'application/json' }, signal: AbortSignal.timeout(20_000) });
   if (!res.ok) throw Object.assign(new Error(`Hugging Face answered HTTP ${res.status}`), { statusCode: 502 });
   return res.json();
 }
@@ -199,7 +199,7 @@ export function libraryRoutes(app: FastifyInstance) {
   app.get('/api/catalog/openrouter-free', async (_req, reply) => {
     if (orCache && Date.now() - orCache.at < 3600_000) return orCache.models;
     try {
-      const data = (await (await fetch('https://openrouter.ai/api/v1/models')).json()) as { data?: { id: string; name?: string; context_length?: number }[] };
+      const data = (await (await fetch('https://openrouter.ai/api/v1/models', { signal: AbortSignal.timeout(20_000) })).json()) as { data?: { id: string; name?: string; context_length?: number }[] };
       const models = (data.data ?? [])
         .filter((m) => m.id.endsWith(':free'))
         .map((m) => ({ providerId: 'openrouter', model: m.id, name: m.name ?? m.id, free: true, contextLength: m.context_length }));

@@ -44,7 +44,7 @@ export function txt2imgWorkflow(req: ImageRequest, seed: number) {
 export function comfyAdapter(cfg: ProviderConfig): ProviderAdapter & { loras(): Promise<string[]> } {
   const base = cfg.baseUrl.replace(/\/+$/, '');
   const options = async (node: string, input: string): Promise<string[]> => {
-    const res = await fetch(`${base}/object_info/${node}`);
+    const res = await fetch(`${base}/object_info/${node}`, { signal: AbortSignal.timeout(20_000) });
     await checkResponse(res, `ComfyUI ${node}`);
     const data = (await res.json()) as Record<string, { input: { required: Record<string, [string[]]> } }>;
     return data[node]?.input.required[input]?.[0] ?? [];
@@ -64,7 +64,7 @@ export function comfyAdapter(cfg: ProviderConfig): ProviderAdapter & { loras(): 
     },
 
     async freeMemory() {
-      await fetch(`${base}/free`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ unload_models: true, free_memory: true }) });
+      await fetch(`${base}/free`, { signal: AbortSignal.timeout(20_000), method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ unload_models: true, free_memory: true }) });
     },
 
     async image(req, signal, onProgress): Promise<GeneratedImage[]> {
@@ -92,7 +92,7 @@ export function comfyAdapter(cfg: ProviderConfig): ProviderAdapter & { loras(): 
           throw new ProviderError(`ComfyUI refused the job: ${body.slice(0, 400)}`, res.status);
         }
         const { prompt_id } = (await res.json()) as { prompt_id: string };
-        const stop = () => fetch(`${base}/interrupt`, { method: 'POST' }).catch(() => {});
+        const stop = () => fetch(`${base}/interrupt`, { method: 'POST', signal: AbortSignal.timeout(10_000) }).catch(() => {});
         signal.addEventListener('abort', stop, { once: true });
         const t0 = Date.now();
         while (Date.now() - t0 < 15 * 60_000) {

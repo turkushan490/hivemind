@@ -11,7 +11,7 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import HiveMindConfigEntry
-from .api import Canvas, HiveMindError
+from .api import Canvas, HiveMindAuthError, HiveMindError
 from .const import CONF_BUTTON_TEXT, DEFAULT_BUTTON_TEXT, EVENT_RESPONSE
 from .entity import device_info, unique_id
 
@@ -47,6 +47,9 @@ class HiveMindButton(ButtonEntity):
         try:
             answer = await self._entry.runtime_data.client.run(self._canvas.id, text)
         except HiveMindError as err:
+            # A revoked token: Home Assistant asks for a new one instead of failing on every press.
+            if isinstance(err, HiveMindAuthError):
+                self._entry.async_start_reauth(self.hass)
             self._last = {"canvas_id": self._canvas.id, "error": str(err)}
             self.async_write_ha_state()
             raise HomeAssistantError(f"HiveMind canvas {self._canvas.name}: {err}") from err

@@ -100,3 +100,66 @@ async def test_options_limit_canvases(hass: HomeAssistant, aioclient_mock: Aioht
     await hass.async_block_till_done()
     assert hass.states.get("button.hivemind_run_kitchen_helper") is None or hass.states.get("button.hivemind_run_kitchen_helper").state == "unavailable"
     assert hass.states.get("button.hivemind_run_council") is not None
+
+
+async def test_revoked_token_starts_reauth(hass: HomeAssistant, aioclient_mock: AiohttpClientMocker) -> None:
+    entry = await setup_entry(hass, aioclient_mock)
+    aioclient_mock.post(f"{URL}/v1/chat/completions", status=401, json={"error": {"message": "bad token"}})
+    with pytest.raises(HomeAssistantError, match="refused the API token"):
+        await hass.services.async_call(DOMAIN, "run_canvas", {"canvas": "c1", "text": "x"}, blocking=True, return_response=True)
+    await hass.async_block_till_done()
+    flows = hass.config_entries.flow.async_progress_by_handler(DOMAIN)
+    assert [f["context"]["source"] for f in flows] == [config_entries.SOURCE_REAUTH]
+    assert flows[0]["context"]["entry_id"] == entry.entry_id
+
+
+async def test_run_canvas_finds_the_right_server(hass: HomeAssistant, aioclient_mock: AiohttpClientMocker) -> None:
+    other = "http://second.local:4820"
+    aioclient_mock.get(f"{URL}/v1/models", json=MODELS)
+    aioclient_mock.get(f"{other}/v1/models", json={"object": "list", "data": [{"id": "garage", "name": "Garage"}]})
+    for url in (URL, other):
+        MockConfigEntry(domain=DOMAIN, data={"url": url, "token": "hm_x"}, unique_id=url, title=url).add_to_hass(hass)
+    assert await async_setup_component(hass, DOMAIN, {})
+    await hass.async_block_till_done()
+    aioclient_mock.post(f"{other}/v1/chat/completions", json=answer("Door closed"))
+    result = await hass.services.async_call(DOMAIN, "run_canvas", {"canvas": "Garage", "text": "close"}, blocking=True, return_response=True)
+    assert result == {"response": "Door closed", "canvas": "garage"}
+
+
+async def test_conversation_keeps_history(hass: HomeAssistant, aioclient_mock: AiohttpClientMocker) -> None:
+    await setup_entry(hass, aioclient_mock)
+    aioclient_mock.post(f"{URL}/v1/chat/completions", json=answer("Hi Turks"))
+    first = await conversation.async_converse(hass, "I am Turks", None, Context(), agent_id="conversation.hivemind_council")
+    await conversation.async_converse(hass, "who am I?", first.conversation_id, Context(), agent_id="conversation.hivemind_council")
+    assert aioclient_mock.mock_calls[-1][2]["messages"] == [
+        {"role": "user", "content": "I am Turks"},
+        {"role": "assistant", "content": "Hi Turks"},
+        {"role": "user", "content": "who am I?"},
+    ]
+
+
+async def test_same_server_again_updates_the_token(hass: HomeAssistant, aioclient_mock: AiohttpClientMocker) -> None:
+    entry = await setup_entry(hass, aioclient_mock)
+    result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": config_entries.SOURCE_USER})
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], {"url": URL, "token": "hm_new"})
+    assert result["type"] is FlowResultType.ABORT
+    assert entry.data["token"] == "hm_new"
+
+
+async def test_options_when_not_loaded(hass: HomeAssistant, aioclient_mock: AiohttpClientMocker) -> None:
+    aioclient_mock.get(f"{URL}/v1/models", exc=aiohttp.ClientConnectionError("down"))
+    entry = MockConfigEntry(domain=DOMAIN, data={"url": URL, "token": "hm_x"}, unique_id=URL, title="HiveMind")
+    entry.add_to_hass(hass)
+    assert await async_setup_component(hass, DOMAIN, {})
+    await hass.async_block_till_done()
+    assert entry.state is config_entries.ConfigEntryState.SETUP_RETRY
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "not_loaded"
+
+
+async def test_proxy_error_page_is_reported_as_http_error(hass: HomeAssistant, aioclient_mock: AiohttpClientMocker) -> None:
+    await setup_entry(hass, aioclient_mock)
+    aioclient_mock.post(f"{URL}/v1/chat/completions", status=502, text="<html>Bad Gateway</html>")
+    with pytest.raises(HomeAssistantError, match="HTTP 502"):
+        await hass.services.async_call(DOMAIN, "run_canvas", {"canvas": "c1", "text": "x"}, blocking=True, return_response=True)

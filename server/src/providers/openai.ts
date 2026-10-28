@@ -1,4 +1,5 @@
 import type { ModelInfo } from '@hivemind/shared';
+import { checkUrl, readCapped, timeoutSignal } from '../services/net.js';
 import { readSSE } from './lines.js';
 import { checkResponse, type ChatRequest, type GeneratedImage, type ImageRequest, type ProviderAdapter, type ProviderConfig, type StreamChunk } from './types.js';
 
@@ -21,7 +22,7 @@ export function openaiAdapter(cfg: ProviderConfig): ProviderAdapter {
 
   return {
     async listModels(): Promise<ModelInfo[]> {
-      const res = await fetch(`${base}/models`, { headers: headers() });
+      const res = await fetch(`${base}/models`, { headers: headers(), signal: AbortSignal.timeout(20_000) });
       await checkResponse(res, `${cfg.preset} /models`);
       const data = (await res.json()) as { data?: OpenAIModel[] };
       return (data.data ?? []).map((m) => {
@@ -62,8 +63,11 @@ export function openaiAdapter(cfg: ProviderConfig): ProviderAdapter {
       return Promise.all(
         items.map(async (d) => {
           if (d.b64_json) return { data: Buffer.from(d.b64_json, 'base64'), ext: 'png' };
-          const r = await fetch(d.url!, { signal });
-          return { data: Buffer.from(await r.arrayBuffer()), ext: 'png' };
+          // A link the API hands back: same address guard as the Webhook block, and a size cap.
+          await checkUrl(d.url!, 'The image link from the image API');
+          const r = await fetch(d.url!, { signal: timeoutSignal(120_000, signal), redirect: 'error' });
+          await checkResponse(r, `${cfg.preset} image download`);
+          return { data: await readCapped(r, 50 * 1024 * 1024, 'The image'), ext: 'png' };
         }),
       );
     },

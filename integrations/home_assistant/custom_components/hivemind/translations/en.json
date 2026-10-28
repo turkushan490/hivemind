@@ -22,7 +22,7 @@
       "invalid_auth": "HiveMind refused the API token."
     },
     "abort": {
-      "already_configured": "This HiveMind is already added.",
+      "already_configured": "This HiveMind is already added (a new working token was saved).",
       "reauth_successful": "The new token works."
     }
   },
@@ -36,6 +36,9 @@
           "button_text": "Text a button press sends to its canvas"
         }
       }
+    },
+    "abort": {
+      "not_loaded": "HiveMind is not loaded right now (server offline or token refused). Fix that first, then open the options again."
     }
   },
   "services": {

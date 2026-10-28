@@ -7,7 +7,7 @@ export function ollamaAdapter(cfg: ProviderConfig): ProviderAdapter {
 
   return {
     async listModels(): Promise<ModelInfo[]> {
-      const res = await fetch(`${base}/api/tags`);
+      const res = await fetch(`${base}/api/tags`, { signal: AbortSignal.timeout(20_000) });
       await checkResponse(res, 'Ollama /api/tags');
       const data = (await res.json()) as {
         models?: { name: string; size?: number; modified_at?: string; details?: { parameter_size?: string; quantization_level?: string } }[];
@@ -46,6 +46,7 @@ export function ollamaAdapter(cfg: ProviderConfig): ProviderAdapter {
     async remove(model: string): Promise<void> {
       const res = await fetch(`${base}/api/delete`, {
         method: 'DELETE',
+        signal: AbortSignal.timeout(60_000),
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ model }),
       });
@@ -53,7 +54,7 @@ export function ollamaAdapter(cfg: ProviderConfig): ProviderAdapter {
     },
 
     async loaded(): Promise<LoadedModel[]> {
-      const res = await fetch(`${base}/api/ps`);
+      const res = await fetch(`${base}/api/ps`, { signal: AbortSignal.timeout(20_000) });
       await checkResponse(res, 'Ollama /api/ps');
       const data = (await res.json()) as { models?: { name: string; size?: number; size_vram?: number; expires_at?: string }[] };
       return (data.models ?? []).map((m) => ({ model: m.name, sizeBytes: m.size ?? 0, vramBytes: m.size_vram ?? 0, expiresAt: m.expires_at }));
@@ -63,6 +64,7 @@ export function ollamaAdapter(cfg: ProviderConfig): ProviderAdapter {
       // keep_alive 0 tells Ollama to drop the model from RAM/VRAM right away.
       const res = await fetch(`${base}/api/generate`, {
         method: 'POST',
+        signal: AbortSignal.timeout(60_000),
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ model, keep_alive: 0 }),
       });

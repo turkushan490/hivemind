@@ -83,7 +83,14 @@ export function runReport(ownerId: string, id: string): RunReport | undefined {
 }
 
 /** hm-file: links point into the files folder; in a document they need the server address. */
-const files = (md: string, base: string) => md.replace(/\(hm-file:([^)\s]+)\)/g, (_, p: string) => `(${base}/api/files/raw?inline=1&path=${encodeURIComponent(decodeURIComponent(p))})`);
+const decoded = (p: string) => {
+  try {
+    return decodeURIComponent(p);
+  } catch {
+    return p;
+  }
+};
+const files = (md: string, base: string) => md.replace(/\(hm-file:([^)\s]+)\)/g, (_, p: string) => `(${base}/api/files/raw?inline=1&path=${encodeURIComponent(decoded(p))})`);
 
 export function runMarkdown(r: RunReport, base = ''): string {
   const facts = [

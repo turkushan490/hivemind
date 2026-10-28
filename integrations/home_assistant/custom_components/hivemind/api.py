@@ -56,32 +56,41 @@ class HiveMindClient:
             ) as resp:
                 if resp.status == 401:
                     raise HiveMindAuthError("HiveMind refused the API token")
-                data = await resp.json(content_type=None)
+                try:
+                    data = await resp.json(content_type=None)
+                except ValueError as err:
+                    # An HTML error page (e.g. a reverse proxy's 502) is not "not HiveMind".
+                    if resp.status >= 400:
+                        raise HiveMindError(f"{self.url} answered HTTP {resp.status}") from err
+                    raise HiveMindError(f"{self.url} does not look like a HiveMind server") from err
                 if resp.status >= 400:
-                    message = (data or {}).get("error", {})
+                    message = data.get("error") if isinstance(data, dict) else None
                     if isinstance(message, dict):
                         message = message.get("message")
-                    raise HiveMindError(message or f"HiveMind answered HTTP {resp.status}")
+                    raise HiveMindError(str(message) if message else f"HiveMind answered HTTP {resp.status}")
+                if not isinstance(data, dict):
+                    raise HiveMindError(f"{self.url} does not look like a HiveMind server")
                 return data
         except asyncio.TimeoutError as err:
             raise HiveMindError(f"HiveMind did not answer within {int(timeout)} seconds") from err
         except aiohttp.ClientError as err:
             raise HiveMindError(f"Cannot reach HiveMind at {self.url}: {err}") from err
-        except ValueError as err:
-            raise HiveMindError(f"{self.url} does not look like a HiveMind server") from err
 
     async def canvases(self) -> list[Canvas]:
         """All saved canvases of the token's user."""
         data = await self._request("GET", "/v1/models", 20)
-        return [Canvas(id=m["id"], name=m.get("name") or m["id"]) for m in data.get("data", [])]
+        models = data.get("data")
+        if not isinstance(models, list):
+            raise HiveMindError(f"{self.url} does not look like a HiveMind server")
+        return [Canvas(id=m["id"], name=m.get("name") or m["id"]) for m in models if isinstance(m, dict) and m.get("id")]
 
-    async def run(self, canvas: str, text: str) -> str:
-        """Runs a canvas with the text as its question; returns the final answer."""
+    async def run(self, canvas: str, text: str, history: list[dict[str, str]] | None = None) -> str:
+        """Runs a canvas with the text as its question (earlier turns as history); returns the final answer."""
         data = await self._request(
             "POST",
             "/v1/chat/completions",
             RUN_TIMEOUT,
-            json={"model": canvas, "messages": [{"role": "user", "content": text}]},
+            json={"model": canvas, "messages": [*(history or []), {"role": "user", "content": text}]},
         )
         try:
             return data["choices"][0]["message"]["content"] or ""

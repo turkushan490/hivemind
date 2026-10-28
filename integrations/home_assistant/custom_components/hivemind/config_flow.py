@@ -22,23 +22,25 @@ class HiveMindConfigFlow(ConfigFlow, domain=DOMAIN):
 
     VERSION = 1
 
-    async def _check(self, url: str, token: str) -> tuple[dict[str, str], int]:
-        """Tries the address and token; returns errors and the number of canvases."""
+    async def _check(self, url: str, token: str) -> dict[str, str]:
+        """Tries the address and token; returns the form errors (none when it works)."""
         client = HiveMindClient(async_get_clientsession(self.hass), url, token)
         try:
-            return {}, len(await client.canvases())
+            await client.canvases()
         except HiveMindAuthError:
-            return {"base": "invalid_auth"}, 0
+            return {"base": "invalid_auth"}
         except HiveMindError:
-            return {"base": "cannot_connect"}, 0
+            return {"base": "cannot_connect"}
+        return {}
 
     async def async_step_user(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         errors: dict[str, str] = {}
         if user_input is not None:
             url = normalize_url(user_input[CONF_URL])
             await self.async_set_unique_id(url)
-            self._abort_if_unique_id_configured()
-            errors, _ = await self._check(url, user_input[CONF_TOKEN])
+            errors = await self._check(url, user_input[CONF_TOKEN])
+            # The same server again with a working token: update the token instead of refusing.
+            self._abort_if_unique_id_configured(updates={CONF_TOKEN: user_input[CONF_TOKEN].strip()} if not errors else None)
             if not errors:
                 return self.async_create_entry(title=f"HiveMind ({url.split('://', 1)[-1]})", data={CONF_URL: url, CONF_TOKEN: user_input[CONF_TOKEN].strip()})
         return self.async_show_form(
@@ -60,7 +62,7 @@ class HiveMindConfigFlow(ConfigFlow, domain=DOMAIN):
         entry = self._get_reauth_entry()
         errors: dict[str, str] = {}
         if user_input is not None:
-            errors, _ = await self._check(entry.data[CONF_URL], user_input[CONF_TOKEN])
+            errors = await self._check(entry.data[CONF_URL], user_input[CONF_TOKEN])
             if not errors:
                 return self.async_update_reload_and_abort(entry, data_updates={CONF_TOKEN: user_input[CONF_TOKEN].strip()})
         return self.async_show_form(step_id="reauth_confirm", data_schema=vol.Schema({vol.Required(CONF_TOKEN): str}), errors=errors)
@@ -77,7 +79,11 @@ class HiveMindOptionsFlow(OptionsFlow):
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         if user_input is not None:
             return self.async_create_entry(data=user_input)
-        canvases = {c.id: c.name for c in self.config_entry.runtime_data.canvases}
+        # The canvas list comes from the loaded server; when it isn't loaded (offline, bad token) there is nothing to pick.
+        data = getattr(self.config_entry, "runtime_data", None)
+        if data is None:
+            return self.async_abort(reason="not_loaded")
+        canvases = {c.id: c.name for c in data.canvases}
         chosen = [c for c in self.config_entry.options.get(CONF_CANVASES, []) if c in canvases]
         return self.async_show_form(
             step_id="init",

@@ -99,15 +99,17 @@ export async function viewerGuard(req: FastifyRequest, reply: FastifyReply) {
   if (user?.role === 'viewer') return reply.code(403).send({ error: 'Viewers can only use canvases (ask an admin for more rights)' });
 }
 
-// Simple in-memory brute-force guard: 10 failed logins per IP per 15 minutes.
+// Simple in-memory brute-force guard: 10 failed logins per IP (20 per account) per 15 minutes.
 const failures = new Map<string, { n: number; until: number }>();
-function tooManyFailures(ip: string): boolean {
-  const f = failures.get(ip);
-  return !!f && f.until > Date.now() && f.n >= 10;
+function tooManyFailures(key: string, max = 10): boolean {
+  const f = failures.get(key);
+  return !!f && f.until > Date.now() && f.n >= max;
 }
-function noteFailure(ip: string) {
-  const f = failures.get(ip);
-  if (!f || f.until < Date.now()) failures.set(ip, { n: 1, until: Date.now() + 15 * 60_000 });
+function noteFailure(key: string) {
+  const now = Date.now();
+  if (failures.size > 10_000) for (const [k, f] of failures) if (f.until < now) failures.delete(k);
+  const f = failures.get(key);
+  if (!f || f.until < now) failures.set(key, { n: 1, until: now + 15 * 60_000 });
   else f.n++;
 }
 
@@ -137,7 +139,10 @@ export function authRoutes(app: FastifyInstance) {
     if (userCount() > 0) return reply.code(409).send({ error: 'Setup already done' });
     const bad = validCredentials(username, password);
     if (bad) return reply.code(400).send({ error: bad });
-    const id = createUser(username as string, await hashPassword(password as string), 'admin');
+    const hash = await hashPassword(password as string);
+    // Checked again right before the insert, with no await in between: two setups at once can't both make an admin.
+    if (userCount() > 0) return reply.code(409).send({ error: 'Setup already done' });
+    const id = createUser(username as string, hash, 'admin');
     startSession(reply, id);
     return { ok: true };
   });
@@ -145,9 +150,13 @@ export function authRoutes(app: FastifyInstance) {
   app.post('/api/auth/login', async (req, reply) => {
     if (tooManyFailures(req.ip)) return reply.code(429).send({ error: 'Too many attempts, try again later' });
     const { username, password } = (req.body ?? {}) as Record<string, unknown>;
+    // Also per account, so changing IP addresses (or X-Forwarded-For) doesn't allow endless guesses.
+    const account = `user:${String(username ?? '').toLowerCase().slice(0, 64)}`;
+    if (tooManyFailures(account, 20)) return reply.code(429).send({ error: 'Too many attempts for this account, try again later' });
     const row = db.prepare('SELECT id, pw_hash FROM users WHERE username = ?').get(String(username ?? '')) as { id: string; pw_hash: string } | undefined;
     if (!row || !(await verifyPassword(String(password ?? ''), row.pw_hash))) {
       noteFailure(req.ip);
+      noteFailure(account);
       return reply.code(401).send({ error: 'Wrong username or password' });
     }
     startSession(reply, row.id);

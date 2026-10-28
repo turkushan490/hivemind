@@ -106,7 +106,7 @@ export function systemOneAdapter(cfg: ProviderConfig): ProviderAdapter {
         ...(typesafe && { price: { input: 0.042, output: 0 } }),
       });
       if (typesafe) {
-        const res = await fetch(`${base}/v1/models`, { headers: auth() });
+        const res = await fetch(`${base}/v1/models`, { headers: auth(), signal: AbortSignal.timeout(20_000) });
         if (!res.ok) throw new ProviderError(`TypeSafe /v1/models answered HTTP ${res.status}${res.status === 401 ? ' — check the API key' : ''}`, res.status);
         const data = (await res.json()) as { models?: { name: string }[] };
         const names = (data.models ?? []).map((m) => m.name);
@@ -114,7 +114,7 @@ export function systemOneAdapter(cfg: ProviderConfig): ProviderAdapter {
         return [...new Set([...names, 'jev-latest', 'jev-1.14.0'])].map((m) => info(m));
       }
       if (cfg.preset === 'clef-cloud') return [info('clef', 'Clef'), info('clef-flash', 'Clef Flash')];
-      const res = await fetch(`${base}/api/tags`);
+      const res = await fetch(`${base}/api/tags`, { signal: AbortSignal.timeout(20_000) });
       if (!res.ok) throw new ProviderError(`Ollama /api/tags answered HTTP ${res.status}`, res.status);
       const data = (await res.json()) as { models?: { name: string; size?: number }[] };
       // Ollama does not mark decision models; these are the families it ships with /v1/systemone.

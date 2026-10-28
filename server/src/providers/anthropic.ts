@@ -14,7 +14,7 @@ export function anthropicAdapter(cfg: ProviderConfig): ProviderAdapter {
 
   return {
     async listModels(): Promise<ModelInfo[]> {
-      const res = await fetch(`${base}/v1/models?limit=100`, { headers: headers() });
+      const res = await fetch(`${base}/v1/models?limit=100`, { headers: headers(), signal: AbortSignal.timeout(20_000) });
       await checkResponse(res, 'Anthropic /v1/models');
       const data = (await res.json()) as { data?: { id: string; display_name?: string }[] };
       return (data.data ?? []).map((m) => ({ providerId: cfg.id, model: m.id, name: m.display_name ?? m.id, free: false }));

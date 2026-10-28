@@ -1,3 +1,4 @@
+import { checkUrl, hostOf, readCapped } from '../services/net.js';
 import type { NodeContext, NodeDefinition, NodeInput } from './index.js';
 
 /**
@@ -8,6 +9,8 @@ import type { NodeContext, NodeDefinition, NodeInput } from './index.js';
 
 const TIMEOUT_MS = 30_000;
 const MAX_TEXT = 100_000;
+/** A webhook answer bigger than this is refused instead of read into memory. */
+const MAX_BYTES = 5 * 1024 * 1024;
 
 /** What flows into the block: the last answer wired in, else the question. */
 const inputText = (ctx: NodeContext) => {
@@ -50,9 +53,10 @@ async function send(url: string, init: RequestInit, signal: AbortSignal | undefi
     return await fetch(url, { ...init, signal: signal ? AbortSignal.any([signal, timeout]) : timeout });
   } catch (err) {
     if (signal?.aborted) throw new Error('Cancelled');
-    if (timeout.aborted) throw new Error(`${what} did not answer within ${TIMEOUT_MS / 1000} s (${url})`);
+    // Only the host goes into messages: the path or query can hold a token (Discord webhooks, ?key=…), and messages are stored.
+    if (timeout.aborted) throw new Error(`${what} did not answer within ${TIMEOUT_MS / 1000} s (${hostOf(url)})`);
     const cause = (err as { cause?: { code?: string; message?: string } }).cause;
-    throw new Error(`Can't reach ${what} at ${url}: ${cause?.code ?? cause?.message ?? (err as Error).message}`);
+    throw new Error(`Can't reach ${what} at ${hostOf(url)}: ${cause?.code ?? cause?.message ?? (err as Error).message}`);
   }
 }
 
@@ -171,10 +175,13 @@ export const ACTION_NODES: Record<'homeassistant' | 'webhook' | 'discord', NodeD
           headers['content-type'] ??= 'application/json';
         } else headers['content-type'] ??= 'text/plain; charset=utf-8';
       }
+      // No calls into loopback / cloud metadata (and none into the LAN when BLOCK_PRIVATE_ADDRESSES is on).
+      await checkUrl(url, 'The webhook URL');
       ctx.progress(`${method} ${new URL(url).host}…`);
-      const res = await send(url, { method, headers, body }, ctx.signal, new URL(url).host);
+      const res = await send(url, { method, headers, body, redirect: 'manual' }, ctx.signal, new URL(url).host);
+      if (res.status >= 300 && res.status < 400) throw new Error(`${new URL(url).host} answered with a redirect (HTTP ${res.status}); use the final address`);
       await ensureOk(res, new URL(url).host);
-      let text = await res.text();
+      let text = (await readCapped(res, MAX_BYTES, `The answer of ${new URL(url).host}`)).toString('utf8');
       // Pretty JSON reads better for the next model.
       if ((res.headers.get('content-type') ?? '').includes('json')) {
         try {

@@ -41,6 +41,12 @@ describe('canvas-scoped API tokens', () => {
     expect(models.data.map((m) => m.id)).not.toContain('private');
   });
 
+  it('reads only generated files (outputs/)', async () => {
+    expect((await call('GET', '/api/files/raw?path=notes/secret.txt')).statusCode).toBe(403);
+    expect((await call('GET', '/api/files/raw?path=/outputs/../notes/secret.txt')).statusCode).toBe(400);
+    expect((await call('GET', '/api/files/raw?path=outputs/missing.png')).statusCode).toBe(404);
+  });
+
   it('runs only its canvases, never an ad-hoc graph', async () => {
     expect((await call('POST', '/api/runs', { canvasId: 'private', question: 'x' })).statusCode).toBe(403);
     expect((await call('POST', '/api/runs', { graph: canvas('dnd:a'), question: 'x' })).statusCode).toBe(403);

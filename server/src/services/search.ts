@@ -47,7 +47,7 @@ export function saveSearchSettings(patch: Partial<SearchSettings> & { braveKey?:
 const strip = (html: string) => html.replace(/<[^>]+>/g, '').replace(/&quot;/g, '"').replace(/&amp;/g, '&').replace(/&#39;/g, "'").replace(/\s+/g, ' ').trim();
 
 async function json(url: string, init?: RequestInit) {
-  const res = await fetch(url, { ...init, headers: { accept: 'application/json', 'user-agent': 'HiveMind (+https://github.com/turkushan490/hivemind)', ...init?.headers } });
+  const res = await fetch(url, { ...init, signal: AbortSignal.timeout(20_000), headers: { accept: 'application/json', 'user-agent': 'HiveMind (+https://github.com/turkushan490/hivemind)', ...init?.headers } });
   if (!res.ok) throw new Error(`Search answered HTTP ${res.status}`);
   return res.json() as Promise<any>;
 }

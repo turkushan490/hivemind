@@ -3,7 +3,15 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { fillTemplate } from '../src/nodes/actions.js';
 import { NODES, type NodeContext, type NodeServices } from '../src/nodes/index.js';
 
-afterEach(() => vi.unstubAllGlobals());
+// No real DNS in tests: names resolve to a public address, "*.internal" to a LAN one, "*.loop" to loopback.
+vi.mock('node:dns/promises', () => ({
+  lookup: async (host: string) => [{ address: host.endsWith('.internal') ? '192.168.1.50' : host.endsWith('.loop') ? '127.0.0.1' : '93.184.216.34', family: 4 }],
+}));
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+  delete process.env.BLOCK_PRIVATE_ADDRESSES;
+});
 
 const HA = { url: 'http://ha.local:8123', token: 'llat' };
 
@@ -122,6 +130,25 @@ describe('Webhook block', () => {
     mockFetch(new Response('boom', { status: 500 }));
     await expect(NODES.webhook.execute(ctx('webhook', { url: 'https://x.io' }).c)).rejects.toThrow(/x.io answered HTTP 500: boom/);
   });
+
+  it('never calls cloud metadata or loopback, and the LAN only when allowed', async () => {
+    const fetch = mockFetch(new Response('ok'), new Response('ok'));
+    await expect(NODES.webhook.execute(ctx('webhook', { url: 'http://169.254.169.254/latest/meta-data' }).c)).rejects.toThrow(/cloud-metadata/);
+    await expect(NODES.webhook.execute(ctx('webhook', { url: 'http://[::1]:4820/api' }).c)).rejects.toThrow(/loopback/);
+    await expect(NODES.webhook.execute(ctx('webhook', { url: 'http://me.loop/api' }).c)).rejects.toThrow(/loopback/);
+    expect(await NODES.webhook.execute(ctx('webhook', { url: 'http://nas.internal/hook', method: 'GET' }).c)).toBe('ok');
+    process.env.BLOCK_PRIVATE_ADDRESSES = 'true';
+    await expect(NODES.webhook.execute(ctx('webhook', { url: 'http://nas.internal/hook', method: 'GET' }).c)).rejects.toThrow(/private network/);
+    await expect(NODES.webhook.execute(ctx('webhook', { url: 'http://10.0.0.1/', method: 'GET' }).c)).rejects.toThrow(/private network/);
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses huge answers and redirects', async () => {
+    mockFetch(new Response('x', { headers: { 'content-length': String(50 * 1024 * 1024) } }));
+    await expect(NODES.webhook.execute(ctx('webhook', { url: 'https://x.io', method: 'GET' }).c)).rejects.toThrow(/too big/);
+    mockFetch(new Response(null, { status: 302, headers: { location: 'http://169.254.169.254/' } }));
+    await expect(NODES.webhook.execute(ctx('webhook', { url: 'https://x.io', method: 'GET' }).c)).rejects.toThrow(/redirect/);
+  });
 });
 
 describe('Discord block', () => {
@@ -147,5 +174,14 @@ describe('Discord block', () => {
     await expect(NODES.discord.execute(ctx('discord', { url: 'https://evil.example/hook' }).c)).rejects.toThrow(/not a Discord webhook/);
     mockFetch(new Response('{"message": "Unknown Webhook"}', { status: 404 }));
     await expect(NODES.discord.execute(ctx('discord', { url }, { input: 'x' }).c)).rejects.toThrow(/Discord answered HTTP 404/);
+  });
+
+  it('never puts the webhook token in an error message', async () => {
+    vi.stubGlobal('fetch', async () => {
+      throw Object.assign(new TypeError('fetch failed'), { cause: { code: 'ECONNRESET' } });
+    });
+    const err = await NODES.discord.execute(ctx('discord', { url: 'https://discord.com/api/webhooks/123/SECRET-TOKEN' }, { input: 'x' }).c).catch((e: Error) => e);
+    expect((err as Error).message).toMatch(/discord\.com: ECONNRESET/);
+    expect((err as Error).message).not.toContain('SECRET-TOKEN');
   });
 });

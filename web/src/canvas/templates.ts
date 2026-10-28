@@ -7,7 +7,7 @@ export interface TemplateModels {
   image?: ModelRef;
 }
 
-export const TEMPLATE_GROUPS = ['Everyday', 'Coding', 'Creative', 'Home / research', 'Website'] as const;
+export const TEMPLATE_GROUPS = ['Everyday', 'Coding', 'Creative', 'Home / research', 'Website', 'Tabletop'] as const;
 export type TemplateGroup = (typeof TEMPLATE_GROUPS)[number];
 
 export interface Template {
@@ -57,6 +57,170 @@ const SITE_PROMPT =
   'Build a complete, modern, responsive single-file website for: {{question}}\n\n{{inputs}}\n\n' +
   'Use one HTML file with inline <style> and <script>, no external files except Google Fonts. Make it look polished: good spacing, colors, and real content (no lorem ipsum). ' +
   'Reply with only one ```html code block containing the whole page.';
+
+// ---- Tabletop (the DungeonMind canvases, so you can see and tweak them) ----
+
+/** What every DungeonMind prompt gets; the numbers are always the server's. */
+const TABLE_CONTEXT =
+  'Campaign:\n{{vars.campaign}}\n\nParty state:\n{{vars.party}}\n\nRecent turns:\n{{vars.recent}}\n\nDice results from the server:\n{{vars.results}}';
+const DM_RULES =
+  'You are the Dungeon Master of a dark-fantasy D&D 5e game. The numbers are always the server\'s: use the given dice results exactly and never change HP, spell slots or other numbers yourself.';
+const json = (system: string, prompt: string, schema: string, model?: ModelRef, extra: NodeConfig = {}) => ({
+  ...(model && { model }),
+  system,
+  prompt,
+  json: true,
+  jsonSchema: schema,
+  ...extra,
+});
+const rulesSearch = (x: number, y: number, query = '{{question}}') =>
+  node('memory', x, y, 'rules', { key: 'rules:{{vars.ruleset}}', mode: 'search', query, limit: 6 });
+
+const TABLETOP: Template[] = [
+  {
+    id: 'dnd-setup',
+    group: 'Tabletop',
+    name: 'Adventure setup',
+    description: 'Adventure pitches plus a setup form (selects, sliders, text) as JSON.',
+    build: (m) =>
+      chain(
+        node('input', 0, 120, 'Wishes'),
+        node(
+          'llm',
+          320,
+          120,
+          'pitch',
+          json(
+            DM_RULES,
+            'The players want: {{question}}\n\nWrite 3 short adventure pitches and a setup form to tune the chosen one.',
+            '{"pitches":[{"title":"","hook":""}],"fields":[{"id":"","label":"","type":"select|slider|text|multi","options":[""],"min":0,"max":10,"default":""}]}',
+            m.judge ?? m.text[0],
+          ),
+        ),
+        node('output', 640, 120, 'Final answer'),
+      ),
+  },
+  {
+    id: 'dnd-adjudicate',
+    group: 'Tabletop',
+    name: 'Adjudicate actions',
+    description: 'Looks up the rules for the players’ actions and asks for the right rolls as JSON. Never invents results.',
+    build: (m) =>
+      chain(
+        node('input', 0, 120, 'Actions'),
+        rulesSearch(300, 120),
+        node(
+          'llm',
+          600,
+          120,
+          'rolls',
+          json(
+            `${DM_RULES} You decide which rolls the actions need. Never roll or invent results yourself.`,
+            `${TABLE_CONTEXT}\n\nRules:\n{{inputs}}\n\nActions: {{question}}`,
+            '{"rolls":[{"pc":"","kind":"attack|save|skill|damage|heal","stat":"","dc":0,"targetAc":0,"adv":"none|adv|dis","dice":"1d20"}],"resources":[{"pc":"","name":"","amount":1}]}',
+            m.text[0],
+          ),
+        ),
+        node('output', 900, 120, 'Final answer'),
+      ),
+  },
+  {
+    id: 'dnd-narrate',
+    group: 'Tabletop',
+    name: 'Narrate a turn',
+    description: 'Story memory + rules → narration (32K context) → state changes as JSON → remembered per table.',
+    build: (m) => {
+      const q = node('input', 0, 200, 'Turn');
+      const story = node('memory', 300, 60, 'story', { key: 'dnd:{{vars.tableId}}', mode: 'search', limit: 5 });
+      const rules = rulesSearch(300, 340);
+      const narration = llm(620, 200, 'narration', m.judge ?? m.text[0], `${TABLE_CONTEXT}\n\nEarlier in this campaign and the rules:\n{{inputs}}\n\nWhat the players do: {{question}}\n\nNarrate what happens.`, DM_RULES);
+      narration.config.numCtx = 32768;
+      const state = node(
+        'llm',
+        940,
+        200,
+        'state',
+        json(
+          'You turn a D&D narration into state changes. Only record what the narration and the dice results say.',
+          `${TABLE_CONTEXT}\n\nNarration:\n{{inputs}}`,
+          '{"deltas":[],"xp":0,"conditions":[],"items":[],"positions":{"zone":["names"]},"zones":[{"name":"","distances":{}}],"choices":{"pc":["","","",""]},"speakers":[{"name":"","kind":"","gender":""}],"image":"","sceneEnd":false}',
+          m.text[0],
+        ),
+      );
+      const save = node('memory', 1260, 200, 'remember', { key: 'dnd:{{vars.tableId}}', mode: 'save' });
+      const out = node('output', 1560, 200, 'Final answer');
+      return {
+        nodes: [q, story, rules, narration, state, save, out],
+        edges: [wire(q, story), wire(q, rules), wire(story, narration), wire(rules, narration), wire(narration, state), wire(state, save), wire(save, out)],
+      };
+    },
+  },
+  {
+    id: 'dnd-chronicle',
+    group: 'Tabletop',
+    name: 'Chronicle',
+    description: 'Turns the session into patches for the campaign.md sections.',
+    build: (m) =>
+      chain(
+        node('input', 0, 120, 'Session'),
+        node(
+          'llm',
+          320,
+          120,
+          'patches',
+          json('You keep the campaign log. Write short, factual patches.', `Campaign:\n{{vars.campaign}}\n\nRecent turns:\n{{vars.recent}}\n\n{{question}}`, '{"patches":[{"section":"","op":"replace|append","text":""}]}', m.judge ?? m.text[0]),
+        ),
+        node('output', 640, 120, 'Final answer'),
+      ),
+  },
+  {
+    id: 'dnd-ask',
+    group: 'Tabletop',
+    name: 'Ask the DM',
+    description: 'An out-of-turn answer from the rules and the campaign that does not move the story on.',
+    build: (m) => {
+      const q = node('input', 0, 160, 'Question');
+      const rules = rulesSearch(300, 60);
+      const campaign = node('memory', 300, 280, 'campaign', { key: 'dnd:{{vars.tableId}}', mode: 'search', limit: 4 });
+      const a = llm(620, 160, 'answer', m.judge ?? m.text[0], 'Campaign:\n{{vars.campaign}}\n\nMaterial:\n{{inputs}}\n\nOut-of-turn question: {{question}}\n\nAnswer briefly; do not move the story forward.', DM_RULES);
+      const out = node('output', 940, 160, 'Final answer');
+      return { nodes: [q, rules, campaign, a, out], edges: [wire(q, rules), wire(q, campaign), wire(rules, a), wire(campaign, a), wire(a, out)] };
+    },
+  },
+  {
+    id: 'dnd-sheet',
+    group: 'Tabletop',
+    name: 'Character sheet',
+    description: 'A full, legal character sheet as JSON from the rules (DungeonMind checks it).',
+    build: (m) =>
+      chain(
+        node('input', 0, 120, 'Character idea'),
+        rulesSearch(300, 120),
+        node(
+          'llm',
+          600,
+          120,
+          'sheet',
+          json('You build legal D&D 5e characters from the rules given.', 'Rules:\n{{inputs}}\n\nBuild this character: {{question}}', '{"name":"","race":"","class":"","level":1,"abilities":{"str":10,"dex":10,"con":10,"int":10,"wis":10,"cha":10},"hp":0,"ac":0,"skills":[],"features":[],"spells":[],"items":[]}', m.judge ?? m.text[0]),
+        ),
+        node('output', 900, 120, 'Final answer'),
+      ),
+  },
+  {
+    id: 'dnd-portrait',
+    group: 'Tabletop',
+    name: 'Portraits',
+    description: 'A model writes the portrait prompt; your image model draws 4 options.',
+    needsImage: true,
+    build: (m) =>
+      chain(
+        node('input', 0, 120, 'Character'),
+        llm(320, 120, 'prompt', m.text[0], 'Write one image prompt (comma-separated keywords, subject first, then dark-fantasy painterly style, lighting and quality words; at most 50 words) for a portrait of: {{question}}. Reply with only the prompt.'),
+        node('image', 640, 120, 'portraits', { ...(m.image && { model: m.image }), width: 832, height: 1216, batch: 4 }),
+        node('output', 960, 120, 'Final answer'),
+      ),
+  },
+];
 
 export const TEMPLATES: Template[] = [
   // ---- Everyday ----
@@ -276,4 +440,5 @@ export const TEMPLATES: Template[] = [
         node('output', 960, 120, 'Final answer'),
       ),
   },
+  ...TABLETOP,
 ];

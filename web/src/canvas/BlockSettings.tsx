@@ -19,6 +19,7 @@ const Label = ({ children }: { children: React.ReactNode }) => <div className="t
 export function BlockSettings(p: Props) {
   return (
     <>
+      {p.kind === 'llm' && <AutoSettings {...p} />}
       <ModelOptions {...p} />
       <KindSettings {...p} />
     </>
@@ -94,9 +95,26 @@ function KindSettings(p: Props) {
   switch (p.kind) {
     case 'router':
       return (
-        <p className="rounded-md bg-orange-950/30 p-2 text-xs text-orange-200/90">
-          Wire the Router to two or more blocks and give each a clear name — the model picks one by its name. The other branches are skipped.
-        </p>
+        <div className="space-y-2">
+          <Segmented
+            value={p.config.decideWith === 'jev' ? 'jev' : 'llm'}
+            options={[
+              ['llm', 'Decide with an LLM'],
+              ['jev', 'Decide with Jev ⚡'],
+            ]}
+            onChange={(v) => p.onChange({ decideWith: v as 'llm' | 'jev' })}
+          />
+          {p.config.decideWith === 'jev' && (
+            <div className="hm-pop space-y-1">
+              <Label>Decision model</Label>
+              <ModelPicker kind="decision" models={p.models} providers={p.providers} value={p.config.decider} onChange={(decider) => p.onChange({ decider })} />
+              <span className="text-xs text-slate-500">One choice question over the branch names: about 0.1 s and a fraction of a cent, instead of a model call.</span>
+            </div>
+          )}
+          <p className="rounded-md bg-orange-950/30 p-2 text-xs text-orange-200/90">
+            Wire the Router to two or more blocks and give each a clear name — it picks one by its name. The other branches are skipped.
+          </p>
+        </div>
       );
     case 'decide':
       return <DecideSettings {...p} />;
@@ -774,6 +792,82 @@ function DecideSettings(p: Props) {
         Branches: name the blocks wired after it <b>yes</b> / <b>no</b> (first yes/no question), an option of the first choice question, <b>fallback</b>, or{' '}
         <code>question: answer</code>. Only the winning branch runs; blocks with other names always run. The answers go on as JSON.
       </p>
+    </div>
+  );
+}
+
+/** A row of two or three buttons, one selected. */
+function Segmented({ value, options, onChange }: { value: string; options: [string, string][]; onChange: (v: string) => void }) {
+  return (
+    <div className="flex gap-1 rounded-lg bg-[#0d1117] p-0.5">
+      {options.map(([v, label]) => (
+        <button
+          key={v}
+          className={`flex-1 rounded-md px-2 py-1.5 text-xs transition-colors ${value === v ? 'bg-indigo-500/25 font-semibold text-indigo-100 shadow-[0_0_0_1px_#6366f1]' : 'text-slate-400 hover:text-slate-200'}`}
+          onClick={() => onChange(v)}
+        >
+          {label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+const TIER_HINT: Record<string, string> = {
+  small: 'trivial: sums, short facts, greetings — e.g. a local Ollama model',
+  medium: 'everyday: explanations, summaries, simple code — e.g. Groq or Gemini free',
+  large: 'hard: proofs, multi-step reasoning, bug hunting — e.g. Claude',
+  local: 'optional: private or home questions that stay on this machine',
+};
+
+/** LLM block: a fixed model, or "Auto (Jev router)" with a model per size. */
+function AutoSettings(p: Props) {
+  const auto = p.config.auto;
+  const decisions = p.models.filter((m) => m.kind === 'decision');
+  return (
+    <div className="space-y-2">
+      <Segmented
+        value={auto ? 'auto' : 'fixed'}
+        options={[
+          ['fixed', 'One model'],
+          ['auto', 'Auto (Jev router) ⚡'],
+        ]}
+        onChange={(v) => {
+          if (v === 'fixed') return p.onChange({ auto: undefined });
+          const d = decisions[0];
+          p.onChange({ auto: { ...(d && { decider: { providerId: d.providerId, model: d.model } }), ...(p.config.model && { medium: p.config.model }) } });
+        }}
+      />
+      {auto && (
+        <div className="hm-pop space-y-2 rounded-lg border border-indigo-900/60 bg-indigo-950/20 p-2">
+          <p className="text-xs text-slate-400">
+            A decision model reads each question and picks the size of model it needs; when it is under {Math.round((p.config.threshold ?? 0.6) * 100)}% sure it goes one size up.
+          </p>
+          <div className="space-y-1">
+            <Label>Decides the size</Label>
+            <ModelPicker key={`${p.nodeId}-decider`} kind="decision" models={p.models} providers={p.providers} value={auto.decider} onChange={(decider) => p.onChange({ auto: { ...auto, decider } })} />
+            {!decisions.length && <span className="text-xs text-amber-300">No decision models yet: add TypeSafe (Jev) or Ollama decision models in Settings → Providers.</span>}
+          </div>
+          {(['small', 'medium', 'large', 'local'] as const).map((t) => (
+            <div key={t} className="space-y-1">
+              <div className="flex items-center gap-2">
+                <Label>{t}</Label>
+                <span className="truncate text-[11px] text-slate-500">{TIER_HINT[t]}</span>
+                {auto[t] && (
+                  <button className="ml-auto text-[11px] text-slate-500 hover:text-red-400" onClick={() => p.onChange({ auto: { ...auto, [t]: undefined } })}>
+                    clear
+                  </button>
+                )}
+              </div>
+              <ModelPicker key={`${p.nodeId}-${t}`} models={p.models} providers={p.providers} value={auto[t]} onChange={(m) => p.onChange({ auto: { ...auto, [t]: m } })} />
+            </div>
+          ))}
+          <label className="block space-y-1">
+            <span className="text-xs text-slate-400">Sure enough at {Math.round((p.config.threshold ?? 0.6) * 100)}%</span>
+            <input type="range" className="w-full" min={0.3} max={0.95} step={0.05} value={p.config.threshold ?? 0.6} onChange={(e) => p.onChange({ threshold: Number(e.target.value) })} />
+          </label>
+        </div>
+      )}
     </div>
   );
 }

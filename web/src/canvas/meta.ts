@@ -201,6 +201,11 @@ export function summary(kind: NodeType, c: import('@hivemind/shared').NodeConfig
     case 'review':
     case 'judge':
     case 'router':
+      if (kind === 'llm' && c.auto) {
+        const sizes = (['local', 'small', 'medium', 'large'] as const).filter((t) => c.auto![t]);
+        return sizes.length ? { text: `Auto ⚡ ${sizes.join(' / ')}` } : { text: 'Pick models per size →', missing: true };
+      }
+      if (kind === 'router' && c.decideWith === 'jev') return c.decider ? { text: `Jev ⚡ ${c.decider.model}` } : { text: 'Pick a decision model →', missing: true };
       return c.model ? { text: c.model.model } : { text: 'Pick a model →', missing: true };
     case 'image':
       return c.model

@@ -1,7 +1,7 @@
-import { JUDGE_SYSTEM, REVIEW_SYSTEM, type CanvasNode, type DecisionEvent, type ModelRef, type NodeType, type OutputFile, type SearchSource } from '@hivemind/shared';
+import { AUTO_TIER_TEXT, AUTO_TIERS, JUDGE_SYSTEM, REVIEW_SYSTEM, type AutoTier, type CanvasNode, type DecisionEvent, type NodeConfig, type ModelRef, type NodeType, type OutputFile, type SearchSource } from '@hivemind/shared';
 import type { DecisionRequest, DecisionResult } from '../providers/decisions.js';
 import type { ChatMessage } from '../providers/types.js';
-import { DECIDE_NODE } from './decide.js';
+import { DECIDE_NODE, DEFAULT_THRESHOLD, toView } from './decide.js';
 import { ACTION_NODES } from './actions.js';
 
 /** Output of an upstream node, as seen by the node that runs next. */
@@ -69,6 +69,10 @@ export interface NodeContext {
 export interface NodeDefinition {
   /** Needs config.model. */
   usesModel: boolean;
+  /** This configuration needs no config.model / config.models after all (Auto model, Jev router, Jev scoring). */
+  modelOptional?(c: NodeConfig): boolean;
+  /** A readable problem with the configuration, checked before the run starts. */
+  check?(c: NodeConfig): string | undefined;
   /** Needs config.models with at least this many models. */
   minModels?: number;
   execute(ctx: NodeContext): Promise<string>;
@@ -176,6 +180,38 @@ function context(inputs: NodeInput[]): string {
   return prev.length ? `\n\nUse this material:\n\n${labelled(prev)}` : '';
 }
 
+const modelLabel = (m: ModelRef) => m.model.split('/').pop()!.replace(/:latest$/, '');
+
+/**
+ * Auto model (the Jev router): a decision model reads the question and picks a model size; under the threshold
+ * it moves up one size, because a too-small model is the costly mistake. Returns the model that answers.
+ */
+export async function autoModel(ctx: NodeContext, state: string): Promise<ModelRef> {
+  const a = ctx.node.config.auto ?? {};
+  const tiers = AUTO_TIERS.filter((t) => a[t]);
+  if (!tiers.length) throw new Error('Auto model: fill in at least one size (small / medium / large / local)');
+  if (tiers.length === 1) return a[tiers[0]]!;
+  if (!a.decider) throw new Error('Auto model: pick the decision model that chooses the size');
+  const criteria = Object.fromEntries(tiers.map((t) => [t, AUTO_TIER_TEXT[t]]));
+  const spec = { type: 'choice' as const, instructions: 'Which size of AI model does this request need to be answered correctly?', criteria };
+  ctx.progress('Choosing a model size…');
+  const r = await ctx.decide({ state: state.slice(0, 50_000), questions: { route: spec } }, a.decider);
+  const ans = r.answers.route;
+  const threshold = ctx.node.config.threshold ?? DEFAULT_THRESHOLD;
+  let pick: AutoTier = ans?.type === 'choice' && tiers.includes(ans.choice as AutoTier) ? (ans.choice as AutoTier) : tiers[tiers.length - 1];
+  const top = ans?.type === 'choice' ? (ans.probabilities[pick] ?? 0) : 0;
+  let moved = false;
+  if (top < threshold && pick !== tiers[tiers.length - 1]) {
+    pick = tiers[tiers.indexOf(pick) + 1];
+    moved = true;
+  }
+  const model = a[pick]!;
+  const view = toView('route', ans ?? { type: 'refusal' }, spec);
+  const route = `${pick}: ${modelLabel(model)}`;
+  ctx.progress(`${moved ? `Only ${Math.round(top * 100)}% sure — one size up ` : ''}→ ${route}`, { model: r.model, ms: r.ms, answers: [view], threshold, route });
+  return model;
+}
+
 export const NODES: Record<NodeType, NodeDefinition> = {
   input: {
     usesModel: false,
@@ -186,6 +222,8 @@ export const NODES: Record<NodeType, NodeDefinition> = {
 
   llm: {
     usesModel: true,
+    modelOptional: (c) => !!c.auto,
+    check: (c) => (c.auto && !AUTO_TIERS.some((t) => c.auto![t]) ? 'Auto model: fill in at least one size' : undefined),
     async execute(ctx) {
       const prev = answers(ctx.inputs);
       const { prompt } = ctx.node.config;
@@ -194,12 +232,14 @@ export const NODES: Record<NodeType, NodeDefinition> = {
       if (prompt) user = fill(prompt, ctx, labelled(prev));
       else if (prev.length === 0) user = ctx.question;
       else user = `Question: ${ctx.question}\n\nInput from previous steps:\n\n${labelled(prev)}\n\nUse this input to answer the question.`;
+      // Auto: the decision model picks which model answers, from the question (and what is wired in).
+      const model = ctx.node.config.auto ? await autoModel(ctx, prev.length ? `${ctx.question}\n\n${labelled(prev)}` : ctx.question) : undefined;
       if (ctx.node.config.useMessages && ctx.chat) {
         // The real conversation: system prompts, the earlier turns, then this block's prompt.
         const sys = [system, ctx.chat.system].filter(Boolean).join('\n\n');
-        return ask(ctx, [...(sys ? [{ role: 'system' as const, content: sys }] : []), ...ctx.chat.history, { role: 'user', content: user }]);
+        return ask(ctx, [...(sys ? [{ role: 'system' as const, content: sys }] : []), ...ctx.chat.history, { role: 'user', content: user }], model);
       }
-      return ask(ctx, withSystem(system, user));
+      return ask(ctx, withSystem(system, user), model);
     },
   },
 
@@ -250,12 +290,28 @@ export const NODES: Record<NodeType, NodeDefinition> = {
 
   router: {
     usesModel: true,
+    modelOptional: (c) => c.decideWith === 'jev' && !!c.decider,
+    check: (c) => (c.decideWith === 'jev' && !c.decider ? 'Router: pick the decision model that chooses the route' : undefined),
     async execute(ctx) {
       const options = ctx.outgoing;
       if (options.length === 0) throw new Error('Wire the Router to the blocks it can choose between');
       const passOn = answers(ctx.inputs).length ? labelled(answers(ctx.inputs)) : ctx.question;
       if (options.length === 1) {
         ctx.choose([options[0].id]);
+        return passOn;
+      }
+      if (ctx.node.config.decideWith === 'jev' && ctx.node.config.decider) {
+        // Jev: one choice question over the branch names, ~0.1 s instead of a model call.
+        const names = [...new Set(options.map((o) => o.label))];
+        const spec = { type: 'choice' as const, instructions: 'Which of these should handle this request?', criteria: Object.fromEntries(names.map((n) => [n, n])) };
+        ctx.progress('Choosing a route…');
+        const r = await ctx.decide({ state: `${ctx.question}${context(ctx.inputs)}`.slice(0, 50_000), questions: { route: spec } }, ctx.node.config.decider);
+        const ans = r.answers.route;
+        const label = ans?.type === 'choice' && names.includes(ans.choice) ? ans.choice : names[0];
+        const top = ans?.type === 'choice' ? (ans.probabilities[label] ?? 0) : 0;
+        const threshold = ctx.node.config.threshold ?? DEFAULT_THRESHOLD;
+        ctx.choose(options.filter((o) => o.label === label).map((o) => o.id));
+        ctx.progress(`Route: ${label}${top < threshold ? ` (only ${Math.round(top * 100)}% sure)` : ''}`, { model: r.model, ms: r.ms, answers: [toView('route', ans ?? { type: 'refusal' }, spec)], threshold, route: label });
         return passOn;
       }
       const list = options.map((o, i) => `${i + 1}. ${o.label}`).join('\n');

@@ -311,6 +311,8 @@ function Editor({ active, onProblem }: { active: boolean; onProblem: () => void 
     }
     if (kind === 'memory') config.key = 'default';
     if (kind === 'decide') config.questions = [{ name: 'spam', type: 'noul', instructions: 'Is this spam?' }];
+    // With a decision provider, new Routers decide with Jev: much faster and nearly free.
+    if (kind === 'router' && firstDecision) Object.assign(config, { decideWith: 'jev', decider: { providerId: firstDecision.providerId, model: firstDecision.model } });
     setNodes((ns) => [...ns.map((n) => ({ ...n, selected: false })), { id, type: 'hive', position: pos, selected: true, data: { kind, config } }]);
   };
   const onDrop = (e: DragEvent) => {
@@ -334,7 +336,11 @@ function Editor({ active, onProblem }: { active: boolean; onProblem: () => void 
     const input = nodes.find((n) => n.data.kind === 'input');
     if (!input) return toast('Add a Question block', 'info');
     if (!edges.some((e) => e.source === input.id)) return toast('Wire the Question block to something', 'info');
-    const noModel = nodes.filter((n) => NODE_META[n.data.kind].usesModel && !n.data.config.model);
+    const noModel = nodes.filter((n) => {
+      const c = n.data.config;
+      const optional = (n.data.kind === 'llm' && !!c.auto) || (n.data.kind === 'router' && c.decideWith === 'jev' && !!c.decider);
+      return NODE_META[n.data.kind].usesModel && !c.model && !optional;
+    });
     if (noModel.length) {
       setNodes((ns) => ns.map((n) => ({ ...n, selected: n.id === noModel[0].id })));
       return toast(`Pick a model for "${noModel[0].data.label || NODE_META[noModel[0].data.kind].title}"`, 'info');

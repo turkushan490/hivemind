@@ -93,7 +93,7 @@ export function Inspector(props: {
         <p className="text-xs text-slate-400">{meta.description}</p>
       </div>
 
-      {meta.usesModel && (
+      {meta.usesModel && !(node.data.kind === 'llm' && cfg.auto) && !(node.data.kind === 'router' && cfg.decideWith === 'jev') && (
         <div className="space-y-1">
           <div className="text-xs font-semibold text-slate-300">Model</div>
           {/* Keyed by block, so switching blocks never shows the previous block's open/closed list or search. */}

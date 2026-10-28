@@ -2,6 +2,7 @@ import type { CanvasGraph, RunEvent, RunStatus } from '@hivemind/shared';
 import { newId } from '../crypto.js';
 import { db } from '../db/index.js';
 import { runGraph, type EngineDeps } from '../engine/run.js';
+import type { ChatContext } from '../nodes/index.js';
 import { logError } from '../errors.js';
 import { memoryFor } from '../services/memory.js';
 import { webSearch } from '../services/search.js';
@@ -29,6 +30,8 @@ export function startRun(opts: {
   question: string;
   /** Named values for {{vars.name}} (already checked with checkVars). */
   vars?: Record<string, string>;
+  /** /v1 conversations: system messages and earlier turns ({{system}}, {{history}}). */
+  chat?: ChatContext;
   resolve: EngineDeps['resolve'];
   freeGpu?: (hostKey: string, exceptProviderId?: string) => Promise<void>;
 }): string {
@@ -80,7 +83,7 @@ export function startRun(opts: {
         freeGpu: opts.freeGpu,
         homeAssistant: homeAssistantConnection,
       },
-    }, run.abort.signal, opts.vars ?? {})
+    }, run.abort.signal, opts.vars ?? {}, opts.chat)
     .then((r) => finish(run, r.status, r.final, r.cost))
     .catch((err) => {
       emit({ type: 'error', error: (err as Error).message });

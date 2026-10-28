@@ -1,5 +1,5 @@
 import type { CanvasGraph, CanvasNode, ModelInfo, ModelRef, OutputFile, RunEvent, RunStatus } from '@hivemind/shared';
-import { NODES, type NodeInput, type NodeServices } from '../nodes/index.js';
+import { NODES, type ChatContext, type NodeInput, type NodeServices } from '../nodes/index.js';
 import type { ChatMessage, ProviderAdapter } from '../providers/types.js';
 import { callCost } from '../services/pricing.js';
 import { validateGraph } from './graph.js';
@@ -80,7 +80,20 @@ async function withHostLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
   }
 }
 
-export async function runGraph(graph: CanvasGraph, question: string, deps: EngineDeps, signal: AbortSignal, vars: Record<string, string> = {}): Promise<RunResult> {
+/** Context size within what Ollama accepts; undefined = the model's own default. */
+const numCtxOf = (node: CanvasNode) => {
+  const n = node.config.numCtx;
+  return n && Number.isFinite(n) ? Math.round(Math.min(131072, Math.max(2048, n))) : undefined;
+};
+
+export async function runGraph(
+  graph: CanvasGraph,
+  question: string,
+  deps: EngineDeps,
+  signal: AbortSignal,
+  vars: Record<string, string> = {},
+  chat: ChatContext = { system: '', history: [] },
+): Promise<RunResult> {
   validateGraph(graph);
   const byId = new Map(graph.nodes.map((n) => [n.id, n]));
   const parents = new Map<string, string[]>(graph.nodes.map((n) => [n.id, []]));
@@ -150,7 +163,7 @@ export async function runGraph(graph: CanvasGraph, question: string, deps: Engin
         deps.emit({ ...base, type: 'model_ready', warm: !loading });
       };
 
-      const call = async (messages: ChatMessage[], ref: ModelRef, think?: boolean): Promise<string> => {
+      const call = async (messages: ChatMessage[], ref: ModelRef, think?: boolean, json?: boolean): Promise<string> => {
         const p = await deps.resolve(ref.providerId);
         let out = '';
         let thought = false;
@@ -159,7 +172,7 @@ export async function runGraph(graph: CanvasGraph, question: string, deps: Engin
         let callGen: number | undefined;
         let callIn = 0;
         let callCostUsd: number | undefined;
-        for await (const chunk of p.adapter.stream({ model: ref.model, messages, temperature: node.config.temperature, think }, signal)) {
+        for await (const chunk of p.adapter.stream({ model: ref.model, messages, temperature: node.config.temperature, think, json, numCtx: numCtxOf(node) }, signal)) {
           if (chunk.type === 'loading') {
             loading = true;
             sizeBytes = (await p.modelInfo(ref.model).catch(() => undefined))?.sizeBytes;
@@ -213,7 +226,7 @@ export async function runGraph(graph: CanvasGraph, question: string, deps: Engin
         // Small local thinking models sometimes think until they stop and never answer: ask once more without thinking.
         if (!out.trim() && thought && think === undefined && p.local && !signal.aborted) {
           deps.emit({ ...base, type: 'node_progress', note: 'Only thought, no answer — asking again without thinking' });
-          return call(messages, ref, false);
+          return call(messages, ref, false, json);
         }
         return out;
       };
@@ -222,20 +235,22 @@ export async function runGraph(graph: CanvasGraph, question: string, deps: Engin
         node,
         question,
         vars,
+        chat,
         inputs,
         outgoing: children.get(node.id)!.map((id) => {
           const n = byId.get(id)!;
           return { id, label: n.label || n.type, type: n.type };
         }),
-        callModel: async (messages, ref) => {
+        callModel: async (messages, ref, opts) => {
           const m = ref ?? primary;
+          const json = opts?.json;
           if (!m) throw new Error('This block has no model');
           const p = await deps.resolve(m.providerId);
           // Another AI server on the same GPU (ComfyUI) gives its memory back before a local model loads.
           if (p.local && p.exclusive !== false) await deps.services?.freeGpu?.(p.hostKey, m.providerId).catch(() => {});
           // A different local GPU than the one this block holds: wait for that GPU too.
-          if (p.local && p.exclusive !== false && p.hostKey !== heldHost) return withHostLock(p.hostKey, () => call(messages, m));
-          return call(messages, m);
+          if (p.local && p.exclusive !== false && p.hostKey !== heldHost) return withHostLock(p.hostKey, () => call(messages, m, undefined, json));
+          return call(messages, m, undefined, json);
         },
         choose: (ids) => {
           for (const c of children.get(node.id)!) if (!ids.includes(c)) blocked.add(`${node.id}->${c}`);

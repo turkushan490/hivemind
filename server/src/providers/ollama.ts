@@ -93,6 +93,7 @@ export function ollamaAdapter(cfg: ProviderConfig): ProviderAdapter {
             options: {
               ...(req.temperature !== undefined && { temperature: req.temperature }),
               ...(req.maxTokens !== undefined && { num_predict: req.maxTokens }),
+              ...(req.numCtx !== undefined && { num_ctx: req.numCtx }),
             },
           }),
         });

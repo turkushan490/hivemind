@@ -16,6 +16,8 @@ export interface ChatRequest {
   json?: boolean;
   /** false: ask a thinking model to answer straight away (Ollama). */
   think?: boolean;
+  /** Context size in tokens (Ollama num_ctx); other providers ignore it. */
+  numCtx?: number;
 }
 
 export type StreamChunk =

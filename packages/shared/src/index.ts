@@ -25,6 +25,15 @@ export interface NodeConfig {
   /** Prompt template; {{question}} and {{inputs}} are filled in. */
   prompt?: string;
   temperature?: number;
+  /** LLM / Judge / Router: the model must answer with JSON (checked, repaired once); jsonSchema describes the shape. */
+  json?: boolean;
+  jsonSchema?: string;
+  /** Context size in tokens for local (Ollama) models; default = the model's own. */
+  numCtx?: number;
+  /** LLM: send the chat history from /v1 as real messages instead of one prompt. */
+  useMessages?: boolean;
+  /** Image: how many pictures per run (1-8). */
+  batch?: number;
   /** Debate and Vote: the models that take part. */
   models?: ModelRef[];
   /** Debate: how many rounds (1-4). */

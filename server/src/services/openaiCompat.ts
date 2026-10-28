@@ -73,6 +73,28 @@ export function questionFrom(messages: unknown): string {
 }
 
 /**
+ * The whole conversation: all system messages joined ({{system}}), the turns before the last user message
+ * ({{history}}, or real messages for blocks with "use messages"), and that last message as the question.
+ */
+export function chatFrom(messages: unknown): { question: string; system: string; history: { role: 'user' | 'assistant'; content: string }[] } {
+  const question = questionFrom(messages);
+  const list = messages as OpenAIMessage[];
+  let last = list.length - 1;
+  while (last >= 0 && !(list[last]?.role === 'user' && textOf(list[last].content).trim())) last--;
+  const system = list
+    .filter((m) => m?.role === 'system' || m?.role === 'developer')
+    .map((m) => textOf(m.content).trim())
+    .filter(Boolean)
+    .join('\n\n');
+  const history = list
+    .slice(0, last)
+    .filter((m) => m?.role === 'user' || m?.role === 'assistant')
+    .map((m) => ({ role: m.role as 'user' | 'assistant', content: textOf(m.content).trim() }))
+    .filter((m) => m.content);
+  return { question, system, history };
+}
+
+/**
  * The block whose tokens can be streamed live: the only block wired into the Final answer.
  * With several (a join, or Router branches) the answer is only known at the end, so nothing is streamed early.
  */

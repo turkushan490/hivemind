@@ -25,16 +25,24 @@ export interface NodeServices {
   homeAssistant?(): { url: string; token: string } | undefined;
 }
 
+/** A chat sent through /v1: its system messages and the turns before the last question. */
+export interface ChatContext {
+  system: string;
+  history: ChatMessage[];
+}
+
 export interface NodeContext {
   node: CanvasNode;
   question: string;
   /** Named values sent with the run (POST /api/runs vars), filled in as {{vars.name}}. */
   vars: Record<string, string>;
+  /** {{system}} and {{history}}: the conversation that came in over /v1 (empty otherwise). */
+  chat?: ChatContext;
   inputs: NodeInput[];
   /** Blocks wired after this one (for the Router). */
   outgoing: { id: string; label: string; type: NodeType }[];
   /** Streams one model call; token events are emitted by the engine. Defaults to the block's own model. */
-  callModel(messages: ChatMessage[], model?: ModelRef): Promise<string>;
+  callModel(messages: ChatMessage[], model?: ModelRef, opts?: { json?: boolean }): Promise<string>;
   /** Router: only these outgoing blocks run; the others are skipped. */
   choose(targetIds: string[]): void;
   /** A short status line shown on the block while it works. */
@@ -58,14 +66,60 @@ export interface NodeDefinition {
   execute(ctx: NodeContext): Promise<string>;
 }
 
+/** Earlier chat turns as "User: …" / "Assistant: …" text. */
+export const historyText = (history: ChatMessage[]) =>
+  history.map((m) => `${m.role === 'assistant' ? 'Assistant' : 'User'}: ${m.content}`).join('\n\n');
+
 /**
- * Fills {{question}}, {{inputs}} and {{vars.name}} in one pass, so text that came in is never filled in again.
- * An unknown var becomes empty.
+ * Fills {{question}}, {{inputs}}, {{system}}, {{history}} and {{vars.name}} in one pass, so text that came in
+ * is never filled in again. An unknown var becomes empty.
  */
-export const fill = (tpl: string, ctx: Pick<NodeContext, 'question' | 'vars'>, inputs = '') =>
-  tpl.replace(/\{\{\s*(question|inputs|vars\.([a-zA-Z0-9_]{1,40}))\s*\}\}/g, (_, k: string, name?: string) =>
-    name !== undefined ? (ctx.vars?.[name] ?? '') : k === 'question' ? ctx.question : inputs,
-  );
+export const fill = (tpl: string, ctx: Pick<NodeContext, 'question' | 'vars'> & { chat?: ChatContext }, inputs = '') =>
+  tpl.replace(/\{\{\s*(question|inputs|system|history|vars\.([a-zA-Z0-9_]{1,40}))\s*\}\}/g, (_, k: string, name?: string) => {
+    if (name !== undefined) return ctx.vars?.[name] ?? '';
+    if (k === 'question') return ctx.question;
+    if (k === 'system') return ctx.chat?.system ?? '';
+    if (k === 'history') return historyText(ctx.chat?.history ?? []);
+    return inputs;
+  });
+
+/** The answer without ``` fences, parsed as JSON; throws with the parser's message. */
+export function parseJson(text: string): unknown {
+  const t = text.trim();
+  const body = t.match(/^```[\w-]*\s*\n?([\s\S]*?)\n?```$/)?.[1] ?? fenced(t, ['json', '']) ?? t;
+  return JSON.parse(body.trim());
+}
+
+/**
+ * JSON mode: asks for JSON (with the block's schema in the system prompt), checks it, and asks once more
+ * with the parser's error when it isn't valid. Returns the normalised JSON text.
+ */
+export async function jsonCall(ctx: NodeContext, messages: ChatMessage[], model?: ModelRef): Promise<string> {
+  const schema = ctx.node.config.jsonSchema?.trim();
+  const rule = `Reply with only valid JSON, no other text.${schema ? `\nThe JSON must have this shape:\n${schema}` : ''}`;
+  const sys = messages.findIndex((m) => m.role === 'system');
+  const asked: ChatMessage[] =
+    sys >= 0 ? messages.map((m, i) => (i === sys ? { ...m, content: `${m.content}\n\n${rule}` } : m)) : [{ role: 'system', content: rule }, ...messages];
+  const reply = await ctx.callModel(asked, model, { json: true });
+  try {
+    return JSON.stringify(parseJson(reply));
+  } catch (err) {
+    ctx.progress('Answer was not valid JSON — asking for a fix');
+    const fixed = await ctx.callModel(
+      [...asked, { role: 'assistant', content: reply }, { role: 'user', content: `Your last answer was not valid JSON: ${(err as Error).message}. Reply with only the corrected JSON.` }],
+      model,
+      { json: true },
+    );
+    try {
+      return JSON.stringify(parseJson(fixed));
+    } catch {
+      throw new Error('Invalid JSON after repair');
+    }
+  }
+}
+
+/** Calls the block's model, in JSON mode when the block asks for it. */
+const ask = (ctx: NodeContext, messages: ChatMessage[], model?: ModelRef) => (ctx.node.config.json ? jsonCall(ctx, messages, model) : ctx.callModel(messages, model));
 
 const withSystem = (system: string | undefined, user: string): ChatMessage[] =>
   system ? [{ role: 'system', content: system }, { role: 'user', content: user }] : [{ role: 'user', content: user }];
@@ -132,7 +186,12 @@ export const NODES: Record<NodeType, NodeDefinition> = {
       if (prompt) user = fill(prompt, ctx, labelled(prev));
       else if (prev.length === 0) user = ctx.question;
       else user = `Question: ${ctx.question}\n\nInput from previous steps:\n\n${labelled(prev)}\n\nUse this input to answer the question.`;
-      return ctx.callModel(withSystem(system, user));
+      if (ctx.node.config.useMessages && ctx.chat) {
+        // The real conversation: system prompts, the earlier turns, then this block's prompt.
+        const sys = [system, ctx.chat.system].filter(Boolean).join('\n\n');
+        return ask(ctx, [...(sys ? [{ role: 'system' as const, content: sys }] : []), ...ctx.chat.history, { role: 'user', content: user }]);
+      }
+      return ask(ctx, withSystem(system, user));
     },
   },
 
@@ -159,6 +218,7 @@ export const NODES: Record<NodeType, NodeDefinition> = {
       const contenders = prev.map((p, i) => ({ p, n: i + 1 })).filter(({ p }) => p.type !== 'review');
       let user = fill(ctx.node.config.prompt ?? 'Question: {{question}}\n\n{{inputs}}', ctx, body);
       // With two or more answers the judge also names the best one, for the leaderboard; that line is removed again.
+      if (ctx.node.config.json) return jsonCall(ctx, withSystem(ctx.node.config.system ? fill(ctx.node.config.system, ctx) : JUDGE_SYSTEM, user));
       if (contenders.length >= 2) user += `\n\nAfter your final answer, add one last line exactly like "BEST: <number>" with the number of the best single answer (${contenders.map((c) => c.n).join(', ')}).`;
       const { text, best } = splitBest(await ctx.callModel(withSystem(ctx.node.config.system ? fill(ctx.node.config.system, ctx) : JUDGE_SYSTEM, user)));
       const winner = contenders.find((c) => c.n === best);

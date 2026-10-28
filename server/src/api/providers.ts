@@ -4,7 +4,7 @@ import { decrypt, encrypt, newId } from '../crypto.js';
 import { db, getSetting, setSetting } from '../db/index.js';
 import type { ResolvedProvider } from '../engine/run.js';
 import { createAdapter } from '../providers/index.js';
-import { SPAM_TEST, SPAM_TEST_STATE } from '../providers/decisions.js';
+import { isOllamaDecisionModel, SPAM_TEST, SPAM_TEST_STATE } from '../providers/decisions.js';
 import { logError } from '../errors.js';
 import { requireUser, type User } from './auth.js';
 
@@ -234,7 +234,9 @@ export function providerRoutes(app: FastifyInstance) {
   /** Every model of every enabled provider; providers that fail are reported, not fatal. */
   app.get('/api/models', { preHandler: requireUser }, async (req) => {
     const rows = visibleRows(req.user!).filter((r) => r.enabled);
-    const results = await Promise.allSettled(rows.map((r) => modelsOf(r)));
+    // Decision models pulled into Ollama can't chat: model pickers get them only through a Decisions provider
+    // (the Models page, which lists one server's models, still shows them to manage).
+    const results = await Promise.allSettled(rows.map((r) => modelsOf(r).then((list) => (r.kind === 'ollama' ? list.filter((m) => !isOllamaDecisionModel(m.model)) : list))));
     return {
       models: results.flatMap((r) => (r.status === 'fulfilled' ? r.value : [])),
       errors: results.flatMap((r, i) => (r.status === 'rejected' ? [{ providerId: rows[i].id, error: (r.reason as Error).message }] : [])),

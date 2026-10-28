@@ -89,6 +89,9 @@ export function fromSystemOne(raw: Record<string, any>): DecisionAnswer {
 }
 
 /** TypeSafe Jev and Ollama's /v1/systemone. */
+/** Ollama's decision-model families (Ollama 0.40: nimble, tev1, clef, clef-flash, d1, d1-omni, d3, pplx-decider, kev). */
+export const isOllamaDecisionModel = (name: string) => /^(?:[^/]*\/)?(nimble|tev1|clef|clef-flash|d1|d1-omni|d3|pplx-decider|kev)(:|$)/i.test(name);
+
 export function systemOneAdapter(cfg: ProviderConfig): ProviderAdapter {
   const base = cfg.baseUrl.replace(/\/+$/, '').replace(/\/v1$/, '');
   const typesafe = cfg.preset === 'typesafe';
@@ -118,7 +121,7 @@ export function systemOneAdapter(cfg: ProviderConfig): ProviderAdapter {
       if (!res.ok) throw new ProviderError(`Ollama /api/tags answered HTTP ${res.status}`, res.status);
       const data = (await res.json()) as { models?: { name: string; size?: number }[] };
       // Ollama does not mark decision models; these are the families it ships with /v1/systemone.
-      return (data.models ?? []).filter((m) => /^(nimble|tev1|clef)/i.test(m.name)).map((m) => ({ ...info(m.name), sizeBytes: m.size }));
+      return (data.models ?? []).filter((m) => isOllamaDecisionModel(m.name)).map((m) => ({ ...info(m.name), sizeBytes: m.size }));
     },
 
     // eslint-disable-next-line require-yield

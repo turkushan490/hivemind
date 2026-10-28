@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { isOllamaDecisionModel } from '../src/providers/decisions.js';
 import { blockedReason } from '../src/services/net.js';
 import { bearer, testApp } from './helpers.js';
 
@@ -43,6 +44,13 @@ describe('problem reports', () => {
 describe('setup', () => {
   it('is refused once an account exists', async () => {
     expect((await app.inject({ method: 'POST', url: '/api/setup', payload: { username: 'eve', password: 'password123' } })).statusCode).toBe(409);
+  });
+});
+
+describe('Ollama decision models', () => {
+  it('recognises the families Ollama ships, and nothing else', () => {
+    for (const m of ['clef-flash:latest', 'clef:27b', 'nimble', 'tev1:latest', 'd3:4b', 'd1-omni:2b', 'pplx-decider:27b', 'kev:latest']) expect(isOllamaDecisionModel(m), m).toBe(true);
+    for (const m of ['qwen3:4b', 'deepseek-r1:8b', 'd3vil:7b', 'clefable:1b', 'hf.co/x/nimble-chat:Q4_K_M']) expect(isOllamaDecisionModel(m), m).toBe(false);
   });
 });
 

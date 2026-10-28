@@ -13,6 +13,7 @@ function ctx(type: NodeType, config: NodeConfig, opts: { input?: string; service
   const c: NodeContext = {
     node,
     question: 'Is it warm?',
+    vars: {},
     inputs: [
       { nodeId: 'q', type: 'input', label: 'Question', text: 'Is it warm?' },
       ...(opts.input !== undefined ? [{ nodeId: 'a', type: 'llm' as const, label: 'Model', text: opts.input }] : []),

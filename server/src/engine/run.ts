@@ -80,7 +80,7 @@ async function withHostLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
   }
 }
 
-export async function runGraph(graph: CanvasGraph, question: string, deps: EngineDeps, signal: AbortSignal): Promise<RunResult> {
+export async function runGraph(graph: CanvasGraph, question: string, deps: EngineDeps, signal: AbortSignal, vars: Record<string, string> = {}): Promise<RunResult> {
   validateGraph(graph);
   const byId = new Map(graph.nodes.map((n) => [n.id, n]));
   const parents = new Map<string, string[]>(graph.nodes.map((n) => [n.id, []]));
@@ -221,6 +221,7 @@ export async function runGraph(graph: CanvasGraph, question: string, deps: Engin
       const text = await def.execute({
         node,
         question,
+        vars,
         inputs,
         outgoing: children.get(node.id)!.map((id) => {
           const n = byId.get(id)!;

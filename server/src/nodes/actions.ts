@@ -27,18 +27,20 @@ const isJson = (tpl: string) => /^\s*(\[|\{(?!\{))/.test(tpl);
 type Escape = 'json' | 'url' | 'none';
 
 /**
- * Fills {{input}}, {{question}} and {{inputs}}. A JSON template gets the values JSON-escaped,
+ * Fills {{input}}, {{question}}, {{inputs}} and {{vars.name}}. A JSON template gets the values JSON-escaped,
  * so `{"message": "{{input}}"}` stays valid whatever the text contains; a URL gets them URL-encoded.
  */
-export function fillTemplate(tpl: string, ctx: Pick<NodeContext, 'question' | 'inputs'>, escape: Escape = isJson(tpl) ? 'json' : 'none'): string {
+export function fillTemplate(tpl: string, ctx: Pick<NodeContext, 'question' | 'inputs'> & Partial<Pick<NodeContext, 'vars'>>, escape: Escape = isJson(tpl) ? 'json' : 'none'): string {
   const values: Record<string, string> = {
     input: inputText(ctx as NodeContext),
     question: ctx.question,
     inputs: labelled(ctx.inputs),
   };
-  return tpl.replace(/\{\{\s*(input|question|inputs)\s*\}\}/g, (_, k: string) =>
-    escape === 'json' ? JSON.stringify(values[k]).slice(1, -1) : escape === 'url' ? encodeURIComponent(values[k].trim()) : values[k],
-  );
+  return tpl.replace(/\{\{\s*(input|question|inputs|vars\.([a-zA-Z0-9_]{1,40}))\s*\}\}/g, (_, k: string, name?: string) => {
+    // {{vars.name}}: a value sent with the run; unknown ones are empty.
+    const v = name !== undefined ? (ctx.vars?.[name] ?? '') : values[k];
+    return escape === 'json' ? JSON.stringify(v).slice(1, -1) : escape === 'url' ? encodeURIComponent(v.trim()) : v;
+  });
 }
 
 /** fetch with a timeout that also stops when the run is cancelled. */

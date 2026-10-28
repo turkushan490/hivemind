@@ -28,6 +28,8 @@ export interface NodeServices {
 export interface NodeContext {
   node: CanvasNode;
   question: string;
+  /** Named values sent with the run (POST /api/runs vars), filled in as {{vars.name}}. */
+  vars: Record<string, string>;
   inputs: NodeInput[];
   /** Blocks wired after this one (for the Router). */
   outgoing: { id: string; label: string; type: NodeType }[];
@@ -56,8 +58,14 @@ export interface NodeDefinition {
   execute(ctx: NodeContext): Promise<string>;
 }
 
-const fill = (tpl: string, question: string, inputs: string) =>
-  tpl.replaceAll('{{question}}', question).replaceAll('{{inputs}}', inputs);
+/**
+ * Fills {{question}}, {{inputs}} and {{vars.name}} in one pass, so text that came in is never filled in again.
+ * An unknown var becomes empty.
+ */
+export const fill = (tpl: string, ctx: Pick<NodeContext, 'question' | 'vars'>, inputs = '') =>
+  tpl.replace(/\{\{\s*(question|inputs|vars\.([a-zA-Z0-9_]{1,40}))\s*\}\}/g, (_, k: string, name?: string) =>
+    name !== undefined ? (ctx.vars?.[name] ?? '') : k === 'question' ? ctx.question : inputs,
+  );
 
 const withSystem = (system: string | undefined, user: string): ChatMessage[] =>
   system ? [{ role: 'system', content: system }, { role: 'user', content: user }] : [{ role: 'user', content: user }];
@@ -113,9 +121,10 @@ export const NODES: Record<NodeType, NodeDefinition> = {
     usesModel: true,
     async execute(ctx) {
       const prev = answers(ctx.inputs);
-      const { prompt, system } = ctx.node.config;
+      const { prompt } = ctx.node.config;
+      const system = ctx.node.config.system && fill(ctx.node.config.system, ctx, labelled(prev));
       let user: string;
-      if (prompt) user = fill(prompt, ctx.question, labelled(prev));
+      if (prompt) user = fill(prompt, ctx, labelled(prev));
       else if (prev.length === 0) user = ctx.question;
       else user = `Question: ${ctx.question}\n\nInput from previous steps:\n\n${labelled(prev)}\n\nUse this input to answer the question.`;
       return ctx.callModel(withSystem(system, user));
@@ -129,8 +138,8 @@ export const NODES: Record<NodeType, NodeDefinition> = {
       if (prev.length === 0) throw new Error('Review needs at least one answer as input');
       // Anonymous: reviewers only see letters, not model names.
       const body = prev.map((p, i) => `### Answer ${letter(i)}\n${p.text}`).join('\n\n');
-      const user = fill(ctx.node.config.prompt ?? 'Question: {{question}}\n\n{{inputs}}', ctx.question, body);
-      return ctx.callModel(withSystem(ctx.node.config.system ?? REVIEW_SYSTEM, user));
+      const user = fill(ctx.node.config.prompt ?? 'Question: {{question}}\n\n{{inputs}}', ctx, body);
+      return ctx.callModel(withSystem(ctx.node.config.system ? fill(ctx.node.config.system, ctx) : REVIEW_SYSTEM, user));
     },
   },
 
@@ -143,10 +152,10 @@ export const NODES: Record<NodeType, NodeDefinition> = {
         .map((p, i) => (p.type === 'review' ? `### Review (${p.label})\n${p.text}` : `### Answer ${i + 1} (${p.label})\n${p.text}`))
         .join('\n\n');
       const contenders = prev.map((p, i) => ({ p, n: i + 1 })).filter(({ p }) => p.type !== 'review');
-      let user = fill(ctx.node.config.prompt ?? 'Question: {{question}}\n\n{{inputs}}', ctx.question, body);
+      let user = fill(ctx.node.config.prompt ?? 'Question: {{question}}\n\n{{inputs}}', ctx, body);
       // With two or more answers the judge also names the best one, for the leaderboard; that line is removed again.
       if (contenders.length >= 2) user += `\n\nAfter your final answer, add one last line exactly like "BEST: <number>" with the number of the best single answer (${contenders.map((c) => c.n).join(', ')}).`;
-      const { text, best } = splitBest(await ctx.callModel(withSystem(ctx.node.config.system ?? JUDGE_SYSTEM, user)));
+      const { text, best } = splitBest(await ctx.callModel(withSystem(ctx.node.config.system ? fill(ctx.node.config.system, ctx) : JUDGE_SYSTEM, user)));
       const winner = contenders.find((c) => c.n === best);
       if (winner) {
         ctx.pickWinner?.(winner.p.nodeId, contenders.map((c) => c.p.nodeId));
@@ -180,7 +189,7 @@ export const NODES: Record<NodeType, NodeDefinition> = {
       ctx.progress('Choosing a route…');
       const reply = await ctx.callModel(
         withSystem(
-          ctx.node.config.system ??
+          (ctx.node.config.system && fill(ctx.node.config.system, ctx)) ||
             'You route questions. Pick the single best option for the question. Reply with only the number of that option, nothing else.',
           `Question: ${ctx.question}${context(ctx.inputs)}\n\nOptions:\n${list}\n\nWhich option number?`,
         ),
@@ -267,7 +276,7 @@ export const NODES: Record<NodeType, NodeDefinition> = {
   template: {
     usesModel: false,
     async execute(ctx) {
-      return fill(ctx.node.config.prompt ?? '{{question}}\n\n{{inputs}}', ctx.question, labelled(answers(ctx.inputs))).trim();
+      return fill(ctx.node.config.prompt ?? '{{question}}\n\n{{inputs}}', ctx, labelled(answers(ctx.inputs))).trim();
     },
   },
 
@@ -318,7 +327,9 @@ export const NODES: Record<NodeType, NodeDefinition> = {
         const exts: Record<string, string> = { python: 'py', py: 'py', javascript: 'js', js: 'js', typescript: 'ts', ts: 'ts', bash: 'sh', sh: 'sh', shell: 'sh', css: 'css', sql: 'sql', go: 'go', rust: 'rs', java: 'java', c: 'c', cpp: 'cpp', 'c++': 'cpp', json: 'json', yaml: 'yml', yml: 'yml' };
         ext = exts[lang] ?? 'txt';
       }
-      const name = (ctx.node.config.fileName || `${slug(ctx.question)}-{{date}}`).replaceAll('{{date}}', stamp()).replaceAll('{{question}}', slug(ctx.question));
+      // Var values in a file name can't add folders.
+      const safeVars = Object.fromEntries(Object.entries(ctx.vars ?? {}).map(([k, v]) => [k, v.replace(/[\\/]+|\.\.+/g, '-').slice(0, 80)]));
+      const name = fill((ctx.node.config.fileName || `${slug(ctx.question)}-{{date}}`).replaceAll('{{date}}', stamp()), { question: slug(ctx.question), vars: safeVars });
       const file = ctx.services.saveFile(`outputs/${name.replace(/\.[a-z0-9]{1,5}$/i, '')}.${ext}`, body);
       ctx.attach(file);
       ctx.progress(`Saved ${file.path}`);
@@ -332,7 +343,7 @@ export const NODES: Record<NodeType, NodeDefinition> = {
       // What to draw: a prompt template, else what the block before wrote (e.g. a model writing a prompt), else the question.
       const prev = answers(ctx.inputs);
       const prompt = ctx.node.config.prompt
-        ? fill(ctx.node.config.prompt, ctx.question, prev.map((p) => p.text).join('\n\n'))
+        ? fill(ctx.node.config.prompt, ctx, prev.map((p) => p.text).join('\n\n'))
         : prev.length
           ? prev[prev.length - 1].text
           : ctx.question;

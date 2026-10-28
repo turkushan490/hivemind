@@ -1,6 +1,7 @@
 import type { CanvasGraph, RunEvent } from '@hivemind/shared';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { validateGraph } from '../engine/graph.js';
+import { checkVars } from '../engine/vars.js';
 import { cancelRun, startRun, subscribe } from '../events/runs.js';
 import { apiError, chunk, LiveText, completion, findCanvas, modelList, questionFrom, streamSource, usageOf, type CanvasModelRow } from '../services/openaiCompat.js';
 import { authenticate } from './auth.js';
@@ -25,10 +26,13 @@ export function v1Routes(app: FastifyInstance) {
   );
 
   app.post('/v1/chat/completions', { preHandler: requireToken }, async (req, reply) => {
-    const body = (req.body ?? {}) as { model?: string; messages?: unknown; stream?: boolean };
+    const body = (req.body ?? {}) as { model?: string; messages?: unknown; stream?: boolean; hivemind_vars?: unknown };
     if (!body.model) return reply.code(400).send(apiError('"model" is required: the id or name of a saved canvas (see GET /v1/models)'));
     let question: string;
+    let vars: Record<string, string>;
     try {
+      // HiveMind extra: named values for {{vars.name}}, as with POST /api/runs.
+      vars = checkVars(body.hivemind_vars);
       question = questionFrom(body.messages);
     } catch (err) {
       return reply.code(400).send(apiError((err as Error).message));
@@ -44,7 +48,7 @@ export function v1Routes(app: FastifyInstance) {
     }
 
     const user = req.user!;
-    const runId = startRun({ ownerId: user.id, canvasId: row.id, graph, question, resolve: resolverFor(providerUser), freeGpu: gpuFreerFor(providerUser) });
+    const runId = startRun({ ownerId: user.id, canvasId: row.id, graph, question, vars, resolve: resolverFor(providerUser), freeGpu: gpuFreerFor(providerUser) });
     const model = body.model;
     const live = streamSource(graph);
     const events: RunEvent[] = [];

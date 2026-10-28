@@ -363,6 +363,17 @@ export interface RunEvent {
 
 export type RunStatus = 'running' | 'done' | 'error' | 'cancelled';
 
+/** POST /api/runs body. */
+export interface RunRequest {
+  question?: string;
+  /** Run a saved canvas (yours or a shared one). */
+  canvasId?: string;
+  /** Run this graph (your own canvas as on screen, or an ad-hoc one). */
+  graph?: CanvasGraph;
+  /** Named values for {{vars.name}} in prompts, memory keys, file names and webhooks: at most 64 keys ([a-zA-Z0-9_]{1,40}), 1 MB in total. */
+  vars?: Record<string, string>;
+}
+
 export interface RunSummary {
   id: string;
   canvasId?: string;

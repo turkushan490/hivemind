@@ -130,6 +130,9 @@ const MIGRATIONS = [
   );
   CREATE INDEX run_winners_owner ON run_winners(owner_id, at);
   `,
+  `
+  ALTER TABLE runs ADD COLUMN vars TEXT;
+  `,
 ];
 
 export const db = new DatabaseSync(join(config.dataDir, 'hivemind.db'));

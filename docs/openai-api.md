@@ -29,6 +29,7 @@ Lists your canvases:
 - **`messages`:** the **last user message with text** becomes the canvas question. System messages and earlier turns are ignored, because the canvas decides how to answer. Text parts of multi-part content are joined.
 - **The answer** is the canvas's **Final answer**. When a canvas has no Final answer block, the last block that produced text gives the answer.
 - **`usage`** is the token total of every block in the run.
+- **`hivemind_vars`** (HiveMind extra, optional): an object of strings, filled in wherever a block says `{{vars.name}}`. Same limits as `vars` on `POST /api/runs` (below): at most 64 keys named `[a-zA-Z0-9_]{1,40}`, 1 MB in total, otherwise 400.
 - **Other parameters** (`temperature`, `max_tokens`, …) are accepted and ignored. Each block uses its own settings.
 
 Every API call is a normal run: it shows up in History, can be replayed on the canvas, and its errors are listed in **Problems**. If the client disconnects before the answer is ready, the run is cancelled.
@@ -70,3 +71,19 @@ print(client.chat.completions.create(model="kitchen-helper", messages=[{"role": 
 ```
 
 **Open WebUI:** under Settings → Connections, add an OpenAI connection with the base URL and token above. Your canvases then appear as models.
+
+## HiveMind's own run API (for apps)
+
+Apps that need more than one answer text (like [DungeonMind](https://github.com/turkushan490/dungeonmind)) use the native API with the same `hm_…` token. `GET /api/health` lists the `features` a client can rely on.
+
+| Feature flag | What it adds |
+|---|---|
+| `vars` | `POST /api/runs {canvasId, question, vars:{name:"…"}}` fills `{{vars.name}}` in prompts, system prompts, the image prompt, the Save file name and Webhook/Home Assistant/Discord templates (JSON-escaped in JSON bodies). Unknown vars are empty. |
+
+```bash
+H=http://server:4820; T="Authorization: Bearer hm_..."
+R=$(curl -s -X POST $H/api/runs -H "$T" -H 'content-type: application/json' \
+  -d '{"canvasId":"t-vars","question":"x","vars":{"name":"Turks"}}' | jq -r .runId)
+curl -sN $H/api/runs/$R/events -H "$T"     # live events until "event: end"
+curl -s $H/api/runs/$R -H "$T"             # the stored run (409 while it still runs)
+```

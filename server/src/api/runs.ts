@@ -1,8 +1,9 @@
-import type { CanvasGraph, RunSummary } from '@hivemind/shared';
+import type { CanvasGraph, RunRequest, RunSummary } from '@hivemind/shared';
 import type { FastifyInstance } from 'fastify';
 import { newId } from '../crypto.js';
 import { db } from '../db/index.js';
 import { validateGraph } from '../engine/graph.js';
+import { checkVars } from '../engine/vars.js';
 import { cancelRun, startRun, subscribe } from '../events/runs.js';
 import { requireUser, type User } from './auth.js';
 import { gpuFreerFor, resolverFor } from './providers.js';
@@ -84,11 +85,17 @@ export function runRoutes(app: FastifyInstance) {
   });
 
   // ---- Runs ----
-  /** Body: { question, canvasId } to run a saved canvas, or { question, graph } for an ad-hoc one. */
+  /** Body: { question, canvasId } to run a saved canvas, or { question, graph } for an ad-hoc one; optional vars for {{vars.name}}. */
   app.post('/api/runs', { preHandler: requireUser }, async (req, reply) => {
-    const body = (req.body ?? {}) as { question?: string; canvasId?: string; graph?: CanvasGraph };
+    const body = (req.body ?? {}) as RunRequest;
     const question = body.question?.trim();
     if (!question) return reply.code(400).send({ error: 'Ask a question' });
+    let vars: Record<string, string>;
+    try {
+      vars = checkVars(body.vars);
+    } catch (err) {
+      return reply.code(400).send({ error: (err as Error).message });
+    }
     // A graph in the body wins for your own canvas (the editor runs what is on screen, saved or not); canvasId links the run to it.
     // Shared canvases of others, and everything a viewer runs, run exactly as saved.
     const row = body.canvasId ? canvasFor(req.user!, body.canvasId) : undefined;
@@ -100,7 +107,7 @@ export function runRoutes(app: FastifyInstance) {
     } catch (err) {
       return reply.code(400).send({ error: (err as Error).message });
     }
-    const runId = startRun({ ownerId: req.user!.id, canvasId: body.canvasId, graph, question, resolve: resolverFor(providerUser), freeGpu: gpuFreerFor(providerUser) });
+    const runId = startRun({ ownerId: req.user!.id, canvasId: body.canvasId, graph, question, vars, resolve: resolverFor(providerUser), freeGpu: gpuFreerFor(providerUser) });
     return { runId };
   });
 

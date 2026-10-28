@@ -27,13 +27,21 @@ export function startRun(opts: {
   canvasId?: string;
   graph: CanvasGraph;
   question: string;
+  /** Named values for {{vars.name}} (already checked with checkVars). */
+  vars?: Record<string, string>;
   resolve: EngineDeps['resolve'];
   freeGpu?: (hostKey: string, exceptProviderId?: string) => Promise<void>;
 }): string {
   const id = newId();
   const run: LiveRun = { id, ownerId: opts.ownerId, events: [], listeners: new Set(), abort: new AbortController(), finished: false };
   live.set(id, run);
-  db.prepare("INSERT INTO runs (id, owner_id, canvas_id, question, status) VALUES (?, ?, ?, ?, 'running')").run(id, opts.ownerId, opts.canvasId ?? null, opts.question);
+  db.prepare("INSERT INTO runs (id, owner_id, canvas_id, question, status, vars) VALUES (?, ?, ?, ?, 'running', ?)").run(
+    id,
+    opts.ownerId,
+    opts.canvasId ?? null,
+    opts.question,
+    opts.vars && Object.keys(opts.vars).length ? JSON.stringify(opts.vars) : null,
+  );
 
   const emit: EngineDeps['emit'] = (partial) => {
     const ev = { ...partial, runId: id, seq: run.events.length, ts: Date.now() } as RunEvent;
@@ -72,7 +80,7 @@ export function startRun(opts: {
         freeGpu: opts.freeGpu,
         homeAssistant: homeAssistantConnection,
       },
-    }, run.abort.signal)
+    }, run.abort.signal, opts.vars ?? {})
     .then((r) => finish(run, r.status, r.final, r.cost))
     .catch((err) => {
       emit({ type: 'error', error: (err as Error).message });

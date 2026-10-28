@@ -145,6 +145,42 @@ const MIGRATIONS = [
   `
   ALTER TABLE api_tokens ADD COLUMN scope TEXT;
   `,
+  `
+  CREATE TABLE lab_runs (
+    id TEXT PRIMARY KEY,
+    owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    config TEXT NOT NULL,
+    status TEXT NOT NULL,
+    error TEXT,
+    started_at TEXT NOT NULL DEFAULT (datetime('now')),
+    stopped_at TEXT
+  );
+  CREATE TABLE lab_turns (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id TEXT NOT NULL REFERENCES lab_runs(id) ON DELETE CASCADE,
+    game INTEGER NOT NULL,
+    turn INTEGER NOT NULL,
+    seed INTEGER NOT NULL,
+    model TEXT NOT NULL,
+    prompt_version TEXT NOT NULL DEFAULT 'v1',
+    input TEXT NOT NULL,
+    output TEXT NOT NULL,
+    json_valid INTEGER NOT NULL,
+    verdict TEXT,
+    jev_verdict TEXT,
+    error_types TEXT NOT NULL DEFAULT '[]',
+    story_score REAL,
+    jev_story REAL,
+    tokens_per_s REAL,
+    ms REAL,
+    corrected TEXT,
+    review TEXT,
+    at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  CREATE INDEX lab_turns_run ON lab_turns(run_id, id);
+  CREATE INDEX lab_turns_review ON lab_turns(review);
+  `,
 ];
 
 export const db = new DatabaseSync(join(config.dataDir, 'hivemind.db'));

@@ -66,7 +66,7 @@ export interface RunResult {
 /** One lock per local host, so a 16 GB GPU never loads two models at once. */
 const hostLocks = new Map<string, Promise<void>>();
 
-async function withHostLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
+export async function withHostLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
   const prev = hostLocks.get(key) ?? Promise.resolve();
   let release!: () => void;
   const mine = new Promise<void>((r) => (release = r));

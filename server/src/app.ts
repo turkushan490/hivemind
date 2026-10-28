@@ -6,6 +6,7 @@ import { authRoutes, viewerGuard } from './api/auth.js';
 import { builderRoutes } from './api/builder.js';
 import { exportRoutes } from './api/exports.js';
 import { fileRoutes } from './api/files.js';
+import { labRoutes } from './api/lab.js';
 import { libraryRoutes } from './api/library.js';
 import { memoryRoutes } from './api/memory.js';
 import { problemRoutes } from './api/problems.js';
@@ -71,6 +72,7 @@ export async function buildApp(opts: { logger?: boolean; web?: boolean; onRoute?
   v1Routes(app);
   voiceRoutes(app);
   statsRoutes(app);
+  labRoutes(app);
 
   if (opts.web !== false && existsSync(config.webDir)) {
     await app.register(staticFiles, {

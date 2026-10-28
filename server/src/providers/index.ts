@@ -1,5 +1,6 @@
 import { anthropicAdapter } from './anthropic.js';
 import { comfyAdapter } from './comfyui.js';
+import { decisionAdapter } from './decisions.js';
 import { ollamaAdapter } from './ollama.js';
 import { openaiAdapter } from './openai.js';
 import type { ProviderAdapter, ProviderConfig } from './types.js';
@@ -17,5 +18,7 @@ export function createAdapter(cfg: ProviderConfig): ProviderAdapter {
       return anthropicAdapter(cfg);
     case 'comfyui':
       return comfyAdapter(cfg);
+    case 'decision':
+      return decisionAdapter(cfg);
   }
 }

@@ -23,6 +23,8 @@ export const config = {
   ollamaUrl: process.env.OLLAMA_URL || 'http://localhost:11434',
   /** Optional: your ComfyUI, added once as an image provider. */
   comfyUrl: process.env.COMFYUI_URL || '',
+  /** Optional: a TypeSafe key, added once as the Jev decision provider. */
+  typesafeKey: process.env.TYPESAFE_API_KEY || '',
   /** Set to true behind HTTPS (e.g. Nginx Proxy Manager) so cookies get the Secure flag. */
   secureCookies: process.env.SECURE_COOKIES === 'true',
   webDir: resolve(process.env.WEB_DIR || 'web'),

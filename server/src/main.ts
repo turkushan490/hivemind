@@ -52,6 +52,6 @@ process.once('SIGINT', stop);
 
 const app = await buildApp();
 
-seedProviders(config.ollamaUrl, config.comfyUrl);
+seedProviders(config.ollamaUrl, config.comfyUrl, config.typesafeKey);
 
 await app.listen({ port: config.port, host: config.host });

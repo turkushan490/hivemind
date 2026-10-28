@@ -103,7 +103,7 @@ export function toBuilderCanvas(g: CanvasGraph): BuilderCanvas {
 }
 
 export function builderSystemPrompt(models: ModelInfo[]): string {
-  const text = models.filter((m) => m.kind !== 'image' && !(m.sizeBytes !== undefined && m.sizeBytes < 50e6)).slice(0, 50);
+  const text = models.filter((m) => !m.kind && !(m.sizeBytes !== undefined && m.sizeBytes < 50e6)).slice(0, 50);
   const usable = [...text, ...models.filter((m) => m.kind === 'image').slice(0, 12)];
   return [
     'You are the Builder inside HiveMind, an app where AI models work together on a canvas of blocks wired left to right.',
@@ -166,7 +166,7 @@ function firstJsonObject(text: string): string | undefined {
 export function toGraph(c: BuilderCanvas, models: ModelInfo[]): { graph: CanvasGraph; fixes: string[] } {
   const fixes: string[] = [];
   if (!c || !Array.isArray(c.nodes)) throw new Error('"canvas.nodes" must be a list');
-  const textModels = models.filter((m) => m.kind !== 'image');
+  const textModels = models.filter((m) => !m.kind);
   const imageModels = models.filter((m) => m.kind === 'image');
   const known = new Map(textModels.map((m) => [ref(m), m]));
   const local = textModels.filter((m) => (m.sizeBytes ?? 0) > 50e6).sort((a, b) => a.sizeBytes! - b.sizeBytes!);

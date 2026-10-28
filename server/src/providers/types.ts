@@ -50,6 +50,8 @@ export interface ProviderAdapter {
   remove?(model: string): Promise<void>;
   /** Local only: give the GPU memory back (unload everything this server holds). */
   freeMemory?(): Promise<void>;
+  /** Decision models (TypeSafe Jev, OpenAI Decisions, Ollama decision models). */
+  decide?(req: import('./decisions.js').DecisionRequest, signal?: AbortSignal): Promise<import('./decisions.js').DecisionResult>;
   /** Image models (ComfyUI, OpenAI-compatible image APIs). */
   image?(req: ImageRequest, signal: AbortSignal, onProgress: (note: string) => void): Promise<GeneratedImage[]>;
 }

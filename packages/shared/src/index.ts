@@ -152,7 +152,7 @@ export interface Canvas extends CanvasGraph {
 
 // ---- Providers ----
 
-export const PROVIDER_KINDS = ['ollama', 'openai', 'anthropic', 'comfyui'] as const;
+export const PROVIDER_KINDS = ['ollama', 'openai', 'anthropic', 'comfyui', 'decision'] as const;
 export type ProviderKind = (typeof PROVIDER_KINDS)[number];
 
 /** Presets fill in base URL and defaults; "openai" kind covers every OpenAI-compatible API. */
@@ -180,6 +180,11 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
   { id: 'opencode-zen', kind: 'openai', name: 'OpenCode Zen', baseUrl: 'https://opencode.ai/inference/openai/v1', needsKey: true, free: false, local: false, keyUrl: 'https://opencode.ai/auth', note: 'Paid models only; Zen free models only work inside the OpenCode app.' },
   { id: 'comfyui', kind: 'comfyui', name: 'ComfyUI (images)', baseUrl: 'http://localhost:8188', needsKey: false, free: true, local: true, note: 'Your own ComfyUI: its checkpoints become local image models for Image blocks.' },
   { id: 'custom', kind: 'openai', name: 'Custom (OpenAI-compatible)', baseUrl: '', needsKey: false, free: false, local: false },
+  // Decision models: they don't chat, they answer typed questions with probabilities (Decide block, Auto model, Jev router).
+  { id: 'typesafe', kind: 'decision', name: 'TypeSafe (Jev)', baseUrl: 'https://api.typesafe.ai', needsKey: true, free: false, local: false, keyUrl: 'https://console.typesafe.ai/keys', note: 'Jev decides in about 0.1 s for $0.042 per million input tokens; output is free.' },
+  { id: 'openai-decisions', kind: 'decision', name: 'OpenAI Decisions', baseUrl: 'https://api.openai.com/v1', needsKey: true, free: false, local: false, keyUrl: 'https://platform.openai.com/api-keys', note: 'The Decisions API (gpt-6-luna): predicates, choices and scores.' },
+  { id: 'ollama-decisions', kind: 'decision', name: 'Ollama decision models', baseUrl: 'http://localhost:11434', needsKey: false, free: true, local: true, note: 'Nimble, Tev1, Clef on your own GPU (Ollama 0.35+: ollama pull nimble).' },
+  { id: 'clef-cloud', kind: 'decision', name: 'Clef (Ollama cloud)', baseUrl: 'https://ollama.com', needsKey: true, free: false, local: false, keyUrl: 'https://ollama.com/settings/keys', note: 'Clef and Clef Flash (open weights) on ollama.com; they can also judge images.' },
 ];
 
 /** A provider as the API returns it (never includes the key). */
@@ -205,8 +210,8 @@ export interface ModelInfo {
   contextLength?: number;
   /** USD per 1M tokens, when the provider tells us. */
   price?: { input: number; output: number };
-  /** "image" for models that make pictures (Image blocks); text models leave it out. */
-  kind?: 'image';
+  /** "image" for models that make pictures (Image blocks), "decision" for decision models (Decide, Auto); text models leave it out. */
+  kind?: 'image' | 'decision';
   /** Local models: size on disk and quantization. */
   sizeBytes?: number;
   quant?: string;
@@ -310,6 +315,54 @@ export interface Problem {
   seen: boolean;
 }
 
+// ---- Decisions (Jev and friends) ----
+
+export const DECISION_TYPES = ['noul', 'choice', 'score', 'box'] as const;
+/** noul = yes/no (a probability), choice = pick one option, score = a level on a scale, box = where in an image. */
+export type DecisionType = (typeof DECISION_TYPES)[number];
+
+/** One question of a Decide block, as edited in the inspector. */
+export interface DecideQuestion {
+  /** Its name: the answer comes back under it ("spam", "wants"). */
+  name: string;
+  type: DecisionType;
+  instructions: string;
+  /** choice: the options (name → description; description may be empty). */
+  options?: { name: string; description?: string }[];
+  /** score: levels from lowest to highest. */
+  levels?: string[];
+}
+
+/** One answered question, as the block shows it (bars per option). */
+export interface DecisionView {
+  name: string;
+  type: DecisionType | 'refusal';
+  /** noul: probability of yes. */
+  p?: number;
+  /** choice: the pick; score: the most likely level. */
+  pick?: string;
+  /** Option or level → probability. */
+  probabilities?: Record<string, number>;
+  /** score: the probability-weighted level (0 = lowest). */
+  score?: number;
+  levels?: string[];
+  /** box: edges as fractions of the image (0-1 from the top-left). */
+  box?: { top: number; bottom: number; left: number; right: number };
+  confidence?: number;
+}
+
+/** node_progress.decision: what a decision model answered (bars on the block, also in replay). */
+export interface DecisionEvent {
+  model: string;
+  ms: number;
+  answers: DecisionView[];
+  threshold?: number;
+  /** The branch / tier it led to ("yes", "promote", "medium: gemini-…"). */
+  route?: string;
+  /** box questions: the image that was judged (files folder path). */
+  image?: string;
+}
+
 // ---- Run events ----
 // Every UI animation is driven by these; replay = feeding stored events again.
 
@@ -369,6 +422,8 @@ export interface RunEvent {
   loadMs?: number;
   /** node_progress: what the block is doing right now. */
   note?: string;
+  /** node_progress: a decision model's answer, for the probability bars. */
+  decision?: DecisionEvent;
   /** node_done / run_done: files the block (or the whole run) wrote. */
   files?: OutputFile[];
   status?: RunStatus;

@@ -35,6 +35,8 @@ export const PRICES: Record<string, { input: number; output: number }> = {
   'claude-3-5-haiku': { input: 0.8, output: 4 },
   'claude-3-opus': { input: 15, output: 75 },
   'claude-3-haiku': { input: 0.25, output: 1.25 },
+  // TypeSafe Jev (decision model): input tokens only, output is free
+  jev: { input: 0.042, output: 0 },
 };
 
 const KEYS = Object.keys(PRICES).sort((a, b) => b.length - a.length);

@@ -42,7 +42,7 @@ export function RunPage({ onProblem, active }: { onProblem: () => void; active: 
     return () => clearInterval(t);
   }, [runId, final]);
 
-  const shown = useMemo(() => models.filter((m) => m.kind !== 'image' && (!freeOnly || m.free)), [models, freeOnly]);
+  const shown = useMemo(() => models.filter((m) => !m.kind && (!freeOnly || m.free)), [models, freeOnly]);
 
   const start = async () => {
     setError('');

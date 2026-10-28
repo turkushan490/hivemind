@@ -79,7 +79,7 @@ function pickImageModel(all: ModelInfo[]): ModelRef | undefined {
 }
 
 function prefillModels(all: ModelInfo[]): (ModelRef | undefined)[] {
-  const ms = all.filter((m) => m.kind !== 'image');
+  const ms = all.filter((m) => !m.kind);
   const ref = (m: ModelInfo): ModelRef => ({ providerId: m.providerId, model: m.model });
   const local = ms.filter((m) => m.sizeBytes !== undefined && m.sizeBytes > 50e6).sort((a, b) => a.sizeBytes! - b.sizeBytes!);
   const cloud = ms.filter((m) => m.sizeBytes === undefined);

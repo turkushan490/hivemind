@@ -110,3 +110,16 @@ html {
 .hm-md img { max-width: 100%; border-radius: 8px; border: 1px solid #30363d; }
 .hm-md table { border-collapse: collapse; } .hm-md th, .hm-md td { border: 1px solid #30363d; padding: 0.3em 0.6em; }
 .hm-md blockquote { border-left: 3px solid #6366f1; padding-left: 0.8em; color: #94a3b8; }
+
+/* Decisions (Jev): bars fill from zero when the answer lands, the pick glows, a flash sweeps the bar */
+.hm-dbar { transition: width 0.75s cubic-bezier(0.22, 1.2, 0.36, 1); }
+@keyframes hm-sweep { from { transform: translateX(-100%); } to { transform: translateX(260%); } }
+.hm-dbar-sweep::after {
+  content: ''; position: absolute; inset: 0; width: 40%;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.55), transparent);
+  animation: hm-sweep 0.9s ease-out 0.5s 1 both;
+}
+@keyframes hm-pick { 0%, 100% { box-shadow: 0 0 0 1px var(--hm-pick), 0 0 6px var(--hm-pick); } 50% { box-shadow: 0 0 0 1px var(--hm-pick), 0 0 16px var(--hm-pick); } }
+.hm-picked { animation: hm-pick 1.8s ease-in-out infinite; border-radius: 6px; }
+@keyframes hm-zap { 0% { opacity: 0; transform: scale(0.6); } 40% { opacity: 1; transform: scale(1.15); } 100% { opacity: 1; transform: none; } }
+.hm-zap { animation: hm-zap 0.5s ease-out both; }

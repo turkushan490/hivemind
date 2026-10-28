@@ -9,7 +9,7 @@ export function ModelPicker(props: {
   value?: ModelRef;
   onChange: (m: ModelRef) => void;
   /** Image blocks list only image models; every other block only text models. */
-  kind?: 'image' | 'text';
+  kind?: 'image' | 'text' | 'decision';
 }) {
   const [q, setQ] = useState('');
   const [freeOnly, setFreeOnly] = useStored('canvas.freeOnly', false);
@@ -18,7 +18,7 @@ export function ModelPicker(props: {
   const groups = useMemo(() => {
     const words = q.toLowerCase().split(/\s+/).filter(Boolean);
     const want = props.kind ?? 'text';
-    const list = props.models.filter((m) => (want === 'image') === (m.kind === 'image')).filter(
+    const list = props.models.filter((m) => (m.kind ?? 'text') === want).filter(
       (m) => (!freeOnly || m.free) && words.every((w) => `${m.name} ${m.model}`.toLowerCase().includes(w)),
     );
     const byProvider = new Map<string, ModelInfo[]>();

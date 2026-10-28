@@ -4,6 +4,8 @@ import { decrypt, encrypt, newId } from '../crypto.js';
 import { db, getSetting, setSetting } from '../db/index.js';
 import type { ResolvedProvider } from '../engine/run.js';
 import { createAdapter } from '../providers/index.js';
+import { SPAM_TEST, SPAM_TEST_STATE } from '../providers/decisions.js';
+import { logError } from '../errors.js';
 import { requireUser, type User } from './auth.js';
 
 interface ProviderRow {
@@ -119,7 +121,7 @@ export function gpuFreerFor(user: User) {
 }
 
 /** Fresh install: add Ollama so local models work right away. */
-export function seedProviders(ollamaUrl: string, comfyUrl?: string) {
+export function seedProviders(ollamaUrl: string, comfyUrl?: string, typesafeKey?: string) {
   const n = (db.prepare('SELECT COUNT(*) AS n FROM providers').get() as { n: number }).n;
   if (n === 0) db.prepare('INSERT INTO providers (id, preset, kind, name, base_url, local) VALUES (?, ?, ?, ?, ?, 1)').run('ollama', 'ollama', 'ollama', 'Ollama', ollamaUrl);
   // COMFYUI_URL adds ComfyUI once, also on existing installs; removing it later in Settings sticks.
@@ -127,6 +129,12 @@ export function seedProviders(ollamaUrl: string, comfyUrl?: string) {
     if (!(db.prepare("SELECT 1 FROM providers WHERE preset = 'comfyui'").get()))
       db.prepare("INSERT INTO providers (id, preset, kind, name, base_url, local) VALUES ('comfyui', 'comfyui', 'comfyui', 'ComfyUI', ?, 1)").run(comfyUrl);
     setSetting('seeded.comfyui', '1');
+  }
+  // TYPESAFE_API_KEY adds Jev once, shared, with the key stored encrypted like every other key.
+  if (typesafeKey && !getSetting('seeded.typesafe')) {
+    if (!db.prepare("SELECT 1 FROM providers WHERE preset = 'typesafe'").get())
+      db.prepare("INSERT INTO providers (id, preset, kind, name, base_url, api_key_enc, local) VALUES ('typesafe', 'typesafe', 'decision', 'TypeSafe (Jev)', 'https://api.typesafe.ai', ?, 0)").run(encrypt(typesafeKey.trim()));
+    setSetting('seeded.typesafe', '1');
   }
 }
 
@@ -190,6 +198,23 @@ export function providerRoutes(app: FastifyInstance) {
       return await modelsOf(row, (req.query as { fresh?: string }).fresh === '1');
     } catch (err) {
       return reply.code(502).send({ error: (err as Error).message });
+    }
+  });
+
+  /** Decision providers: asks the spam example from the Jev guide, so a wrong key shows up right away. */
+  app.post('/api/providers/:id/test-decision', { preHandler: requireUser }, async (req, reply) => {
+    const row = rowFor(req.user!, (req.params as { id: string }).id);
+    if (!row) return reply.code(404).send({ error: 'Not found' });
+    const adapter = adapterFor(row);
+    if (!adapter.decide) return reply.code(400).send({ error: `${row.name} is not a decision provider` });
+    try {
+      const model = (req.body as { model?: string } | undefined)?.model || (await modelsOf(row, true))[0]?.model;
+      if (!model) throw new Error('No decision model found on this provider (Ollama: ollama pull nimble)');
+      return { state: SPAM_TEST_STATE, ...(await adapter.decide({ model, state: SPAM_TEST_STATE, questions: SPAM_TEST })) };
+    } catch (err) {
+      const message = `${row.name} test failed: ${(err as Error).message}`;
+      logError({ source: 'provider', message, userId: req.user!.id });
+      return reply.code(502).send({ error: message });
     }
   });
 

@@ -2,6 +2,8 @@ import type { ModelInfo, ProviderInfo, ProviderPreset } from '@hivemind/shared';
 import { useEffect, useState } from 'react';
 import { api } from '../api';
 import { toast } from '../notify';
+import { DecisionBars } from '../canvas/DecisionBars';
+import type { DecisionEvent } from '@hivemind/shared';
 
 type Status = { state: 'checking' } | { state: 'ok'; total: number; free: number } | { state: 'error'; error: string };
 
@@ -9,6 +11,11 @@ const GROUPS: { title: string; hint: string; ids: string[] }[] = [
   { title: 'Free', hint: 'Local models and cloud providers with a free key — no credit card.', ids: ['ollama', 'openrouter', 'groq', 'gemini'] },
   { title: 'Paid', hint: 'Pay per use with your own key.', ids: ['anthropic', 'openai', 'opencode-zen'] },
   { title: 'Other', hint: 'Any OpenAI-compatible server (LM Studio, vLLM, LiteLLM, Azure, ...).', ids: ['custom'] },
+  {
+    title: 'Decisions',
+    hint: 'Decision models answer yes/no, choice and score questions with probabilities in ~0.1 s — for Decide blocks, the Auto model and the Jev router.',
+    ids: ['typesafe', 'ollama-decisions', 'openai-decisions', 'clef-cloud'],
+  },
 ];
 
 export function Providers({ isAdmin }: { isAdmin: boolean }) {
@@ -84,7 +91,8 @@ function ProviderCard(props: {
   const [busy, setBusy] = useState(false);
   const [editKey, setEditKey] = useState<Record<string, string>>({});
   const showForm = adding || rows.length === 0;
-  const askUrl = preset.id === 'ollama' || preset.id === 'custom';
+  const askUrl = preset.id === 'ollama' || preset.id === 'custom' || preset.id === 'ollama-decisions';
+  const [tested, setTested] = useState<Record<string, DecisionEvent>>({});
 
   const connect = async () => {
     setBusy(true);
@@ -180,8 +188,27 @@ function ProviderCard(props: {
                 </span>
               </label>
             )}
+            {tested[p.id] && (
+              <div className="hm-pop space-y-1 rounded-md border border-indigo-900/60 bg-indigo-950/20 p-2">
+                <p className="text-[11px] text-slate-400">Spam example from the Jev guide (a scam comment):</p>
+                <DecisionBars d={tested[p.id]} />
+              </div>
+            )}
             <div className="flex gap-1">
-              <button className="btn-ghost" onClick={() => props.onCheck(p, true)}>
+              <button
+                className="btn-ghost"
+                onClick={async () => {
+                  if (!(await props.onCheck(p, true)) || preset.kind !== 'decision') return;
+                  // Decision providers also answer the spam example, so the key and model are proven to work.
+                  try {
+                    const r = await api<{ model: string; ms: number; answers: Record<string, any> }>(`/api/providers/${p.id}/test-decision`, { method: 'POST', quiet: true });
+                    setTested((t) => ({ ...t, [p.id]: toDecisionEvent(r) }));
+                    toast(`${p.name} decided in ${r.ms} ms`, 'ok');
+                  } catch (err) {
+                    toast((err as Error).message);
+                  }
+                }}
+              >
                 Test
               </button>
               <button
@@ -240,6 +267,25 @@ function ProviderCard(props: {
       {preset.id === 'openrouter' && <OpenRouterFree />}
     </div>
   );
+}
+
+const SPAM_LEVELS = ['Negative', 'Neutral', 'Positive'];
+
+/** The test answer as the canvas shows decisions. */
+function toDecisionEvent(r: { model: string; ms: number; answers: Record<string, any> }): DecisionEvent {
+  return {
+    model: r.model,
+    ms: r.ms,
+    answers: Object.entries(r.answers).map(([name, a]) =>
+      a.type === 'noul'
+        ? { name, type: 'noul', p: a.p }
+        : a.type === 'choice'
+          ? { name, type: 'choice', pick: a.choice, probabilities: a.probabilities }
+          : a.type === 'score'
+            ? { name, type: 'score', score: a.score, levels: SPAM_LEVELS, probabilities: a.probabilities }
+            : { name, type: a.type },
+    ),
+  };
 }
 
 /** OpenRouter's free models, shown before a key exists so you know what you get. */

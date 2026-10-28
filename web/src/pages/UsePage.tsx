@@ -42,12 +42,34 @@ export function UsePage({ active, viewer, onProblem, onBuild }: { active: boolea
     if (run.final) byVoice.current = false;
   }, [run.final]);
 
-  const ask = async (e?: FormEvent, q = question) => {
+  const ask = async (e?: FormEvent, q = question, target = canvas) => {
     e?.preventDefault();
-    if (!canvas || !q.trim() || run.running) return;
+    if (!target || !q.trim() || run.running) return;
     try {
-      await run.start({ question: q.trim(), graph: { nodes: canvas.nodes, edges: canvas.edges }, canvasId: canvas.id });
+      await run.start({ question: q.trim(), graph: { nodes: target.nodes, edges: target.edges }, canvasId: target.id });
     } catch {}
+  };
+
+  // Settings → Voice → Canvas router: spoken questions go to the canvas a decision model picks.
+  const [routeVoice, setRouteVoice] = useState(false);
+  const [routed, setRouted] = useState('');
+  useEffect(() => {
+    if (active) api<{ canvasRouter?: unknown }>('/api/me/prefs', { quiet: true }).then((p) => setRouteVoice(!!p.canvasRouter)).catch(() => {});
+  }, [active]);
+  const askByVoice = async (text: string) => {
+    if (!routeVoice || !canvases || canvases.length < 2) return ask(undefined, text);
+    try {
+      const r = await api<{ canvasId: string; name: string; decision: { ms: number } }>('/api/route-canvas', { body: { text } });
+      const target = canvases.find((c) => c.id === r.canvasId);
+      if (target) {
+        setCanvasId(target.id);
+        setRouted(`⚡ ${r.name} · picked in ${r.decision.ms} ms`);
+      }
+      return ask(undefined, text, target ?? canvas);
+    } catch {
+      // The router's error was shown; ask the canvas that is open.
+      return ask(undefined, text);
+    }
   };
 
   // The blocks worth showing while it works: everything except Question and Final answer.
@@ -89,6 +111,7 @@ export function UsePage({ active, viewer, onProblem, onBuild }: { active: boolea
         ))}
       </div>
 
+      {routed && <div className="hm-zap -mb-2 text-xs text-indigo-300">{routed}</div>}
       <form onSubmit={ask} className="flex gap-2">
         <input
           className="input h-12 text-base"
@@ -102,7 +125,7 @@ export function UsePage({ active, viewer, onProblem, onBuild }: { active: boolea
           onText={(text) => {
             setQuestion(text);
             byVoice.current = true;
-            ask(undefined, text);
+            askByVoice(text);
           }}
         />
         {run.running ? (

@@ -4,6 +4,7 @@ import { api } from '../api';
 import { BuilderModelChooser } from '../canvas/BuilderModelChooser';
 import { toast } from '../notify';
 import { loadVoice, MicButton, SpeakButton } from '../voice';
+import { ModelPicker } from '../canvas/ModelPicker';
 
 /** Settings → Builder AI: the model that turns requests into canvases, and the setup wizard. */
 export function BuilderSettings({ active, onWizard }: { active: boolean; onWizard: () => void }) {
@@ -360,7 +361,57 @@ const TTS_PRESETS = [
 ];
 
 /** Settings → Voice: speech to text for the mic buttons, text to speech for “Read aloud”. */
-export function VoicePanel({ isAdmin, active }: { isAdmin: boolean; active: boolean }) {
+/** Settings → Voice: one voice agent for all canvases — a decision model picks the canvas per request. */
+function CanvasRouterCard({ active }: { active: boolean }) {
+  const [pref, setPref] = useState<ModelRef | undefined | null>(null);
+  const [models, setModels] = useState<ModelInfo[]>([]);
+  const [providers, setProviders] = useState<ProviderInfo[]>([]);
+  useEffect(() => {
+    if (!active) return;
+    api<{ canvasRouter?: ModelRef }>('/api/me/prefs', { quiet: true }).then((p) => setPref(p.canvasRouter)).catch(() => setPref(undefined));
+    api<{ models: ModelInfo[] }>('/api/models', { quiet: true }).then((r) => setModels(r.models)).catch(() => {});
+    api<ProviderInfo[]>('/api/providers', { quiet: true }).then(setProviders).catch(() => {});
+  }, [active]);
+  if (pref === null) return null;
+  const decisions = models.filter((m) => m.kind === 'decision');
+  const save = async (canvasRouter: ModelRef | null) => {
+    const p = await api<{ canvasRouter?: ModelRef }>('/api/me/prefs', { method: 'PUT', body: { canvasRouter } });
+    setPref(p.canvasRouter);
+    toast(p.canvasRouter ? 'Spoken questions now go to the canvas Jev picks' : 'Canvas router off', 'ok');
+  };
+  return (
+    <div className="card max-w-2xl space-y-2">
+      <h2 className="font-semibold">Canvas router ⚡ (optional)</h2>
+      <p className="text-sm text-slate-400">
+        A decision model reads each spoken question and picks the canvas it belongs to (by name and description), in about 0.1 s. Works for the mic in Use mode and for
+        Home Assistant: use the model <code>auto</code> in the OpenAI-compatible API.
+      </p>
+      {decisions.length === 0 ? (
+        <p className="text-xs text-amber-300">Add a decision provider first (Settings → Providers → Decisions).</p>
+      ) : (
+        <>
+          <ModelPicker kind="decision" models={models} providers={providers} value={pref} onChange={(m) => save(m)} />
+          {pref && (
+            <button className="btn-ghost text-red-400" onClick={() => save(null)}>
+              Turn off
+            </button>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+export function VoicePanel(props: { isAdmin: boolean; active: boolean }) {
+  return (
+    <div className="space-y-4">
+      <VoiceSettingsPanel {...props} />
+      <CanvasRouterCard active={props.active} />
+    </div>
+  );
+}
+
+function VoiceSettingsPanel({ isAdmin, active }: { isAdmin: boolean; active: boolean }) {
   const [s, setS] = useState<VoiceSettings | null>(null);
   const [draft, setDraft] = useState<Partial<VoiceSettings> & { sttKey?: string; ttsKey?: string }>({});
   const [heard, setHeard] = useState('');

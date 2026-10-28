@@ -6,11 +6,15 @@ import { describe, logError } from '../errors.js';
 import type { ChatMessage } from '../providers/types.js';
 import { requireUser, type User } from './auth.js';
 import { resolverFor, visibleRows, adapterFor } from './providers.js';
+import { canvasesFor } from './runs.js';
+import { routeCanvas } from '../services/canvasRouter.js';
 
 /** Per-user preferences: finished the setup wizard, and which model the Builder uses. */
 export interface Prefs {
   setupDone?: boolean;
   builderModel?: ModelRef;
+  /** Voice and /v1 model "auto": a decision model picks the canvas for each request. */
+  canvasRouter?: ModelRef;
 }
 
 const prefsKey = (u: User) => `user:${u.id}:prefs`;
@@ -36,8 +40,24 @@ export function builderRoutes(app: FastifyInstance) {
     const next: Prefs = { ...getPrefs(req.user!) };
     if (body.setupDone !== undefined) next.setupDone = !!body.setupDone;
     if (body.builderModel !== undefined) next.builderModel = body.builderModel?.providerId && body.builderModel.model ? body.builderModel : undefined;
+    if (body.canvasRouter !== undefined) next.canvasRouter = body.canvasRouter?.providerId && body.canvasRouter.model ? body.canvasRouter : undefined;
     setSetting(prefsKey(req.user!), JSON.stringify(next));
     return next;
+  });
+
+  /** Which canvas should answer this (voice in Use mode): needs Settings → Voice → Canvas router. */
+  app.post('/api/route-canvas', { preHandler: requireUser }, async (req, reply) => {
+    const text = String((req.body as { text?: string } | undefined)?.text ?? '').trim();
+    if (!text) return reply.code(400).send({ error: 'Send the text to route' });
+    const decider = getPrefs(req.user!).canvasRouter;
+    if (!decider) return reply.code(400).send({ error: 'Turn on the canvas router first (Settings → Voice)' });
+    try {
+      return await routeCanvas(text, canvasesFor(req.user!), decider, resolverFor(req.user!));
+    } catch (err) {
+      const message = `Canvas router: ${(err as Error).message}`;
+      logError({ source: 'voice', message, userId: req.user!.id });
+      return reply.code(502).send({ error: message });
+    }
   });
 
   /**

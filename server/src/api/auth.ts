@@ -82,6 +82,7 @@ export const VIEWER_WRITES = new Set([
   'DELETE /api/runs',
   'POST /api/voice/transcribe',
   'POST /api/voice/speak',
+  'POST /api/route-canvas',
   'POST /api/tokens',
   'DELETE /api/tokens/:id',
   'POST /v1/chat/completions',

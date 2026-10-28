@@ -5,6 +5,9 @@ import { checkVars } from '../engine/vars.js';
 import { cancelRun, startRun, subscribe } from '../events/runs.js';
 import { apiError, chatFrom, chunk, LiveText, completion, findCanvas, modelList, streamSource, usageOf, type CanvasModelRow } from '../services/openaiCompat.js';
 import { authenticate } from './auth.js';
+import { getPrefs } from './builder.js';
+import { routeCanvas } from '../services/canvasRouter.js';
+import { logError } from '../errors.js';
 import { gpuFreerFor, resolverFor } from './providers.js';
 import { canvasesFor, runSetup } from './runs.js';
 
@@ -21,9 +24,12 @@ async function requireToken(req: FastifyRequest, reply: FastifyReply) {
  * (Home Assistant, Open WebUI, scripts) pointed at http://<hivemind>/v1.
  */
 export function v1Routes(app: FastifyInstance) {
-  app.get('/v1/models', { preHandler: requireToken }, async (req) =>
-    modelList(canvasesFor(req.user!).map((r): CanvasModelRow => ({ id: r.id, name: r.name, description: r.description, updatedAt: r.updated_at }))),
-  );
+  app.get('/v1/models', { preHandler: requireToken }, async (req) => {
+    const rows = canvasesFor(req.user!).map((r): CanvasModelRow => ({ id: r.id, name: r.name, description: r.description, updatedAt: r.updated_at }));
+    // With the canvas router on, "auto" picks the right canvas per request.
+    if (getPrefs(req.user!).canvasRouter && rows.length) rows.unshift({ id: 'auto', name: 'Auto (picks the canvas)', description: 'A decision model picks the canvas for each request', updatedAt: rows[0].updatedAt });
+    return modelList(rows);
+  });
 
   app.post('/v1/chat/completions', { preHandler: requireToken }, async (req, reply) => {
     const body = (req.body ?? {}) as { model?: string; messages?: unknown; stream?: boolean; hivemind_vars?: unknown };
@@ -40,7 +46,19 @@ export function v1Routes(app: FastifyInstance) {
     } catch (err) {
       return reply.code(400).send(apiError((err as Error).message));
     }
-    const row = findCanvas(canvasesFor(req.user!), body.model);
+    // Model "auto": the canvas router (Settings → Voice) picks the canvas, so one Home Assistant agent reaches all of them.
+    const all = canvasesFor(req.user!);
+    let row = findCanvas(all, body.model);
+    const router = getPrefs(req.user!).canvasRouter;
+    if (!row && /^(hivemind[/:])?auto$/i.test(body.model.trim()) && router) {
+      try {
+        const picked = await routeCanvas(question, all, router, resolverFor(req.user!));
+        row = all.find((r) => r.id === picked.canvasId);
+      } catch (err) {
+        logError({ source: 'voice', message: `Canvas router: ${(err as Error).message}`, userId: req.user!.id });
+        return reply.code(502).send(apiError(`Canvas router: ${(err as Error).message}`, 'server_error', 'router_failed'));
+      }
+    }
     if (!row) return reply.code(404).send(apiError(`No canvas "${body.model}". GET /v1/models lists yours.`, 'invalid_request_error', 'model_not_found'));
     // A canvas from the API always runs as saved (shared ones with their owner's providers).
     const { graph = JSON.parse(row.graph) as CanvasGraph, providerUser } = runSetup(req.user!, row, undefined);

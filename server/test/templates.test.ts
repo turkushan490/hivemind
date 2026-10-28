@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { validateGraph } from '../src/engine/graph.js';
 import { TEMPLATES } from '../../web/src/canvas/templates.js';
 
-const models = { text: [{ providerId: 'p', model: 'small' }, { providerId: 'p', model: 'medium' }], judge: { providerId: 'p', model: 'big' }, image: { providerId: 'c', model: 'img' } };
+const models = { text: [{ providerId: 'p', model: 'small' }, { providerId: 'p', model: 'medium' }], judge: { providerId: 'p', model: 'big' }, image: { providerId: 'c', model: 'img' }, decision: { providerId: 'ts', model: 'jev-latest' } };
 
 describe('canvas templates', () => {
   it('every template builds a valid graph when models are filled in', () => {

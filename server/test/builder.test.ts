@@ -97,3 +97,39 @@ describe('builder', () => {
     expect(compact.edges).toEqual([['q', 'd'], ['d', 'm'], ['m', 'out']]);
   });
 });
+
+describe('builder: decisions', () => {
+  const models = [
+    { providerId: 'ollama', model: 'qwen3:8b', name: 'q', free: true, sizeBytes: 5e9 },
+    { providerId: 'groq', model: 'llama-70b', name: 'l', free: true },
+    { providerId: 'ts', model: 'jev-latest', name: 'jev', free: false, kind: 'decision' as const },
+  ];
+
+  it('knows the Decide block and decision models', () => {
+    const sys = builderSystemPrompt(models);
+    expect(sys).toMatch(/- decide: a DECISION model/);
+    expect(sys).toContain('ts|jev-latest (DECISION model');
+  });
+
+  it('builds a spam filter with a Decide block and yes/no branches, and an Auto model block', () => {
+    const { graph } = toGraph(
+      {
+        nodes: [
+          { id: 'q', type: 'input' },
+          { id: 'd', type: 'decide', model: 'ollama|qwen3:8b', questions: [{ name: 'spam', type: 'noul', instructions: 'Is this spam?' }] },
+          { id: 'y', type: 'template', label: 'yes', prompt: 'spam' },
+          { id: 'n', type: 'llm', label: 'no', auto: { small: 'ollama|qwen3:8b', large: 'groq|llama-70b' } },
+          { id: 'out', type: 'output' },
+        ],
+        edges: [['q', 'd'], ['d', 'y'], ['d', 'n'], ['y', 'out'], ['n', 'out']],
+      },
+      models,
+    );
+    const d = graph.nodes.find((n) => n.type === 'decide')!;
+    expect(d.config.model).toEqual({ providerId: 'ts', model: 'jev-latest' });
+    expect(d.config.questions).toEqual([{ name: 'spam', type: 'noul', instructions: 'Is this spam?' }]);
+    const auto = graph.nodes.find((n) => n.id === 'n')!.config.auto!;
+    expect(auto.decider).toEqual({ providerId: 'ts', model: 'jev-latest' });
+    expect(auto.large).toEqual({ providerId: 'groq', model: 'llama-70b' });
+  });
+});

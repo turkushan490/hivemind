@@ -212,6 +212,33 @@ export async function autoModel(ctx: NodeContext, state: string): Promise<ModelR
   return model;
 }
 
+const QUALITY_LEVELS = ['Wrong, off-topic or unhelpful', 'Partly right or incomplete', 'Mostly right and useful', 'Correct, complete and clear'];
+
+/**
+ * Jev scoring for Judge / Vote: every answer is scored on one quality scale (~0.1 s each), best first.
+ * The scores show as bars on the block.
+ */
+export async function jevRank(ctx: NodeContext, candidates: NodeInput[]): Promise<{ input: NodeInput; score: number }[]> {
+  const spec = { type: 'score' as const, instructions: 'How well does the Answer answer the Question?', criteria: QUALITY_LEVELS };
+  ctx.progress(`Jev is scoring ${candidates.length} answers…`);
+  const results = await Promise.all(
+    candidates.map((c) => ctx.decide({ state: `Question: ${ctx.question}\n\nAnswer:\n${c.text}`.slice(0, 100_000), questions: { quality: spec } }, ctx.node.config.jevScore)),
+  );
+  const ranked = candidates
+    .map((input, i) => {
+      const a = results[i].answers.quality;
+      return { input, score: a?.type === 'score' ? a.score : 0, view: toView(input.label, a ?? { type: 'refusal' }, spec) };
+    })
+    .sort((a, b) => b.score - a.score);
+  ctx.progress(`Jev ranking: ${ranked.map((r) => `${r.input.label} ${r.score.toFixed(2)}`).join(' · ')}`, {
+    model: results[0]?.model ?? '',
+    ms: Math.max(...results.map((r) => r.ms)),
+    answers: ranked.map((r) => r.view),
+    route: ranked[0]?.input.label,
+  });
+  return ranked;
+}
+
 export const NODES: Record<NodeType, NodeDefinition> = {
   input: {
     usesModel: false,
@@ -258,10 +285,19 @@ export const NODES: Record<NodeType, NodeDefinition> = {
   judge: {
     usesModel: true,
     async execute(ctx) {
-      const prev = answers(ctx.inputs);
+      let prev = answers(ctx.inputs);
       if (prev.length === 0) throw new Error('Judge needs at least one answer as input');
+      // Jev pre-ranking: the judge reads the answers best first, with their scores.
+      const scores = new Map<string, number>();
+      if (ctx.node.config.jevScore) {
+        const reviews = prev.filter((p) => p.type === 'review');
+        const ranked = await jevRank(ctx, prev.filter((p) => p.type !== 'review'));
+        ranked.forEach((r) => scores.set(r.input.nodeId, r.score));
+        prev = [...ranked.map((r) => r.input), ...reviews];
+      }
+      const scoreNote = (p: NodeInput) => (scores.has(p.nodeId) ? `, Jev score ${scores.get(p.nodeId)!.toFixed(2)}/${QUALITY_LEVELS.length - 1}` : '');
       const body = prev
-        .map((p, i) => (p.type === 'review' ? `### Review (${p.label})\n${p.text}` : `### Answer ${i + 1} (${p.label})\n${p.text}`))
+        .map((p, i) => (p.type === 'review' ? `### Review (${p.label})\n${p.text}` : `### Answer ${i + 1} (${p.label}${scoreNote(p)})\n${p.text}`))
         .join('\n\n');
       const contenders = prev.map((p, i) => ({ p, n: i + 1 })).filter(({ p }) => p.type !== 'review');
       let user = fill(ctx.node.config.prompt ?? 'Question: {{question}}\n\n{{inputs}}', ctx, body);
@@ -364,11 +400,19 @@ export const NODES: Record<NodeType, NodeDefinition> = {
   vote: {
     usesModel: false,
     minModels: 1,
+    modelOptional: (c) => !!c.jevScore,
     async execute(ctx) {
       const candidates = answers(ctx.inputs);
       if (candidates.length === 0) throw new Error('Vote needs answers wired into it');
       if (candidates.length === 1) return candidates[0].text;
-      const voters = ctx.node.config.models!;
+      const voters = (ctx.node.config.models ?? []).filter((m) => m?.providerId && m.model);
+      // Jev scoring: without voters the best score wins; with voters it breaks ties.
+      const jev = ctx.node.config.jevScore ? await jevRank(ctx, candidates) : undefined;
+      if (jev && !voters.length) {
+        ctx.pickWinner?.(jev[0].input.nodeId, candidates.map((c) => c.nodeId));
+        ctx.progress(`Winner: ${jev[0].input.label} · Jev ${jev[0].score.toFixed(2)}/${QUALITY_LEVELS.length - 1}`);
+        return jev[0].input.text;
+      }
       const body = candidates.map((c, i) => `### Answer ${letter(i)}\n${c.text}`).join('\n\n');
       const tally = new Array(candidates.length).fill(0);
       const letters = candidates.map((_, i) => letter(i));
@@ -392,10 +436,12 @@ export const NODES: Record<NodeType, NodeDefinition> = {
           counted++;
         }
       }
-      const best = tally.indexOf(Math.max(...tally));
+      const most = Math.max(...tally);
+      const jevScore = (i: number) => jev?.find((r) => r.input.nodeId === candidates[i].nodeId)?.score ?? 0;
+      const best = tally.map((t, i) => i).filter((i) => tally[i] === most).sort((a, b) => jevScore(b) - jevScore(a))[0];
       if (counted) ctx.pickWinner?.(candidates[best].nodeId, candidates.map((c) => c.nodeId));
       const score = tally.map((t, i) => `${letter(i)} ${t}`).join(', ');
-      ctx.progress(counted ? `Winner: ${candidates[best].label} · ${score}` : `No valid votes — passed on ${candidates[0].label}`);
+      ctx.progress(counted ? `Winner: ${candidates[best].label} · ${score}` : `No valid votes — passed on ${candidates[best].label}`);
       return candidates[best].text;
     },
   },

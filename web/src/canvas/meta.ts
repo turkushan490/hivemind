@@ -219,6 +219,7 @@ export function summary(kind: NodeType, c: import('@hivemind/shared').NodeConfig
     }
     case 'vote': {
       const n = c.models?.length ?? 0;
+      if (c.jevScore) return { text: n ? `Jev ⚡ + ${n} voter${n > 1 ? 's' : ''}` : 'Jev ⚡ scores, best wins' };
       return n >= 1 ? { text: `${n} voter${n > 1 ? 's' : ''}` } : { text: 'Pick voters →', missing: true };
     }
     case 'file':

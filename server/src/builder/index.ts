@@ -26,6 +26,7 @@ export interface BuilderCanvas {
     query?: string;
     questions?: DecideQuestion[];
     threshold?: number;
+    auto?: Record<string, string>;
     format?: string;
     fileName?: string;
     haOp?: string;
@@ -45,7 +46,7 @@ export interface BuilderReply {
 
 const BLOCKS: Record<NodeType, string> = {
   input: 'the question comes in here. Exactly one per canvas.',
-  llm: 'one model answers. Needs "model". Optional "prompt" with {{question}} and {{inputs}}, optional "system".',
+  llm: 'one model answers. Needs "model". Optional "prompt" with {{question}} and {{inputs}}, optional "system". Or, when decision models exist, "auto": {"small": model, "medium": model, "large": model} (no "model"): a decision model picks the size per question ("smart router").',
   review: 'one model critiques and ranks the answers wired into it (anonymously). Needs "model".',
   judge: 'one model merges all incoming answers/reviews into one final answer. Needs "model". Usually the strongest model.',
   output: 'the final answer of the canvas. Exactly one per canvas, at the end.',
@@ -85,6 +86,9 @@ export function toBuilderCanvas(g: CanvasGraph): BuilderCanvas {
         type: n.type,
         ...(n.label && { label: n.label }),
         ...(c.model && { model: `${c.model.providerId}|${c.model.model}` }),
+        ...(c.auto && {
+          auto: Object.fromEntries((['local', 'small', 'medium', 'large'] as const).filter((t) => c.auto![t]).map((t) => [t, `${c.auto![t]!.providerId}|${c.auto![t]!.model}`])),
+        }),
         ...(c.models && { models: c.models.map((m) => `${m.providerId}|${m.model}`) }),
         ...(c.rounds && { rounds: c.rounds }),
         ...(c.prompt && { prompt: c.prompt }),
@@ -211,7 +215,10 @@ export function toGraph(c: BuilderCanvas, models: ModelInfo[]): { graph: CanvasG
     const config: NodeConfig = {};
     if (type === 'image') config.model = asImage(raw.model);
     else if (type === 'decide') config.model = asDecision(raw.model);
-    else if (def.usesModel) config.model = asRef(raw.model, type === 'judge' || type === 'router');
+    else if (type === 'llm' && raw.auto && typeof raw.auto === 'object' && decisionModels.length) {
+      config.auto = { decider: asDecision(undefined) };
+      for (const t of ['local', 'small', 'medium', 'large'] as const) if (raw.auto[t]) config.auto[t] = asRef(raw.auto[t], t === 'large');
+    } else if (def.usesModel) config.model = asRef(raw.model, type === 'judge' || type === 'router');
     if (def.minModels) {
       const list = (raw.models ?? []).map((m) => asRef(m, false)).filter((m): m is ModelRef => !!m);
       while (list.length < def.minModels && fallbackSmall) list.push(asRef(undefined, list.length > 0)!);

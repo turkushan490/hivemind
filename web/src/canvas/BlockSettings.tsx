@@ -129,7 +129,14 @@ function KindSettings(p: Props) {
         </div>
       );
     case 'vote':
-      return <ModelList {...p} title="Voters" min={1} />;
+      return (
+        <div className="space-y-3">
+          <JevScoreOption {...p} />
+          <ModelList {...p} title={p.config.jevScore ? 'Voters (optional with Jev)' : 'Voters'} min={p.config.jevScore ? 0 : 1} />
+        </div>
+      );
+    case 'judge':
+      return <JevScoreOption {...p} />;
     case 'template':
       return (
         <label className="block space-y-1">
@@ -440,7 +447,7 @@ function ModelList(p: Props & { title: string; min: number }) {
   return (
     <div className="space-y-1.5">
       <Label>
-        {p.title} <span className="font-normal text-slate-500">(at least {p.min})</span>
+        {p.title} {p.min > 0 && <span className="font-normal text-slate-500">(at least {p.min})</span>}
       </Label>
       {list.map((m, i) => (
         <div key={`${m.providerId}|${m.model}|${i}`} className="flex items-center gap-2 rounded-md border border-[#30363d] bg-[#0d1117] px-2 py-1.5 text-sm">
@@ -834,8 +841,21 @@ function AutoSettings(p: Props) {
         ]}
         onChange={(v) => {
           if (v === 'fixed') return p.onChange({ auto: undefined });
+          // Sensible sizes to start from: the smallest local model, a free cloud one, a paid one.
           const d = decisions[0];
-          p.onChange({ auto: { ...(d && { decider: { providerId: d.providerId, model: d.model } }), ...(p.config.model && { medium: p.config.model }) } });
+          const ref = (m?: ModelInfo) => m && { providerId: m.providerId, model: m.model };
+          const text = p.models.filter((m) => !m.kind);
+          const local = text.filter((m) => (m.sizeBytes ?? 0) > 50e6).sort((a, b) => a.sizeBytes! - b.sizeBytes!);
+          const freeCloud = text.find((m) => m.free && m.sizeBytes === undefined);
+          const paid = text.find((m) => !m.free);
+          p.onChange({
+            auto: {
+              ...(d && { decider: ref(d) }),
+              small: ref(local[0] ?? freeCloud),
+              medium: p.config.model ?? ref(freeCloud ?? local.at(-1)),
+              large: ref(paid ?? local.at(-1) ?? freeCloud),
+            },
+          });
         }}
       />
       {auto && (
@@ -868,6 +888,35 @@ function AutoSettings(p: Props) {
           </label>
         </div>
       )}
+    </div>
+  );
+}
+
+/** Judge / Vote: score every answer with a decision model first (fast pre-ranking). */
+function JevScoreOption(p: Props) {
+  const on = !!p.config.jevScore;
+  const first = p.models.find((m) => m.kind === 'decision');
+  return (
+    <div className="space-y-1.5 rounded-lg border border-[#30363d] p-2.5">
+      <label className="flex items-start gap-2 text-xs text-slate-300">
+        <input
+          type="checkbox"
+          className="mt-0.5"
+          checked={on}
+          disabled={!on && !first}
+          onChange={(e) => p.onChange({ jevScore: e.target.checked && first ? { providerId: first.providerId, model: first.model } : undefined })}
+        />
+        <span>
+          <span className="font-semibold">Score with Jev first ⚡</span>
+          <span className="block text-slate-500">
+            {p.kind === 'judge'
+              ? 'Every answer gets a quality score (~0.1 s each); the judge reads them best first, with the scores.'
+              : 'Every answer gets a quality score; with no voters the best score wins, with voters it breaks ties.'}
+            {!first && ' Add a decision provider in Settings first.'}
+          </span>
+        </span>
+      </label>
+      {on && <ModelPicker key={`${p.nodeId}-jev`} kind="decision" models={p.models} providers={p.providers} value={p.config.jevScore} onChange={(jevScore) => p.onChange({ jevScore })} />}
     </div>
   );
 }

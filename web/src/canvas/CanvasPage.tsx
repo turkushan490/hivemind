@@ -217,7 +217,8 @@ function Editor({ active, onProblem }: { active: boolean; onProblem: () => void 
     if (!skipConfirm && !confirmDiscard()) return;
     const t = TEMPLATES.find((x) => x.id === id)!;
     const refs = prefillModels(ms);
-    show(t.build({ text: refs.slice(0, 3), judge: refs[3], image: pickImageModel(ms) }));
+    const d = ms.find((m) => m.kind === 'decision');
+    show(t.build({ text: refs.slice(0, 3), judge: refs[3], image: pickImageModel(ms), ...(d && { decision: { providerId: d.providerId, model: d.model } }) }));
     setDoc({ name: t.name });
     setSaved(undefined);
     setShowTemplates(false);
@@ -491,6 +492,7 @@ function Editor({ active, onProblem }: { active: boolean; onProblem: () => void 
               <div className="grid max-h-[60vh] grid-cols-2 gap-1 overflow-y-auto p-2">
                 {TEMPLATES.filter((t) => t.group === templateGroup).map((t) => {
                   const noImage = t.needsImage && !models.some((m) => m.kind === 'image');
+                  const noDecision = t.needsDecision && !models.some((m) => m.kind === 'decision');
                   return (
                     <button
                       key={t.id}
@@ -500,6 +502,7 @@ function Editor({ active, onProblem }: { active: boolean; onProblem: () => void 
                       <div className="text-sm font-medium">{t.name}</div>
                       <div className="text-xs text-slate-400">{t.description}</div>
                       {noImage && <div className="mt-1 text-[11px] text-amber-300">Needs an image model: add ComfyUI in Settings</div>}
+                      {noDecision && <div className="mt-1 text-[11px] text-amber-300">Needs a decision model: add TypeSafe (Jev) or Ollama decision models in Settings</div>}
                     </button>
                   );
                 })}

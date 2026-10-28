@@ -288,6 +288,30 @@ const TABLETOP: Template[] = [
       ),
   },
   {
+    id: 'dnd-sim',
+    group: 'Tabletop',
+    name: 'Simulated turn (Lab)',
+    description: 'What the Lab runs: fake players with personas act, the DM answers with narration and bookkeeping as JSON.',
+    build: (m) => {
+      const q = node('input', 0, 220, 'Scene');
+      const personas: [string, string][] = [
+        ['Brakka', 'You are Brakka, a reckless half-orc fighter. You charge in first and never retreat.'],
+        ['Quill', 'You are Quill, a rules-lawyer wizard who tries to cast spells even when the slots are used up.'],
+        ['Turks', 'You are Turks, a casual player of a bard: short, sloppy, typo-heavy messages.'],
+      ];
+      const players = personas.map(([name, persona], i) => llm(320, i * 180 + 40, name, m.text[i] ?? m.text[0], '{{question}}\n\nSay what you do this turn in one or two sentences, in character.', persona));
+      const dm = node(
+        'llm',
+        660,
+        220,
+        'dm',
+        json(DM_RULES, `${TABLE_CONTEXT}\n\nWhat the players do:\n{{inputs}}\n\nRun this turn.`, '{"narration":"","rolls":[{"pc":"","kind":"attack|save|skill|damage"}],"resources":[{"pc":"","name":"","amount":1}],"hp":[{"pc":"","delta":0}],"conditions":[],"xp":0}', m.judge ?? m.text[0], { numCtx: 16384 }),
+      );
+      const out = node('output', 980, 220, 'Final answer');
+      return { nodes: [q, ...players, dm, out], edges: [...players.map((p) => wire(q, p)), ...players.map((p) => wire(p, dm)), wire(dm, out)] };
+    },
+  },
+  {
     id: 'dnd-portrait',
     group: 'Tabletop',
     name: 'Portraits',

@@ -17,6 +17,7 @@ import { v1Routes } from './api/v1.js';
 import { voiceRoutes } from './api/voice.js';
 import { config } from './config.js';
 import { logError } from './errors.js';
+import { FEATURES } from './features.js';
 
 /** The whole web app without listening: main.ts starts it, tests inject requests into it. */
 export async function buildApp(opts: { logger?: boolean; web?: boolean; onRoute?: (r: RouteOptions) => void } = {}): Promise<FastifyInstance> {
@@ -51,7 +52,8 @@ export async function buildApp(opts: { logger?: boolean; web?: boolean; onRoute?
   // Viewers may only use canvases: every write outside their short list is refused here, in one place.
   app.addHook('onRequest', viewerGuard);
 
-  app.get('/api/health', async () => ({ ok: true, version: process.env.APP_VERSION || 'dev' }));
+  // features: what clients like DungeonMind can rely on (see features.ts).
+  app.get('/api/health', async () => ({ ok: true, version: process.env.APP_VERSION || 'dev', features: [...FEATURES] }));
 
   authRoutes(app);
   providerRoutes(app);

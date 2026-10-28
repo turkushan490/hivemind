@@ -142,6 +142,9 @@ const MIGRATIONS = [
     PRIMARY KEY (owner_id, key)
   );
   `,
+  `
+  ALTER TABLE api_tokens ADD COLUMN scope TEXT;
+  `,
 ];
 
 export const db = new DatabaseSync(join(config.dataDir, 'hivemind.db'));

@@ -7,6 +7,7 @@ import { checkVars } from '../engine/vars.js';
 import { cancelRun, startRun, subscribe } from '../events/runs.js';
 import { nodeOutputs } from '../services/runOutputs.js';
 import { requireUser, type User } from './auth.js';
+import { canvasAllowed } from './scope.js';
 import { gpuFreerFor, resolverFor } from './providers.js';
 
 export interface CanvasRow {
@@ -33,14 +34,18 @@ const toCanvas = (r: CanvasRow, user: User) => ({
 
 /** Your own canvases plus the ones others share with everyone. */
 export const canvasesFor = (user: User) =>
-  db
-    .prepare('SELECT c.*, u.username AS owner_name FROM canvases c JOIN users u ON u.id = c.owner_id WHERE c.owner_id = ? OR c.shared = 1 ORDER BY c.updated_at DESC')
-    .all(user.id) as unknown as CanvasRow[];
+  (
+    db
+      .prepare('SELECT c.*, u.username AS owner_name FROM canvases c JOIN users u ON u.id = c.owner_id WHERE c.owner_id = ? OR c.shared = 1 ORDER BY c.updated_at DESC')
+      .all(user.id) as unknown as CanvasRow[]
+  ).filter((r) => canvasAllowed(user, r.id));
 
 export const canvasFor = (user: User, id: string) =>
-  db.prepare('SELECT c.*, u.username AS owner_name FROM canvases c JOIN users u ON u.id = c.owner_id WHERE c.id = ? AND (c.owner_id = ? OR c.shared = 1)').get(id, user.id) as
-    | CanvasRow
-    | undefined;
+  canvasAllowed(user, id)
+    ? (db.prepare('SELECT c.*, u.username AS owner_name FROM canvases c JOIN users u ON u.id = c.owner_id WHERE c.id = ? AND (c.owner_id = ? OR c.shared = 1)').get(id, user.id) as
+        | CanvasRow
+        | undefined)
+    : undefined;
 
 const userById = (id: string) => db.prepare('SELECT id, username, role FROM users WHERE id = ?').get(id) as User | undefined;
 
@@ -108,7 +113,7 @@ export function runRoutes(app: FastifyInstance) {
     } catch (err) {
       return reply.code(400).send({ error: (err as Error).message });
     }
-    const runId = startRun({ ownerId: req.user!.id, canvasId: body.canvasId, graph, question, vars, resolve: resolverFor(providerUser), freeGpu: gpuFreerFor(providerUser) });
+    const runId = startRun({ ownerId: req.user!.id, user: req.user!, canvasId: body.canvasId, graph, question, vars, resolve: resolverFor(providerUser), freeGpu: gpuFreerFor(providerUser) });
     return { runId };
   });
 

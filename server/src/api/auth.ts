@@ -11,6 +11,14 @@ export interface User {
   username: string;
   /** admin: everything; user: builds and runs own canvases; viewer: only uses canvases in Use mode. */
   role: Role;
+  /** Set when an API token is limited to some canvases and memory keys (see scope.ts). */
+  scope?: TokenScope;
+}
+
+/** What a limited API token may use: canvas ids and memory keys, exact or ending in "*" ("dnd-*", "rules:*"). */
+export interface TokenScope {
+  canvases: string[];
+  memory: string[];
 }
 
 declare module 'fastify' {
@@ -32,11 +40,11 @@ function findUserBySession(token: string): User | undefined {
 
 function findUserByApiToken(token: string): User | undefined {
   const row = db
-    .prepare('SELECT u.id, u.username, u.role, t.id AS tid FROM api_tokens t JOIN users u ON u.id = t.user_id WHERE t.token_hash = ?')
-    .get(sha256(token)) as (User & { tid: string }) | undefined;
+    .prepare('SELECT u.id, u.username, u.role, t.id AS tid, t.scope FROM api_tokens t JOIN users u ON u.id = t.user_id WHERE t.token_hash = ?')
+    .get(sha256(token)) as (User & { tid: string; scope: string | null }) | undefined;
   if (!row) return;
   db.prepare("UPDATE api_tokens SET last_used_at = datetime('now') WHERE id = ?").run(row.tid);
-  return { id: row.id, username: row.username, role: row.role };
+  return { id: row.id, username: row.username, role: row.role, ...(row.scope && { scope: JSON.parse(row.scope) as TokenScope }) };
 }
 
 /** Session cookie for the web UI, `Authorization: Bearer hm_…` for apps (phone, Home Assistant). */
@@ -199,19 +207,44 @@ export function authRoutes(app: FastifyInstance) {
 
   // ---- API tokens: each user makes their own for the phone app, Home Assistant, scripts ----
   app.get('/api/tokens', { preHandler: requireUser }, async (req) =>
-    db
-      .prepare('SELECT id, name, prefix, created_at AS createdAt, last_used_at AS lastUsedAt FROM api_tokens WHERE user_id = ? ORDER BY created_at')
-      .all(req.user!.id),
+    (
+      db
+        .prepare('SELECT id, name, prefix, created_at AS createdAt, last_used_at AS lastUsedAt, scope FROM api_tokens WHERE user_id = ? ORDER BY created_at')
+        .all(req.user!.id) as { scope: string | null }[]
+    ).map(({ scope, ...t }) => ({ ...t, ...(scope && { scope: JSON.parse(scope) }) })),
   );
 
   app.post('/api/tokens', { preHandler: requireUser }, async (req, reply) => {
-    const name = String((req.body as { name?: string })?.name ?? '').trim();
+    const body = (req.body ?? {}) as { name?: string; canvases?: unknown; memory?: unknown };
+    const name = String(body.name ?? '').trim();
     if (!name) return reply.code(400).send({ error: 'Give the token a name' });
+    // A limited token can't make tokens with more rights than itself.
+    if (req.user!.scope) return reply.code(403).send({ error: 'A limited API token cannot make new tokens' });
+    const list = (v: unknown, what: string) => {
+      if (v === undefined || v === null) return undefined;
+      if (!Array.isArray(v) || v.some((x) => typeof x !== 'string' || !x.trim() || x.length > 120)) throw new Error(`${what} must be a list of ids or patterns like "dnd-*"`);
+      return [...new Set((v as string[]).map((x) => x.trim()))];
+    };
+    let scope: TokenScope | undefined;
+    try {
+      const canvases = list(body.canvases, 'canvases');
+      const memory = list(body.memory, 'memory');
+      if (canvases || memory) scope = { canvases: canvases ?? [], memory: memory ?? [] };
+    } catch (err) {
+      return reply.code(400).send({ error: (err as Error).message });
+    }
     const token = `hm_${randomToken(24)}`;
     const id = newId();
-    db.prepare('INSERT INTO api_tokens (id, user_id, name, token_hash, prefix) VALUES (?, ?, ?, ?, ?)').run(id, req.user!.id, name, sha256(token), token.slice(0, 7));
+    db.prepare('INSERT INTO api_tokens (id, user_id, name, token_hash, prefix, scope) VALUES (?, ?, ?, ?, ?, ?)').run(
+      id,
+      req.user!.id,
+      name,
+      sha256(token),
+      token.slice(0, 7),
+      scope ? JSON.stringify(scope) : null,
+    );
     // Only time the full token is shown.
-    return { id, name, token };
+    return { id, name, token, ...(scope && { scope }) };
   });
 
   app.delete('/api/tokens/:id', { preHandler: requireUser }, async (req) => {

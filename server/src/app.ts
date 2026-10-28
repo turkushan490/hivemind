@@ -11,6 +11,7 @@ import { memoryRoutes } from './api/memory.js';
 import { problemRoutes } from './api/problems.js';
 import { providerRoutes } from './api/providers.js';
 import { runRoutes } from './api/runs.js';
+import { scopeGuard } from './api/scope.js';
 import { settingsRoutes } from './api/settings.js';
 import { statsRoutes } from './api/stats.js';
 import { v1Routes } from './api/v1.js';
@@ -51,6 +52,8 @@ export async function buildApp(opts: { logger?: boolean; web?: boolean; onRoute?
 
   // Viewers may only use canvases: every write outside their short list is refused here, in one place.
   app.addHook('onRequest', viewerGuard);
+  // Limited API tokens: only their canvases, runs and memory keys.
+  app.addHook('preHandler', scopeGuard);
 
   // features: what clients like DungeonMind can rely on (see features.ts).
   app.get('/api/health', async () => ({ ok: true, version: process.env.APP_VERSION || 'dev', features: [...FEATURES] }));

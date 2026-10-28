@@ -5,6 +5,7 @@ import { forgetKey, importMemory, keyExists, MAX_IMPORT_BYTES, MAX_IMPORT_ENTRIE
 import { homeAssistantConnection, homeAssistantSettings, saveHomeAssistantSettings } from '../services/homeassistant.js';
 import { saveSearchSettings, searchSettings, webSearch } from '../services/search.js';
 import { requireAdmin, requireUser } from './auth.js';
+import { memoryAllowed } from './scope.js';
 
 export function settingsRoutes(app: FastifyInstance) {
   app.get('/api/settings/search', { preHandler: requireUser }, async () => searchSettings());
@@ -69,7 +70,9 @@ export function settingsRoutes(app: FastifyInstance) {
            LEFT JOIN memory_keys k ON k.owner_id = m.owner_id AND k.key = m.key WHERE m.owner_id = ? GROUP BY m.key ORDER BY last DESC`,
         )
         .all(req.user!.id) as { key: string; count: number; last: string; pinned: number }[]
-    ).map((r) => ({ ...r, pinned: !!r.pinned })),
+    )
+      .filter((r) => memoryAllowed(req.user!, r.key))
+      .map((r) => ({ ...r, pinned: !!r.pinned })),
   );
 
   app.delete('/api/memory/keys/:key', { preHandler: requireUser }, async (req) => {

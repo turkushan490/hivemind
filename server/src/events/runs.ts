@@ -5,6 +5,8 @@ import { runGraph, type EngineDeps } from '../engine/run.js';
 import type { ChatContext } from '../nodes/index.js';
 import { logError } from '../errors.js';
 import { memoryFor } from '../services/memory.js';
+import type { User } from '../api/auth.js';
+import { scopedMemory } from '../api/scope.js';
 import { webSearch } from '../services/search.js';
 import { kindOf, writeUnique } from '../services/files.js';
 import { homeAssistantConnection } from '../services/homeassistant.js';
@@ -25,6 +27,8 @@ const live = new Map<string, LiveRun>();
 
 export function startRun(opts: {
   ownerId: string;
+  /** Who started it; a limited API token only reaches its own memory keys. */
+  user?: User;
   canvasId?: string;
   graph: CanvasGraph;
   question: string;
@@ -75,7 +79,7 @@ export function startRun(opts: {
       },
       services: {
         search: webSearch,
-        memory: memoryFor(opts.ownerId),
+        memory: opts.user ? scopedMemory(memoryFor(opts.ownerId), opts.user) : memoryFor(opts.ownerId),
         saveFile: (path, data) => {
           const saved = writeUnique(path, data);
           return { path: saved, kind: kindOf(saved) };

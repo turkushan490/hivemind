@@ -51,7 +51,7 @@ export function v1Routes(app: FastifyInstance) {
     }
 
     const user = req.user!;
-    const runId = startRun({ ownerId: user.id, canvasId: row.id, graph, question, vars, chat, resolve: resolverFor(providerUser), freeGpu: gpuFreerFor(providerUser) });
+    const runId = startRun({ ownerId: user.id, user, canvasId: row.id, graph, question, vars, chat, resolve: resolverFor(providerUser), freeGpu: gpuFreerFor(providerUser) });
     const model = body.model;
     const live = streamSource(graph);
     const events: RunEvent[] = [];

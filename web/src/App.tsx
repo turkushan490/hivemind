@@ -12,6 +12,7 @@ import { Stats } from './pages/Stats';
 import { SetupWizard } from './pages/SetupWizard';
 import { UsePage } from './pages/UsePage';
 import { useStored } from './stored';
+import { LabPage } from './lab/LabPage';
 
 interface Me {
   id: string;
@@ -19,7 +20,7 @@ interface Me {
   role: 'admin' | 'user' | 'viewer';
 }
 
-const TABS = { use: 'Use', canvas: 'Canvas', files: 'Files', run: 'Quick council', stats: 'Stats', settings: 'Settings', problems: 'Problems' } as const;
+const TABS = { use: 'Use', canvas: 'Canvas', files: 'Files', run: 'Quick council', stats: 'Stats', lab: 'Lab', settings: 'Settings', problems: 'Problems' } as const;
 type Tab = keyof typeof TABS;
 /** Viewers only use canvases. */
 const VIEWER_TABS: Tab[] = ['use', 'settings', 'problems'];
@@ -151,6 +152,11 @@ export function App() {
         {opened.has('stats') && (
           <div hidden={tab !== 'stats'}>
             <Stats active={tab === 'stats'} isAdmin={me.role === 'admin'} />
+          </div>
+        )}
+        {opened.has('lab') && (
+          <div hidden={tab !== 'lab'}>
+            <LabPage active={tab === 'lab'} />
           </div>
         )}
         {opened.has('settings') && (

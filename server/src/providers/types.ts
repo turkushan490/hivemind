@@ -64,6 +64,8 @@ export interface ImageRequest {
   cfg?: number;
   lora?: string;
   loraStrength?: number;
+  /** How many pictures in one job (1-8); default 1. */
+  batch?: number;
 }
 
 export interface GeneratedImage {

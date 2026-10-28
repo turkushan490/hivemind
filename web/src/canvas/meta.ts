@@ -194,7 +194,7 @@ export function summary(kind: NodeType, c: import('@hivemind/shared').NodeConfig
       return c.model ? { text: c.model.model } : { text: 'Pick a model →', missing: true };
     case 'image':
       return c.model
-        ? { text: `${c.model.model.split('/').pop()!.replace(/\.safetensors$/, '')} · ${c.width ?? 1024}×${c.height ?? 1024}${c.lora ? ' · LoRA' : ''}` }
+        ? { text: `${c.model.model.split('/').pop()!.replace(/\.safetensors$/, '')} · ${c.width ?? 1024}×${c.height ?? 1024}${c.lora ? ' · LoRA' : ''}${(c.batch ?? 1) > 1 ? ` · ×${c.batch}` : ''}` }
         : { text: 'Pick an image model →', missing: true };
     case 'save':
       return { text: `${c.fileName || 'answer-{{date}}'} · ${c.format ?? 'auto'}` };

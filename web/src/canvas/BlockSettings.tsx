@@ -339,6 +339,21 @@ function ImageSettings(p: Props) {
         </div>
         <CustomSize width={c.width ?? 1024} height={c.height ?? 1024} onChange={(width, height) => p.onChange({ width, height })} />
       </div>
+      <div className="space-y-1">
+        <Label>Pictures per run</Label>
+        <div className="flex gap-1">
+          {[1, 2, 3, 4, 5, 6, 7, 8].map((n) => (
+            <button
+              key={n}
+              className={`flex-1 rounded-md border py-1 text-xs transition-colors ${(c.batch ?? 1) === n ? 'border-fuchsia-500 bg-fuchsia-500/15 text-fuchsia-100' : 'border-[#30363d] text-slate-400 hover:text-slate-200'}`}
+              onClick={() => p.onChange({ batch: n === 1 ? undefined : n })}
+            >
+              {n}
+            </button>
+          ))}
+        </div>
+        {(c.batch ?? 1) > 1 && <span className="text-xs text-slate-500">One job makes all {c.batch} at once (more GPU memory and time); you get every picture.</span>}
+      </div>
       {isComfy && (
         <div className="grid grid-cols-2 gap-2">
           <label className="block space-y-1">

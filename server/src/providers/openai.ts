@@ -43,18 +43,24 @@ export function openaiAdapter(cfg: ProviderConfig): ProviderAdapter {
     },
 
     async image(req: ImageRequest, signal: AbortSignal, onProgress: (note: string) => void): Promise<GeneratedImage[]> {
-      onProgress('Asking the image API…');
       const size = `${req.width}x${req.height}`;
-      const res = await fetch(`${base}/images/generations`, {
-        method: 'POST',
-        signal,
-        headers: headers(),
-        body: JSON.stringify({ model: req.model, prompt: req.prompt, n: 1, size, ...(/^dall-e/i.test(req.model) && { response_format: 'b64_json' }) }),
-      });
-      await checkResponse(res, `${cfg.preset} images`);
-      const data = (await res.json()) as { data?: { b64_json?: string; url?: string }[] };
+      const want = Math.max(1, Math.min(8, Math.floor(req.batch ?? 1)));
+      // DALL·E 3 makes one picture per request; the others take n.
+      const one = /^dall-e-3/i.test(req.model);
+      const items: { b64_json?: string; url?: string }[] = [];
+      for (let i = 0; i < (one ? want : 1); i++) {
+        onProgress(want > 1 ? `Asking the image API… (${one ? `${i + 1}/${want}` : `${want} pictures`})` : 'Asking the image API…');
+        const res = await fetch(`${base}/images/generations`, {
+          method: 'POST',
+          signal,
+          headers: headers(),
+          body: JSON.stringify({ model: req.model, prompt: req.prompt, n: one ? 1 : want, size, ...(/^dall-e/i.test(req.model) && { response_format: 'b64_json' }) }),
+        });
+        await checkResponse(res, `${cfg.preset} images`);
+        items.push(...(((await res.json()) as { data?: { b64_json?: string; url?: string }[] }).data ?? []));
+      }
       return Promise.all(
-        (data.data ?? []).map(async (d) => {
+        items.map(async (d) => {
           if (d.b64_json) return { data: Buffer.from(d.b64_json, 'base64'), ext: 'png' };
           const r = await fetch(d.url!, { signal });
           return { data: Buffer.from(await r.arrayBuffer()), ext: 'png' };

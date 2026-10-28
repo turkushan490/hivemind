@@ -19,7 +19,7 @@ export function txt2imgWorkflow(req: ImageRequest, seed: number) {
     ...lora,
     '6': { class_type: 'CLIPTextEncode', inputs: { text: req.prompt, clip } },
     '7': { class_type: 'CLIPTextEncode', inputs: { text: req.negative ?? 'lowres, blurry, bad anatomy, watermark, text', clip } },
-    '5': { class_type: 'EmptyLatentImage', inputs: { width: req.width, height: req.height, batch_size: 1 } },
+    '5': { class_type: 'EmptyLatentImage', inputs: { width: req.width, height: req.height, batch_size: Math.max(1, Math.min(8, Math.floor(req.batch ?? 1))) } },
     '3': {
       class_type: 'KSampler',
       inputs: {

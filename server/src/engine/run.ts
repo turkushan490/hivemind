@@ -287,7 +287,7 @@ export async function runGraph(
           if (p.local && p.exclusive !== false) await deps.services.freeGpu?.(p.hostKey, primary.providerId).catch(() => {});
           const c = node.config;
           const images = await p.adapter.image(
-            { model: primary.model, prompt, negative: c.negative, width: c.width ?? 1024, height: c.height ?? 1024, steps: c.steps, cfg: c.cfg, lora: c.lora, loraStrength: c.loraStrength },
+            { model: primary.model, prompt, negative: c.negative, width: c.width ?? 1024, height: c.height ?? 1024, steps: c.steps, cfg: c.cfg, lora: c.lora, loraStrength: c.loraStrength, batch: c.batch },
             signal,
             (note) => {
               markReady();

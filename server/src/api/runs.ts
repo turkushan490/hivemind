@@ -1,10 +1,11 @@
-import type { CanvasGraph, RunRequest, RunSummary } from '@hivemind/shared';
+import type { CanvasGraph, RunEvent, RunRequest, RunSummary } from '@hivemind/shared';
 import type { FastifyInstance } from 'fastify';
 import { newId } from '../crypto.js';
 import { db } from '../db/index.js';
 import { validateGraph } from '../engine/graph.js';
 import { checkVars } from '../engine/vars.js';
 import { cancelRun, startRun, subscribe } from '../events/runs.js';
+import { nodeOutputs } from '../services/runOutputs.js';
 import { requireUser, type User } from './auth.js';
 import { gpuFreerFor, resolverFor } from './providers.js';
 
@@ -140,7 +141,8 @@ export function runRoutes(app: FastifyInstance) {
       .get((req.params as { id: string }).id, req.user!.id) as Record<string, any> | undefined;
     if (!row) return reply.code(404).send({ error: 'Run not found' });
     if (row.status === 'running') return reply.code(409).send({ error: 'This run is still going' });
-    return { id: row.id, question: row.question, status: row.status, final: row.final ?? undefined, cost: row.cost ?? undefined, events: JSON.parse(row.events ?? '[]') };
+    const events = JSON.parse(row.events ?? '[]') as RunEvent[];
+    return { id: row.id, question: row.question, status: row.status, final: row.final ?? undefined, cost: row.cost ?? undefined, outputs: nodeOutputs(events), events };
   });
 
   app.delete('/api/runs/:id', { preHandler: requireUser }, async (req) => {

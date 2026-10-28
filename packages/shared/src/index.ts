@@ -327,6 +327,8 @@ export interface RunEvent {
   ts: number;
   nodeId?: string;
   nodeType?: NodeType;
+  /** node_done: the block's label, or its id when it has none. */
+  label?: string;
   model?: string;
   /** token: the new text piece. node_done: the full output. */
   text?: string;
@@ -362,6 +364,13 @@ export interface RunEvent {
 }
 
 export type RunStatus = 'running' | 'done' | 'error' | 'cancelled';
+
+/** One block's result in GET /api/runs/:id → outputs, keyed by label (or id; duplicates get "#2", "#3"). */
+export interface NodeOutput {
+  nodeId: string;
+  type: NodeType;
+  text: string;
+}
 
 /** POST /api/runs body. */
 export interface RunRequest {

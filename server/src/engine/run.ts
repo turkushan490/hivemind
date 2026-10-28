@@ -302,6 +302,7 @@ export async function runGraph(graph: CanvasGraph, question: string, deps: Engin
       deps.emit({
         ...base,
         type: 'node_done',
+        label: node.label || node.id,
         ...(files.length && { files }),
         text,
         tokens: usesModels ? tokens : undefined,

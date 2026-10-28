@@ -80,6 +80,7 @@ Apps that need more than one answer text (like [DungeonMind](https://github.com/
 |---|---|
 | `vars` | `POST /api/runs {canvasId, question, vars:{name:"…"}}` fills `{{vars.name}}` in prompts, system prompts, the image prompt, the Save file name and Webhook/Home Assistant/Discord templates (JSON-escaped in JSON bodies). Unknown vars are empty. |
 | `memoryKeyTemplate` | A Memory block's key is filled too, so one canvas keeps one memory per campaign: `dnd:{{vars.tableId}}`. Trimmed, at most 120 chars, `default` when empty. |
+| `nodeOutputs` | `GET /api/runs/:id` adds `outputs: {<label>: {nodeId, type, text}}`, one per finished block (label, else the block id; a duplicate label gets `#2`). Skipped and failed blocks are left out. The SSE `node_done` event carries `label`. |
 
 ```bash
 H=http://server:4820; T="Authorization: Bearer hm_..."

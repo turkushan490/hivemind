@@ -31,6 +31,10 @@ One container, everything in /data (SQLite). Open the WebUI and create the admin
   <Beta>true</Beta>
   <License>AGPL-3.0</License>
   <Changes>
+### Milestone 7
+- Decision models: TypeSafe Jev, Ollama Nimble/Tev1/Clef, OpenAI Decisions; Decide block with live probability bars, Auto (Jev router) model, Router decides with Jev, Jev scoring in Judge/Vote
+- Training Lab for DungeonMind: simulator, rules-checker, review queue, JSONL export, scoreboard
+- API for apps: run variables, JSON mode, context size, memory search + import, per-block outputs, image batch, limited API tokens
 ### Milestone 6
 - Roles: admin, user and viewer; shared canvases; user management in Settings
 - Stats page: cost per day, provider and model, tokens/sec, Judge/Vote leaderboard

@@ -70,6 +70,8 @@ client = OpenAI(base_url="http://server:4820/v1", api_key="hm_...")
 print(client.chat.completions.create(model="kitchen-helper", messages=[{"role": "user", "content": "Hi!"}]).choices[0].message.content)
 ```
 
+**One agent for all canvases:** with Settings → Voice → Canvas router on, the model `auto` lets a decision model pick the canvas per request.
+
 **Open WebUI:** under Settings → Connections, add an OpenAI connection with the base URL and token above. Your canvases then appear as models.
 
 ## HiveMind's own run API (for apps)
@@ -80,6 +82,12 @@ Apps that need more than one answer text (like [DungeonMind](https://github.com/
 |---|---|
 | `vars` | `POST /api/runs {canvasId, question, vars:{name:"…"}}` fills `{{vars.name}}` in prompts, system prompts, the image prompt, the Save file name and Webhook/Home Assistant/Discord templates (JSON-escaped in JSON bodies). Unknown vars are empty. |
 | `memoryKeyTemplate` | A Memory block's key is filled too, so one canvas keeps one memory per campaign: `dnd:{{vars.tableId}}`. Trimmed, at most 120 chars, `default` when empty. |
+| `history` | `/v1/chat/completions` turns the whole conversation into `{{system}}`, `{{history}}` and `{{question}}`; an AI model block with "Use chat messages" gets the real message list. |
+| `jsonMode` | A block with "JSON output" answers with checked JSON (one repair try, else the block fails with `Invalid JSON after repair`). |
+| `numCtx` | A block's context size is sent to Ollama as `num_ctx`. |
+| `memorySearch` / `memoryImport` | Memory blocks can search (`mode: "search"`); `POST /api/memory/keys/:key/import` (max 20 000 entries / 20 MB, else 413) and `/search`. |
+| `imageBatch` | An Image block makes 1–8 pictures per run. |
+| `decisionProviders` / `decide` / `autoModel` | Decision models, the Decide block and the Auto (Jev router) model ([decisions.md](decisions.md)). |
 | `nodeOutputs` | `GET /api/runs/:id` adds `outputs: {<label>: {nodeId, type, text}}`, one per finished block (label, else the block id; a duplicate label gets `#2`). Skipped and failed blocks are left out. The SSE `node_done` event carries `label`. |
 
 ```bash

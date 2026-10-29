@@ -1,6 +1,7 @@
 import type { TrainBase, TrainJob, TrainOverview, TrainState } from '@hivemind/shared';
 import { createHash } from 'node:crypto';
-import { copyFileSync, createReadStream, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { spawn, type ChildProcess } from 'node:child_process';
+import { copyFileSync, createReadStream, existsSync, mkdirSync, openSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { Readable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
@@ -13,12 +14,13 @@ import { exportJsonl } from './data.js';
 import { activeLab } from './runner.js';
 
 /**
- * "Make a new model": a QLoRA fine-tune of a base model on the Lab dataset, done by the trainer container
- * (Unsloth) on the same GPU, then imported into Ollama as a new model. HiveMind holds that GPU's lock for the
- * whole job, so Ollama, ComfyUI and the simulator wait ("Training — local AI paused").
+ * "Make a new model": a LoRA fine-tune of a base model on the Lab dataset, done by the trainer (Unsloth) on the
+ * same GPU, then imported into Ollama as a new model. HiveMind holds that GPU's lock for the whole job, so Ollama,
+ * ComfyUI and the simulator wait ("Training — local AI paused").
  *
- * The trainer scripts ship with HiveMind and are copied into the shared Lab folder (/data/lab/trainer), which the
- * trainer container mounts as /lab; the token in that folder is the shared secret between the two.
+ * The trainer is built into the HiveMind image: HiveMind copies its scripts into the Lab folder (/data/lab/trainer)
+ * and runs it as a child process on localhost. TRAINER_URL can point at a trainer elsewhere instead; the token
+ * in that folder is the shared secret between the two.
  */
 
 export const LAB_DIR = join(config.dataDir, 'lab');
@@ -30,16 +32,57 @@ const pollMs = () => Number(process.env.TRAIN_POLL_MS) || 5000;
 /** Training starts only when the GPU has at most this much in use (desktop and other small programs). */
 const gpuFreeMb = () => Number(process.env.TRAIN_GPU_FREE_MB) || 1536;
 
+// Speeds are for a Tesla T4, which has no bfloat16: Qwen3.5 trains in float32 there (slow), Qwen3 in float16.
 export const BASES: TrainBase[] = [
-  { id: 'unsloth/Qwen3.5-9B', name: 'Qwen3.5 9B', note: 'Best quality that fits a 16 GB GPU; the base OmniCoder is built on. Slowest.', secPerStep: 25 },
-  { id: 'unsloth/Qwen3.5-4B', name: 'Qwen3.5 4B', note: 'About twice as fast, a bit less smart.', secPerStep: 12 },
-  { id: 'unsloth/Qwen3-8B', name: 'Qwen3 8B', note: 'Text-only previous generation; very well supported.', secPerStep: 22 },
-  { id: 'unsloth/Qwen3.5-2B', name: 'Qwen3.5 2B', note: 'Fast and small; good for quick tests.', secPerStep: 6 },
-  { id: 'unsloth/Qwen3.5-0.8B', name: 'Qwen3.5 0.8B', note: 'Tiny: only to test that training works end to end.', secPerStep: 3 },
+  { id: 'unsloth/Qwen3-8B', name: 'Qwen3 8B', note: 'Smartest that fits a 16 GB T4 (4-bit, text-only). Slow: hours for a few hundred examples.', secPerStep: 40 },
+  { id: 'unsloth/Qwen3.5-4B', name: 'Qwen3.5 4B', note: 'Newer and multilingual; fits a T4 in 4-bit, in float32 there, so slow.', secPerStep: 60 },
+  { id: 'unsloth/Qwen3.5-2B', name: 'Qwen3.5 2B', note: 'Fits a T4 comfortably; good balance for small tasks.', secPerStep: 15 },
+  { id: 'unsloth/Qwen3.5-0.8B', name: 'Qwen3.5 0.8B', note: 'Tiny: fast, for testing that training works end to end.', secPerStep: 6 },
+  { id: 'unsloth/Qwen3.5-9B', name: 'Qwen3.5 9B', note: "Doesn't fit a 16 GB T4 in float32 — needs a bigger GPU (Hugging Face cloud training is planned).", secPerStep: 120 },
 ];
 
-/** Where the trainer listens: TRAINER_URL, else Settings. */
-export const trainerUrl = () => (process.env.TRAINER_URL || getSetting('lab.trainerUrl') || '').trim().replace(/\/+$/, '') || undefined;
+/** The trainer built into this HiveMind (started by startBuiltinTrainer), when there is one. */
+let builtin: string | undefined;
+
+/** Where the trainer listens: TRAINER_URL, else Settings, else the built-in one. */
+export const trainerUrl = () => (process.env.TRAINER_URL || getSetting('lab.trainerUrl') || builtin || '').trim().replace(/\/+$/, '') || undefined;
+
+/** Python of the training stack inside the HiveMind image (unsloth/unsloth:core). */
+const trainerPython = () => [process.env.TRAINER_PYTHON, '/opt/unsloth-venv/bin/python'].find((p) => p && existsSync(p));
+
+/**
+ * Starts the trainer inside this container (the HiveMind image carries the training stack), on localhost only,
+ * and starts it again when it stops. Without the training stack (a dev machine) nothing happens.
+ */
+export function startBuiltinTrainer(): ChildProcess | undefined {
+  const python = trainerPython();
+  if (!python || process.env.TRAINER_URL) return;
+  const port = Number(process.env.TRAINER_PORT) || 8765;
+  builtin = `http://127.0.0.1:${port}`;
+  const log = join(TRAINER_DIR, 'server.log');
+  let child: ChildProcess | undefined;
+  let stopping = false;
+  let restarts = 0;
+  const start = () => {
+    const out = openSync(log, 'a');
+    child = spawn(python, [join(TRAINER_DIR, 'server.py')], {
+      env: { ...process.env, LAB_DIR, TRAINER_HOST: '127.0.0.1', TRAINER_PORT: String(port), HF_HOME: process.env.HF_HOME || join(config.dataDir, 'trainer-cache', 'huggingface') },
+      stdio: ['ignore', out, out],
+    });
+    child.once('exit', (code) => {
+      if (stopping) return;
+      // A crash loop is reported once, and slows down instead of spinning.
+      if (++restarts === 3) logError({ source: 'server', message: `The built-in trainer keeps stopping (exit code ${code}); see ${log}` });
+      setTimeout(start, Math.min(60_000, 2000 * restarts)).unref();
+    });
+  };
+  start();
+  process.once('exit', () => {
+    stopping = true;
+    child?.kill('SIGTERM');
+  });
+  return child;
+}
 
 const tokenFile = join(TRAINER_DIR, 'token');
 const trainerToken = () => readFileSync(tokenFile, 'utf8').trim();
@@ -130,10 +173,12 @@ export async function overview(ownerId: string): Promise<TrainOverview> {
     try {
       const h = await trainer('/health');
       t = { ...t, ok: true, gpu: h.gpu?.name ? h.gpu : undefined, busy: h.busy ?? null };
+      // The trainer runs, but the container was started without the GPU (--gpus=all on the HiveMind container).
+      if (!t.gpu) t = { ...t, ok: false, error: 'No NVIDIA GPU visible: give the HiveMind container the GPU (Extra Parameters: --gpus=all)' };
     } catch (err) {
-      t.error = (err as Error).message;
+      t.error = builtin && !process.env.TRAINER_URL ? `The built-in trainer is starting or stopped (see lab/trainer/server.log): ${(err as Error).message}` : (err as Error).message;
     }
-  } else t.error = 'Not set up yet';
+  } else t.error = 'Training needs the HiveMind image with the training stack and an NVIDIA GPU';
   const jobs = (db.prepare('SELECT * FROM lab_trains WHERE owner_id = ? ORDER BY started_at DESC LIMIT 20').all(ownerId) as unknown as TrainRow[]).map(toJob);
   return { trainer: t, rows: overviewRows(ownerId), minRows: MIN_ROWS, bases: BASES, jobs };
 }

@@ -81,14 +81,16 @@ Per model and prompt version, best first:
 **Lab → New model** trains a base model on the dataset (clean turns plus accepted corrections) and puts the result
 into Ollama under its own name, e.g. `dungeonmind-dm:20261028`. Your existing models are not changed.
 
-- **Trainer:** the `hivemind-trainer` container (template `unraid/hivemind-trainer.xml`, image `unsloth/unsloth:core`).
-  It mounts HiveMind's `lab` folder as `/lab`. HiveMind copies the trainer scripts (`server/trainer/server.py`,
-  `train.py`) and a token into that folder at every start, so the trainer always runs this HiveMind's version.
-  Set its address under Lab → New model (or `TRAINER_URL`).
-- **Base models** (Apache-2.0, fit a 16 GB GPU): Qwen3.5 9B (default), Qwen3.5 4B, Qwen3 8B, Qwen3.5 2B, and
-  Qwen3.5 0.8B for a quick end-to-end test. Any Hugging Face model Unsloth can train works.
+- **Trainer:** built into HiveMind. The image is based on `unsloth/unsloth:core` (PyTorch, CUDA, Unsloth, TRL,
+  llama.cpp) and HiveMind starts the trainer (`server/trainer/server.py`) itself, on localhost only, restarting it if
+  it stops. Give the HiveMind container the GPU (Unraid Extra Parameters: `--gpus=all`); without a GPU everything
+  else works and training says so. Base models are cached in `/data/trainer-cache`. `TRAINER_URL` (or Advanced in
+  the tab) can point at a trainer on another machine instead.
+- **Base models** (Apache-2.0), with what fits a 16 GB Tesla T4: Qwen3 8B (4-bit), Qwen3.5 4B (4-bit), Qwen3.5 2B,
+  Qwen3.5 0.8B (quick test). Qwen3.5 9B needs a bigger GPU. Any Hugging Face model Unsloth can train works.
   A GGUF-only model (such as most `hf.co/...` Ollama models) can't be trained; pick its base instead.
-- **How:** QLoRA (4-bit, LoRA rank 16, fp16 on a T4), then a `q4_k_m` GGUF. HiveMind uploads it to Ollama
+- **How:** LoRA (rank 16; 4-bit loading from 4B up). GPUs without bfloat16 (T4) train in float32, as Unsloth's own
+  T4 notebooks do, because Qwen3.5 gives NaNs in float16. Then a text-only `q4_k_m` GGUF. HiveMind uploads it to Ollama
   (`/api/blobs` + `/api/create`), which reads the chat template from the GGUF.
 - **GPU:** HiveMind takes the GPU lock for the whole job and frees Ollama and ComfyUI first; a running simulation
   is stopped. Runs started meanwhile wait in line. Cancel stops the trainer.

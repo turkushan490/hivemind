@@ -23,6 +23,8 @@ from pathlib import Path
 LAB = Path(os.environ.get("LAB_DIR", "/lab"))
 HERE = Path(__file__).resolve().parent
 PORT = int(os.environ.get("TRAINER_PORT", "8765"))
+# Inside the HiveMind image only HiveMind talks to it: listen on localhost there.
+HOST = os.environ.get("TRAINER_HOST", "0.0.0.0")
 JOB_ID = re.compile(r"^[A-Za-z0-9_-]{4,64}$")
 
 lock = threading.Lock()
@@ -152,4 +154,4 @@ class Handler(BaseHTTPRequestHandler):
 if __name__ == "__main__":
     (LAB / "train").mkdir(parents=True, exist_ok=True)
     print(f"HiveMind trainer on port {PORT}, lab folder {LAB}, GPU {gpu() or 'not found'}", flush=True)
-    ThreadingHTTPServer(("0.0.0.0", PORT), Handler).serve_forever()
+    ThreadingHTTPServer((HOST, PORT), Handler).serve_forever()

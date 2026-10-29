@@ -4,7 +4,7 @@ import { db, setSetting } from '../db/index.js';
 import { logError } from '../errors.js';
 import { exportJsonl, scoreboard } from '../lab/data.js';
 import { activeLab, recoverLab, startLab, type LabConfig } from '../lab/runner.js';
-import { cancelTrain, installTrainerScripts, overview, resumeTrains, startTrain, type TrainDeps } from '../lab/train.js';
+import { cancelTrain, installTrainerScripts, overview, resumeTrains, startBuiltinTrainer, startTrain, type TrainDeps } from '../lab/train.js';
 import { memoryFor } from '../services/memory.js';
 import { requireAdmin, requireUser, type User } from './auth.js';
 import { adapterFor, gpuFreerFor, resolverFor, visibleRows } from './providers.js';
@@ -23,6 +23,7 @@ export function labRoutes(app: FastifyInstance) {
   });
   try {
     installTrainerScripts();
+    startBuiltinTrainer();
     resumeTrains((ownerId) => trainDeps((db.prepare('SELECT id, username, role FROM users WHERE id = ?').get(ownerId) as unknown as User) ?? { id: ownerId, username: '?', role: 'admin' }));
   } catch (err) {
     logError({ source: 'server', message: `Lab: trainer setup failed: ${(err as Error).message}` });

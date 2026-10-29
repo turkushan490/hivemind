@@ -43,30 +43,41 @@ def main() -> None:
     status("loading", note=f"Loading {base} in 4-bit")
 
     import torch
+
+    # GPUs without bfloat16 (Tesla T4): Qwen3.5 gives NaNs in float16, so Unsloth must train in float32 there
+    # (its own T4 notebooks do this). The flag has to be set before unsloth is imported.
+    bf16 = torch.cuda.is_available() and torch.cuda.is_bf16_supported()
+    if not bf16:
+        os.environ["UNSLOTH_FORCE_FLOAT32"] = "1"
+
     from datasets import Dataset
     from transformers import TrainerCallback
     from trl import SFTConfig, SFTTrainer
-    from unsloth import FastModel
+    from unsloth import FastLanguageModel
 
-    # Older GPUs (Tesla T4) have no bfloat16: load and train in float16 there, or the fp16 scaler fails on bf16 weights.
-    bf16 = torch.cuda.is_available() and torch.cuda.is_bf16_supported()
-    dtype = torch.bfloat16 if bf16 else torch.float16
-    model, processor = FastModel.from_pretrained(model_name=base, max_seq_length=max_len, load_in_4bit=True, full_finetuning=False, dtype=dtype)
-    # Multimodal bases (Qwen3.5) come with a processor; text training uses its tokenizer.
+    # Unsloth advises 16-bit LoRA for Qwen3.5; from about 4B a 16 GB card needs the 4-bit load.
+    load4 = JOB.get("load4bit")
+    if load4 is None:
+        load4 = any(f"{n}b" in base.lower() for n in ("4", "7", "8", "9", "12", "14"))
+    status("loading", note=f"Loading {base} ({'4-bit' if load4 else '16-bit'}{', float32 compute' if not bf16 else ''})")
+    model, processor = FastLanguageModel.from_pretrained(model_name=base, max_seq_length=max_len, load_in_4bit=bool(load4), dtype=None)
+    # Multimodal bases (Qwen3.5) can come with a processor; text training uses its tokenizer.
     tok = getattr(processor, "tokenizer", processor)
     peft_args = dict(
-        finetune_vision_layers=False,
-        finetune_language_layers=True,
-        finetune_attention_modules=True,
-        finetune_mlp_modules=True,
         r=int(JOB.get("loraRank", 16)),
         lora_alpha=int(JOB.get("loraRank", 16)),
+        target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
         lora_dropout=0,
         bias="none",
         random_state=3407,
         use_gradient_checkpointing="unsloth",
     )
-    model = FastModel.get_peft_model(model, **only_known(FastModel.get_peft_model, peft_args))
+    model = FastLanguageModel.get_peft_model(model, **only_known(FastLanguageModel.get_peft_model, peft_args))
+    # LoRA weights that stayed bfloat16 break the float16 grad scaler ("... not implemented for 'BFloat16'").
+    if not bf16:
+        for p in model.parameters():
+            if p.requires_grad and p.dtype == torch.bfloat16:
+                p.data = p.data.float()
 
     rows = [json.loads(line) for line in (DIR / "dataset.jsonl").read_text(encoding="utf-8").splitlines() if line.strip()]
 

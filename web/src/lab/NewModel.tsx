@@ -45,7 +45,7 @@ export function NewModel({ active, providers }: { active: boolean; providers: Pr
     api<TrainOverview>('/api/lab/train', { quiet: true })
       .then((o) => {
         setInfo(o);
-        setUrl((u) => u || o.trainer.url || '');
+        setUrl((u) => u || (o.trainer.url?.includes('127.0.0.1') ? '' : o.trainer.url) || '');
       })
       .catch(() => {});
   const running = info?.jobs.find((j) => ACTIVE.has(j.state));
@@ -105,17 +105,20 @@ export function NewModel({ active, providers }: { active: boolean; providers: Pr
             <span className="font-semibold">Trainer</span>
             <span className="text-slate-400">
               {info.trainer.ok
-                ? `connected${info.trainer.gpu ? ` · ${info.trainer.gpu.name}, ${(info.trainer.gpu.usedMb / 1024).toFixed(1)} / ${(info.trainer.gpu.totalMb / 1024).toFixed(0)} GB in use` : ''}`
+                ? `ready${info.trainer.gpu ? ` · ${info.trainer.gpu.name}, ${(info.trainer.gpu.usedMb / 1024).toFixed(1)} / ${(info.trainer.gpu.totalMb / 1024).toFixed(0)} GB in use` : ''}`
                 : info.trainer.error}
             </span>
           </div>
-          <div className="mt-2 flex gap-2">
-            <input className="input py-1 text-xs" placeholder="http://192.168.1.10:8765" value={url} onChange={(e) => setUrl(e.target.value)} />
-            <button className="btn-ghost px-2 py-1 text-xs" disabled={busy} onClick={saveUrl}>
-              Save
-            </button>
-          </div>
-          {!info.trainer.ok && <p className="mt-1 text-slate-500">The trainer is the hivemind-trainer container (Unsloth) on the machine with the GPU. See docs/lab.md.</p>}
+          <details className="mt-1">
+            <summary className="cursor-pointer text-slate-500">Advanced: use a trainer on another machine</summary>
+            <p className="mt-1 text-slate-500">The trainer is built into HiveMind. Only fill this in to train on another computer's GPU; leave it empty for the built-in one.</p>
+            <div className="mt-1 flex gap-2">
+              <input className="input py-1 text-xs" placeholder="empty = built in" value={url} onChange={(e) => setUrl(e.target.value)} />
+              <button className="btn-ghost px-2 py-1 text-xs" disabled={busy} onClick={saveUrl}>
+                Save
+              </button>
+            </div>
+          </details>
         </div>
 
         <div className="space-y-1">

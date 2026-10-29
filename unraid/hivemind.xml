@@ -21,7 +21,7 @@ One container, everything in /data (SQLite). Open the WebUI and create the admin
   <WebUI>http://[IP]:[PORT:4820]/</WebUI>
   <TemplateURL>https://raw.githubusercontent.com/turkushan490/hivemind/main/unraid/hivemind.xml</TemplateURL>
   <Icon>https://raw.githubusercontent.com/turkushan490/hivemind/main/unraid/icon.png</Icon>
-  <ExtraParams>--restart=unless-stopped</ExtraParams>
+  <ExtraParams>--restart=unless-stopped --gpus=all</ExtraParams>
   <PostArgs/>
   <CPUset/>
   <DonateText/>

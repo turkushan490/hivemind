@@ -61,6 +61,24 @@ describe('context size', () => {
     expect(await capture()).not.toHaveProperty('num_ctx');
   });
 
+  it('drops an "ollama.com/" prefix from the model name and explains a missing model', async () => {
+    const bodies: Record<string, unknown>[] = [];
+    vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
+      if (String(url).endsWith('/api/ps')) return new Response(JSON.stringify({ models: [] }));
+      const body = JSON.parse(String(init!.body));
+      bodies.push(body);
+      if (body.model === 'nope:latest') return new Response(JSON.stringify({ error: "model 'nope:latest' not found" }), { status: 404 });
+      return new Response('{"message":{"content":"hi"},"done":true}\n');
+    });
+    const ollama = ollamaAdapter({ id: 'o', kind: 'ollama', preset: 'ollama', baseUrl: 'http://x' });
+    const run = async (model: string) => {
+      for await (const _ of ollama.stream({ model, messages: [{ role: 'user', content: 'q' }] }, new AbortController().signal));
+    };
+    await run('ollama.com/zfujicute/OmniCoder:latest');
+    expect(bodies[0].model).toBe('zfujicute/OmniCoder:latest');
+    await expect(run('nope:latest')).rejects.toThrow(/Ollama has no model "nope:latest"/);
+  });
+
   it('clamps the block setting', async () => {
     const p = fakeProvider();
     await run(chain(node('i', 'input'), node('l', 'llm', { model: M, numCtx: 999999 })), p);

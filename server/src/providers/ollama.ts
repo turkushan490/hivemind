@@ -2,6 +2,12 @@ import type { ModelInfo } from '@hivemind/shared';
 import { readLines } from './lines.js';
 import { checkResponse, foldSystem, ProviderError, type ChatRequest, type LoadedModel, type ProviderAdapter, type PullProgress, type ProviderConfig, type StreamChunk } from './types.js';
 
+/**
+ * The name a pulled model has on the Ollama server: "ollama.com/user/model" (as written on ollama.com, or by
+ * another app such as DungeonMind) is stored as "user/model", so the prefix would give "model not found".
+ */
+export const localName = (model: string) => model.trim().replace(/^(?:https?:\/\/)?(?:www\.)?(?:ollama\.com|registry\.ollama\.ai)\//i, '');
+
 export function ollamaAdapter(cfg: ProviderConfig): ProviderAdapter {
   const base = cfg.baseUrl.replace(/\/+$/, '');
 
@@ -72,12 +78,13 @@ export function ollamaAdapter(cfg: ProviderConfig): ProviderAdapter {
     },
 
     async *stream(req: ChatRequest, signal: AbortSignal): AsyncIterable<StreamChunk> {
+      const model = localName(req.model);
       // Tell the UI when the model still has to be loaded into VRAM.
       try {
         const ps = await fetch(`${base}/api/ps`, { signal });
         if (ps.ok) {
           const loaded = ((await ps.json()) as { models?: { name: string }[] }).models ?? [];
-          yield loaded.some((m) => m.name === req.model) ? { type: 'warm' } : { type: 'loading' };
+          yield loaded.some((m) => m.name === model) ? { type: 'warm' } : { type: 'loading' };
         }
       } catch {}
 
@@ -87,7 +94,7 @@ export function ollamaAdapter(cfg: ProviderConfig): ProviderAdapter {
           signal,
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({
-            model: req.model,
+            model,
             messages,
             stream: true,
             ...(req.json && { format: 'json' }),
@@ -104,6 +111,12 @@ export function ollamaAdapter(cfg: ProviderConfig): ProviderAdapter {
         // Some GGUF chat templates choke on system messages ("System message must be at the beginning").
         const detail = await res.clone().text().catch(() => '');
         if (/system/i.test(detail)) res = await chat(foldSystem(req.messages));
+      }
+      if (res.status === 404) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        if (/not found/i.test(body.error ?? ''))
+          throw new ProviderError(`Ollama has no model "${model}". Download it on the Models page, or pick an installed model in this block.`, 404);
+        throw new ProviderError(`Ollama /api/chat answered HTTP 404 ${body.error ?? ''}`.trim(), 404);
       }
       if (res.status === 401) {
         // Ollama cloud models (ollama.com/...) need the Ollama server to be signed in to ollama.com.

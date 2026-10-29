@@ -1,4 +1,5 @@
-import type { Dataset, DatasetItem, DatasetKind } from '@hivemind/shared';
+import type { Dataset, DatasetItem, DatasetKind, DecisionSpec } from '@hivemind/shared';
+import { parseDecisionSpec } from '@hivemind/shared';
 import { useEffect, useRef, useState } from 'react';
 import { api } from '../api';
 import { toast } from '../notify';
@@ -136,7 +137,24 @@ export function DatasetsPanel() {
               </button>
             </div>
           )}
-          {current.kind !== 'text' && <p className="text-xs text-amber-300/90">Training {KIND_LABEL[current.kind].toLowerCase()} models comes in a later update; you can already collect examples.</p>}
+          {current.kind === 'decision' && (
+            <>
+              <DecisionQuestion key={current.id} dataset={current} onSaved={load} />
+              <div className="grid gap-2 md:grid-cols-[1fr_12rem_auto]">
+                <textarea className="input min-h-14 text-xs" placeholder="State: the text the model reads" value={input} onChange={(e) => setInput(e.target.value)} />
+                <input className="input self-start text-xs" placeholder="Right answer (option key)" value={output} onChange={(e) => setOutput(e.target.value)} />
+                <button className="btn-ghost self-start px-3 py-1 text-xs" onClick={addOne}>
+                  + Add
+                </button>
+              </div>
+              <p className="text-[11px] text-slate-500">
+                Upload JSONL lines like <code>{'{"state": "…", "answer": "bug"}'}</code>; a line may bring its own <code>question</code>, <code>type</code> and <code>options</code>.
+              </p>
+            </>
+          )}
+          {(current.kind === 'image' || current.kind === 'voice') && (
+            <p className="text-xs text-amber-300/90">Training {KIND_LABEL[current.kind].toLowerCase()} models comes in a later update; you can already collect examples.</p>
+          )}
           <div className="max-h-[28rem] space-y-1.5 overflow-auto">
             {items.length === 0 && <p className="text-xs text-slate-500">No examples yet.</p>}
             {items.map((it) => (
@@ -168,6 +186,59 @@ export function DatasetsPanel() {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+const NL = String.fromCharCode(10);
+
+/** The question a decision dataset teaches: the text, its kind, and the options (one per line, "key: description"). */
+function DecisionQuestion({ dataset, onSaved }: { dataset: Dataset; onSaved: () => void }) {
+  const spec = parseDecisionSpec(dataset.system);
+  const [question, setQuestion] = useState(spec?.question ?? '');
+  const [type, setType] = useState<DecisionSpec['type']>(spec?.type ?? 'choice');
+  const [options, setOptions] = useState(
+    !spec?.options ? '' : Array.isArray(spec.options) ? spec.options.join(NL) : Object.entries(spec.options).map(([k, d]) => (d ? `${k}: ${d}` : k)).join(NL),
+  );
+  const save = async () => {
+    if (!question.trim()) return toast('Write the question the model answers', 'info');
+    const lines = options.split(NL).map((l) => l.trim()).filter(Boolean);
+    if (type !== 'noul' && lines.length < 2) return toast('Give at least two options, one per line', 'info');
+    const next: DecisionSpec = {
+      question: question.trim(),
+      type,
+      ...(type === 'choice' && { options: Object.fromEntries(lines.map((l) => [l.split(':')[0].trim(), l.includes(':') ? l.slice(l.indexOf(':') + 1).trim() : ''])) }),
+      ...(type === 'score' && { options: lines }),
+    };
+    try {
+      await api(`/api/datasets/${dataset.id}`, { method: 'PATCH', body: { system: JSON.stringify(next) } });
+      toast('Question saved', 'ok');
+      onSaved();
+    } catch {}
+  };
+
+  return (
+    <div className="space-y-1.5 rounded-md border border-[#30363d] p-2 text-xs">
+      <div className="flex flex-wrap gap-2">
+        <input className="input flex-1 text-xs" placeholder="Question, e.g. Which label fits this ticket?" value={question} onChange={(e) => setQuestion(e.target.value)} />
+        <select className="input w-auto text-xs" value={type} onChange={(e) => setType(e.target.value as DecisionSpec['type'])}>
+          <option value="choice">Choice</option>
+          <option value="noul">Yes / no (answers true / false)</option>
+          <option value="score">Score (levels low → high)</option>
+        </select>
+        <button className="btn-ghost px-3 py-1 text-xs" onClick={save}>
+          Save question
+        </button>
+      </div>
+      {type !== 'noul' && (
+        <textarea
+          className="input min-h-16 text-xs"
+          placeholder={type === 'choice' ? ['One option per line, "key: description"', 'bug: Software errors', 'billing: Payments'].join(NL) : ['One level per line, lowest first', 'bad', 'okay', 'great'].join(NL)}
+          value={options}
+          onChange={(e) => setOptions(e.target.value)}
+        />
+      )}
+      <p className="text-slate-500">Answers are option keys{type === 'noul' ? ' (true / false, or yes / no)' : type === 'score' ? ' (a level, or its number from 0)' : ''}.</p>
     </div>
   );
 }

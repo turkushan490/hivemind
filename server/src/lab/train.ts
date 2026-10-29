@@ -12,6 +12,7 @@ import { withHostLock, type ResolvedProvider } from '../engine/run.js';
 import { logError } from '../errors.js';
 import { SFT_SYSTEM } from './data.js';
 import { DM_DATASET, ensureDataset, exportDataset, getDataset, migrateLabTurns, trainableCount } from './datasets.js';
+import { estimateCloud, hfHardware, hfRun, hfSettings, modelCard, requireHfToken, spentToday } from './hf.js';
 import { activeLab } from './runner.js';
 
 /**
@@ -39,7 +40,7 @@ export const BASES: TrainBase[] = [
   { id: 'unsloth/Qwen3.5-4B', name: 'Qwen3.5 4B', note: 'Newer and multilingual; fits a T4 in 4-bit, in float32 there, so slow.', secPerStep: 60 },
   { id: 'unsloth/Qwen3.5-2B', name: 'Qwen3.5 2B', note: 'Fits a T4 comfortably; good balance for small tasks.', secPerStep: 15 },
   { id: 'unsloth/Qwen3.5-0.8B', name: 'Qwen3.5 0.8B', note: 'Tiny: fast, for testing that training works end to end.', secPerStep: 6 },
-  { id: 'unsloth/Qwen3.5-9B', name: 'Qwen3.5 9B', note: "Doesn't fit a 16 GB T4 in float32 — needs a bigger GPU (Hugging Face cloud training is planned).", secPerStep: 120 },
+  { id: 'unsloth/Qwen3.5-9B', name: 'Qwen3.5 9B', note: "Doesn't fit a 16 GB T4 in float32: train it on Hugging Face (an L4 or A10G) instead.", secPerStep: 120 },
 ];
 
 /** The trainer built into this HiveMind (started by startBuiltinTrainer), when there is one. */
@@ -97,7 +98,7 @@ export function installTrainerScripts() {
   // Bundled: server/dist/main.js → server/trainer; from source: server/src/lab → server/trainer.
   const src = [resolve(here, '../trainer'), resolve(here, '../../trainer')].find((d) => existsSync(join(d, 'server.py')));
   if (!src) return logError({ source: 'server', message: 'Lab: the trainer scripts are missing from this HiveMind build' });
-  for (const f of ['server.py', 'train.py']) copyFileSync(join(src, f), join(TRAINER_DIR, f));
+  for (const f of ['server.py', 'train.py', 'hf.py']) copyFileSync(join(src, f), join(TRAINER_DIR, f));
 }
 
 async function trainer(path: string, init: RequestInit = {}, timeoutMs = 15_000): Promise<any> {
@@ -132,9 +133,30 @@ interface TrainRow {
   error: string | null;
   started_at: string;
   finished_at: string | null;
+  kind?: string;
+  backend?: string;
 }
 
-const toJob = (r: TrainRow): TrainJob => ({
+const toJob = (r: TrainRow): TrainJob => {
+  const set = JSON.parse(r.settings || '{}') as { flavor?: string; estimateUsd?: number; jobUrl?: string; publishedUrl?: string };
+  return {
+    ...baseJob(r),
+    ...(r.kind === 'decision' && { kind: 'decision' as const }),
+    backend: r.backend === 'hf-jobs' ? 'hf-jobs' : 'local',
+    ...(set.flavor && { flavor: set.flavor }),
+    ...(set.estimateUsd !== undefined && { estimateUsd: set.estimateUsd }),
+    ...(set.jobUrl && { jobUrl: set.jobUrl }),
+    ...(set.publishedUrl && { publishedUrl: set.publishedUrl }),
+  };
+};
+
+/** Merges fields into a job's settings (cloud job id, published address). */
+const saveSettings = (id: string, patch: Record<string, unknown>) => {
+  const r = db.prepare('SELECT settings FROM lab_trains WHERE id = ?').get(id) as { settings: string } | undefined;
+  if (r) db.prepare('UPDATE lab_trains SET settings = ? WHERE id = ?').run(JSON.stringify({ ...JSON.parse(r.settings), ...patch }), id);
+};
+
+const baseJob = (r: TrainRow): TrainJob => ({
   id: r.id,
   base: r.base,
   name: r.name,
@@ -194,37 +216,91 @@ export async function overview(ownerId: string): Promise<TrainOverview> {
     }
   } else t.error = 'Training needs the HiveMind image with the training stack and an NVIDIA GPU';
   const jobs = (db.prepare('SELECT * FROM lab_trains WHERE owner_id = ? ORDER BY started_at DESC LIMIT 20').all(ownerId) as unknown as TrainRow[]).map(toJob);
-  return { trainer: t, rows: overviewRows(ownerId), minRows: MIN_ROWS, bases: BASES, jobs };
+  return { trainer: t, rows: overviewRows(ownerId), minRows: MIN_ROWS, bases: BASES, jobs, hf: hfSettings() };
+}
+
+/** Time and price of training this dataset on a Hugging Face machine (shown before a cloud job starts). */
+export async function cloudEstimate(ownerId: string, opts: { flavor?: string; base: string; datasetId?: string; epochs?: number; maxSteps?: number }) {
+  requireHfToken();
+  const hw = (await hfHardware()).find((h) => h.name === opts.flavor);
+  if (!hw) throw Object.assign(new Error(`Hugging Face has no single-GPU machine "${opts.flavor}"`), { statusCode: 400 });
+  const ds = datasetFor(ownerId, opts.datasetId);
+  const rows = exportDataset(ds.id).split('\n').filter(Boolean).length;
+  const decision = ds.kind === 'decision';
+  const epochs = Math.max(1, Math.min(10, opts.epochs ?? (decision ? 3 : 2)));
+  // A decision example is trained in both option orders.
+  const steps = opts.maxSteps || Math.ceil((rows * (decision ? 2 : 1)) / 4) * epochs;
+  return { flavor: hw.name, label: hw.label, ...estimateCloud(steps, BASES.find((b) => b.id === opts.base)?.secPerStep ?? 60, hw) };
 }
 
 /** Starts a job: the dataset is written now, the training waits for the GPU and then runs in the background. */
-export function startTrain(
+export async function startTrain(
   ownerId: string,
-  opts: { base: string; name: string; providerId: string; datasetId?: string; epochs?: number; maxSeqLength?: number; maxSteps?: number; allowSmall?: boolean },
+  opts: {
+    base: string;
+    name: string;
+    providerId: string;
+    datasetId?: string;
+    epochs?: number;
+    maxSeqLength?: number;
+    maxSteps?: number;
+    allowSmall?: boolean;
+    /** Train on Hugging Face Jobs on this machine (e.g. "l4x1") instead of this server's GPU. */
+    flavor?: string;
+    /** The estimate (dollars) the user agreed to; a cloud job needs it. */
+    confirmUsd?: number;
+  },
   deps: TrainDeps,
-): TrainJob {
+): Promise<TrainJob> {
   if (!/^[A-Za-z0-9][\w.-]*\/[A-Za-z0-9][\w.-]*$/.test(opts.base)) throw Object.assign(new Error('The base model must be a Hugging Face repo, e.g. unsloth/Qwen3.5-9B'), { statusCode: 400 });
   if (!validName(opts.name)) throw Object.assign(new Error('Name the new model like dungeonmind-dm:v1 (lowercase letters, digits, . _ -)'), { statusCode: 400 });
   if (!deps.ollamaUrl(opts.providerId)) throw Object.assign(new Error('Pick the Ollama server the new model goes to'), { statusCode: 400 });
   // Several jobs may be started: they queue for the GPU lock and run one after another on the same GPU.
   const ds = datasetFor(ownerId, opts.datasetId);
-  if (ds.kind !== 'text') throw Object.assign(new Error(`Training ${ds.kind} models comes in a later step; this dataset is "${ds.kind}"`), { statusCode: 400 });
+  if (ds.kind !== 'text' && ds.kind !== 'decision') throw Object.assign(new Error(`Training ${ds.kind} models comes in a later step; this dataset is "${ds.kind}"`), { statusCode: 400 });
   const dataset = exportDataset(ds.id);
   const rows = dataset.split('\n').filter(Boolean).length;
   if (rows < (opts.allowSmall ? 1 : MIN_ROWS))
-    throw Object.assign(new Error(`Only ${rows} training examples in "${ds.name}": collect at least ${MIN_ROWS} (a few hundred is better)`), { statusCode: 400 });
+    throw Object.assign(
+      new Error(
+        ds.kind === 'decision' && trainableCount(ds.id) > rows
+          ? `Only ${rows} usable decision examples in "${ds.name}": give the dataset its question, and answers that are one of its options`
+          : `Only ${rows} training examples in "${ds.name}": collect at least ${MIN_ROWS} (a few hundred is better)`,
+      ),
+      { statusCode: 400 },
+    );
+  // Cloud: the estimate must be agreed to, and today's cloud training must stay within the daily limit.
+  let cloud: { flavor: string; estimateUsd: number; hours: number } | undefined;
+  if (opts.flavor) {
+    const est = await cloudEstimate(ownerId, opts);
+    if (opts.confirmUsd === undefined || opts.confirmUsd + 0.005 < est.usd)
+      throw Object.assign(new Error(`Training on ${est.label} takes about ${est.hours} h and costs about $${est.usd.toFixed(2)}: confirm that amount to start`), {
+        statusCode: 402,
+      });
+    const limit = hfSettings().dailyBudgetUsd;
+    if (spentToday() + est.usd > limit)
+      throw Object.assign(
+        new Error(`That would go over today's cloud limit of $${limit.toFixed(2)} ($${spentToday().toFixed(2)} already started today; an admin can raise it in Settings → Hugging Face)`),
+        { statusCode: 402 },
+      );
+    cloud = { flavor: est.flavor, estimateUsd: est.usd, hours: est.hours };
+  }
   const id = newId().replace(/[^A-Za-z0-9_-]/g, '');
   const dir = join(TRAIN_DIR, id);
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, 'dataset.jsonl'), `${dataset}\n`);
+  // A decision model learns one letter per example: more passes over the data, and short prompts.
+  const decision = ds.kind === 'decision';
   const settings = {
     base: opts.base,
-    epochs: Math.max(1, Math.min(10, opts.epochs ?? 2)),
-    maxSeqLength: Math.max(1024, Math.min(16384, opts.maxSeqLength ?? 4096)),
+    ...(decision && { kind: 'decision' }),
+    epochs: Math.max(1, Math.min(10, opts.epochs ?? (decision ? 3 : 2))),
+    maxSeqLength: Math.max(1024, Math.min(16384, opts.maxSeqLength ?? (decision ? 2048 : 4096))),
     ...(opts.maxSteps && { maxSteps: Math.max(1, Math.min(100_000, opts.maxSteps)) }),
     quant: 'q4_k_m',
+    ...(cloud && { flavor: cloud.flavor, estimateUsd: cloud.estimateUsd, hours: cloud.hours }),
   };
-  db.prepare("INSERT INTO lab_trains (id, owner_id, base, name, provider_id, settings, rows, state, dataset_id) VALUES (?, ?, ?, ?, ?, ?, ?, 'waiting', ?)").run(
+  db.prepare("INSERT INTO lab_trains (id, owner_id, base, name, provider_id, settings, rows, state, dataset_id, kind, backend) VALUES (?, ?, ?, ?, ?, ?, ?, 'waiting', ?, ?, ?)").run(
     id,
     ownerId,
     opts.base,
@@ -233,6 +309,8 @@ export function startTrain(
     JSON.stringify(settings),
     rows,
     ds.id,
+    ds.kind,
+    cloud ? 'hf-jobs' : 'local',
   );
   void run(id, ownerId, deps, 'new');
   return toJob(db.prepare('SELECT * FROM lab_trains WHERE id = ?').get(id) as unknown as TrainRow);
@@ -246,6 +324,7 @@ async function run(id: string, ownerId: string, deps: TrainDeps, mode: RunMode) 
   const abort = new AbortController();
   running.set(id, abort);
   try {
+    if (row.backend === 'hf-jobs') return await runCloud(row, deps, mode, abort.signal);
     const target = await deps.resolve(row.provider_id);
     // A simulation would only wait behind the lock for hours: stop it.
     const lab = activeLab();
@@ -318,8 +397,9 @@ async function run(id: string, ownerId: string, deps: TrainDeps, mode: RunMode) 
 
 /** Pause: the trainer saves a checkpoint after the current step and the GPU is free until Resume. */
 export function pauseTrain(id: string, ownerId: string): boolean {
-  const row = db.prepare('SELECT id FROM lab_trains WHERE id = ? AND owner_id = ?').get(id, ownerId);
-  if (!row || !running.has(id)) return false;
+  const row = db.prepare('SELECT backend FROM lab_trains WHERE id = ? AND owner_id = ?').get(id, ownerId) as { backend: string } | undefined;
+  // A cloud machine is paid while it runs: there is no pause, only cancel.
+  if (!row || row.backend === 'hf-jobs' || !running.has(id)) return false;
   pausing.add(id);
   return true;
 }
@@ -351,6 +431,74 @@ export function resumeTrains(depsFor: (ownerId: string) => TrainDeps) {
     }
     void run(r.id, r.owner_id, depsFor(r.owner_id), 'follow');
   }
+}
+
+/**
+ * A job on Hugging Face Jobs: hf.py uploads the job folder to a private dataset repo and starts the same trainer on
+ * a rented GPU; the job uploads its progress there, and the GGUF when it's done. No GPU lock: it runs beside local
+ * jobs. Cancel stops the machine (and its bill).
+ */
+async function runCloud(row: TrainRow, deps: TrainDeps, mode: RunMode, signal: AbortSignal) {
+  const id = row.id;
+  const dir = join(TRAIN_DIR, id);
+  let set = JSON.parse(row.settings) as { flavor: string; hours: number; jobId?: string; repo?: string };
+  if (mode === 'new' || !set.jobId) {
+    update(id, 'starting', { note: `Starting a ${set.flavor} machine on Hugging Face` });
+    writeFileSync(join(dir, 'job.json'), JSON.stringify({ id, ...set }));
+    copyFileSync(join(TRAINER_DIR, 'train.py'), join(dir, 'train.py'));
+    const r = await hfRun('job-start', [dir, set.flavor, String(Math.max(1, set.hours * 2 + 1))]);
+    saveSettings(id, { jobId: r.jobId, repo: r.repo, ...(r.url && { jobUrl: r.url }) });
+    set = { ...set, jobId: r.jobId, repo: r.repo };
+  }
+  for (;;) {
+    if (signal.aborted) {
+      await hfRun('job-cancel', [set.jobId!]).catch(() => {});
+      return update(id, 'cancelled', { note: 'Cancelled (the cloud machine is stopped)' });
+    }
+    let r: Record<string, any>;
+    try {
+      r = await hfRun('job-status', [set.jobId!, set.repo!, dir]);
+    } catch (err) {
+      update(id, row.state, { note: (err as Error).message });
+      await new Promise((res) => setTimeout(res, pollMs() * 6));
+      continue;
+    }
+    const s = (r.status ?? {}) as Record<string, any>;
+    const stage = String(r.stage ?? '').toUpperCase();
+    const progress = { step: s.step, totalSteps: s.totalSteps, loss: s.loss, etaS: s.etaS, note: s.note ?? `Hugging Face: ${stage.toLowerCase() || 'starting'}`, log: s.log };
+    if (s.state === 'error') throw new Error(s.error || 'The cloud trainer failed (see the log)');
+    if (s.state === 'done' && s.gguf) {
+      update(id, 'importing', { ...progress, note: `Importing ${s.gguf} into Ollama` });
+      await importGguf(join(dir, s.gguf), row.name, deps.ollamaUrl(row.provider_id)!, signal);
+      return update(id, 'done', { ...progress, etaS: 0, note: `Ready: ${row.name} (trained on Hugging Face)` });
+    }
+    if (['ERROR', 'CANCELED', 'DELETED'].includes(stage)) throw new Error(`The Hugging Face job ended: ${stage.toLowerCase()}${r.message ? ` — ${r.message}` : ''}`);
+    if (stage === 'COMPLETED' && s.state !== 'done') throw new Error('The Hugging Face job finished without a model (see the log)');
+    update(id, (['loading', 'training', 'exporting'].includes(s.state) ? s.state : 'starting') as TrainState, progress);
+    await new Promise((res) => setTimeout(res, pollMs() * 6));
+  }
+}
+
+/** Puts a finished model (its GGUF and a model card) on the Hugging Face Hub, private unless asked otherwise. */
+export async function publishTrain(id: string, ownerId: string, opts: { repo?: string; private?: boolean }): Promise<{ url: string }> {
+  const row = db.prepare('SELECT * FROM lab_trains WHERE id = ? AND owner_id = ?').get(id, ownerId) as unknown as (TrainRow & { dataset_id: string | null }) | undefined;
+  if (!row) throw Object.assign(new Error('Job not found'), { statusCode: 404 });
+  if (row.state !== 'done') throw Object.assign(new Error('Only a finished model can be published'), { statusCode: 409 });
+  requireHfToken();
+  const name = String(opts.repo ?? '').trim() || row.name.replace(/:/g, '-');
+  const repo = name.includes('/') ? name : `${hfSettings().user}/${name}`;
+  if (!/^[A-Za-z0-9][\w.-]*\/[A-Za-z0-9][\w.-]{0,95}$/.test(repo)) throw Object.assign(new Error('Name the repo like my-model or user/my-model'), { statusCode: 400 });
+  const gguf = jobFiles(id)
+    .filter((f) => !/mmproj/i.test(f))
+    .map((f) => join(TRAIN_DIR, id, 'gguf', f))
+    .sort((a, b) => statSync(b).size - statSync(a).size)[0];
+  if (!gguf) throw Object.assign(new Error("This job's GGUF is no longer in the Lab folder"), { statusCode: 410 });
+  const ds = row.dataset_id ? (db.prepare('SELECT name FROM datasets WHERE id = ?').get(row.dataset_id) as { name: string } | undefined) : undefined;
+  const card = join(TRAIN_DIR, id, 'README.md');
+  writeFileSync(card, modelCard({ name: row.name, repo, base: row.base, dataset: ds?.name ?? 'Lab', rows: row.rows, kind: row.kind ?? 'text', file: basename(gguf) }));
+  const r = await hfRun('publish', [gguf, repo, opts.private === false ? '0' : '1', card]);
+  saveSettings(id, { publishedUrl: r.url });
+  return { url: String(r.url) };
 }
 
 /** The GGUF into Ollama: upload it as a blob, then create the model from it (Ollama reads the chat template from the GGUF). */

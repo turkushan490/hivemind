@@ -89,7 +89,7 @@ export const TRAINING_NODES: Record<'generate' | 'dataset' | 'train' | 'evaluate
     async execute(ctx) {
       const c = ctx.node.config;
       const name = fill(c.trainName ?? '', ctx).trim().toLowerCase();
-      const job = services(ctx).startTrain({ dataset: datasetName(ctx), base: c.trainBase!.trim(), name, target: c.trainTarget, epochs: c.epochs });
+      const job = await services(ctx).startTrain({ dataset: datasetName(ctx), base: c.trainBase!.trim(), name, target: c.trainTarget, epochs: c.epochs });
       ctx.progress(`Queued ${job.name} · ${job.rows} examples`);
       // Training takes hours: the run goes on; the job shows in Lab → New model.
       return `Training ${job.name} on ${job.rows} examples from "${datasetName(ctx)}" (base ${c.trainBase}). Job ${job.id} — follow it in Lab → New model; it waits for the GPU when it's busy.`;

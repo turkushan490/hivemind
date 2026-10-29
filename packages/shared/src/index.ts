@@ -204,6 +204,7 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
   { id: 'openrouter', kind: 'openai', name: 'OpenRouter', baseUrl: 'https://openrouter.ai/api/v1', needsKey: true, free: true, local: false, keyUrl: 'https://openrouter.ai/keys', note: 'Free key gives the ":free" models (20 requests/min, 50/day).' },
   { id: 'groq', kind: 'openai', name: 'Groq', baseUrl: 'https://api.groq.com/openai/v1', needsKey: true, free: true, local: false, keyUrl: 'https://console.groq.com/keys', note: 'Free tier, very fast.' },
   { id: 'gemini', kind: 'openai', name: 'Google Gemini', baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai', needsKey: true, free: true, local: false, keyUrl: 'https://aistudio.google.com/apikey', note: 'Free tier via Google AI Studio.' },
+  { id: 'huggingface', kind: 'openai', name: 'Hugging Face (Inference Providers)', baseUrl: 'https://router.huggingface.co/v1', needsKey: true, free: true, local: false, keyUrl: 'https://huggingface.co/settings/tokens', note: 'Hundreds of open models (Qwen, Llama, DeepSeek…) with one token; a small free monthly credit, then pay per use. Good as a teacher for Generate examples.' },
   { id: 'openai', kind: 'openai', name: 'OpenAI (ChatGPT)', baseUrl: 'https://api.openai.com/v1', needsKey: true, free: false, local: false, keyUrl: 'https://platform.openai.com/api-keys' },
   { id: 'anthropic', kind: 'anthropic', name: 'Anthropic (Claude)', baseUrl: 'https://api.anthropic.com', needsKey: true, free: false, local: false, keyUrl: 'https://console.anthropic.com/settings/keys' },
   { id: 'opencode-zen', kind: 'openai', name: 'OpenCode Zen', baseUrl: 'https://opencode.ai/inference/openai/v1', needsKey: true, free: false, local: false, keyUrl: 'https://opencode.ai/auth', note: 'Paid models only; Zen free models only work inside the OpenCode app.' },
@@ -560,12 +561,40 @@ export interface Dataset {
   name: string;
   kind: DatasetKind;
   description?: string;
-  /** System prompt every text example is trained with (e.g. the DM rules). */
+  /** System prompt every text example is trained with (e.g. the DM rules); a decision dataset's question (DecisionSpec JSON). */
   system?: string;
   createdAt: string;
   items: number;
   /** Examples waiting for review (they are not trained on until accepted). */
   pending: number;
+}
+
+/**
+ * The question a decision dataset teaches (kept as JSON in the dataset's "system" field; an example may carry its
+ * own). choice: option key → description; score: levels low → high; noul: yes/no (answers "true" / "false").
+ */
+export interface DecisionSpec {
+  question: string;
+  type: 'choice' | 'noul' | 'score';
+  options?: Record<string, string> | string[];
+}
+
+export function parseDecisionSpec(text?: string | null): DecisionSpec | undefined {
+  if (!text?.trim()) return;
+  try {
+    const s = JSON.parse(text) as Partial<DecisionSpec>;
+    if (typeof s.question !== 'string' || !s.question.trim() || !['choice', 'noul', 'score'].includes(s.type as string)) return;
+    return { question: s.question, type: s.type!, ...(s.options && { options: s.options }) };
+  } catch {
+    return;
+  }
+}
+
+/** The option keys an answer must be one of: noul "true"/"false", score "0".."n-1", choice its keys. */
+export function decisionKeys(spec: DecisionSpec): string[] {
+  if (spec.type === 'noul') return ['true', 'false'];
+  if (spec.type === 'score') return (Array.isArray(spec.options) ? spec.options : []).map((_, i) => String(i));
+  return Object.keys(spec.options && !Array.isArray(spec.options) ? spec.options : {});
 }
 
 export interface DatasetItem {
@@ -601,8 +630,38 @@ export interface TrainJob {
   error?: string;
   /** The last lines the trainer printed. */
   log?: string;
+  /** What it learns from: text/chat or a decision dataset. */
+  kind?: 'text' | 'decision';
+  /** Where it trains: this server's GPU, or a rented one on Hugging Face Jobs. */
+  backend?: 'local' | 'hf-jobs';
+  /** Cloud jobs: the machine, the estimate its owner confirmed, and the job's page. */
+  flavor?: string;
+  estimateUsd?: number;
+  jobUrl?: string;
+  /** Set once the model is on the Hugging Face Hub. */
+  publishedUrl?: string;
   startedAt: string;
   finishedAt?: string;
+}
+
+/** Hugging Face account of this HiveMind (Settings → Hugging Face). */
+export interface HfSettings {
+  hasToken: boolean;
+  user?: string;
+  /** Cloud training may start while today's confirmed estimates stay within this many dollars. */
+  dailyBudgetUsd: number;
+  spentTodayUsd: number;
+}
+
+/** A GPU machine on Hugging Face Jobs. */
+export interface HfHardware {
+  name: string;
+  label: string;
+  gpu: string;
+  vramGb: number;
+  usdPerHour: number;
+  /** Rough training speed compared with a Tesla T4. */
+  speed: number;
 }
 
 /** A base model that fits a 16 GB GPU and may be fine-tuned and shared (Apache-2.0). */
@@ -621,6 +680,8 @@ export interface TrainOverview {
   minRows: number;
   bases: TrainBase[];
   jobs: TrainJob[];
+  /** Hugging Face: connected or not, the daily limit and what was spent today. */
+  hf: HfSettings;
 }
 
 // ---- Stats (GET /api/stats) ----

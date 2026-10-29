@@ -20,7 +20,7 @@ function fakeTraining() {
       { input: 'Capital of France?', output: 'Paris', system: null },
       { input: '2+2?', output: '4', system: null },
     ],
-    startTrain: (opts) => (started.push(opts), { id: 'job1', name: opts.name, rows: 42, state: 'waiting' }),
+    startTrain: async (opts) => (started.push(opts), { id: 'job1', name: opts.name, rows: 42, state: 'waiting' }),
     deploy: (pattern, model) => (deployed.push({ pattern, model }), { canvases: 2, blocks: 5 }),
   };
   return { training, added, started, deployed };

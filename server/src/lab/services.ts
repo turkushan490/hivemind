@@ -47,7 +47,7 @@ export function trainingServices(ownerId: string, deps: TrainDeps & { defaultTar
         .prepare("SELECT input, output, system FROM dataset_items WHERE dataset_id = ? AND (review IS NULL OR review = 'accepted') ORDER BY random() LIMIT ?")
         .all(ds.id, Math.max(1, n)) as { input: string; output: string; system: string | null }[];
     },
-    startTrain(opts): TrainJob {
+    async startTrain(opts): Promise<TrainJob> {
       const ds = findDataset(ownerId, opts.dataset);
       if (!ds) throw new Error(`No dataset called "${opts.dataset}" — fill it first (Add to dataset, Generate examples, 👍)`);
       const target = opts.target || deps.defaultTarget();

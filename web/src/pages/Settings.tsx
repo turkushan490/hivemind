@@ -2,7 +2,7 @@ import type { ReactNode } from 'react';
 import { useStored } from '../stored';
 import { Models } from './Models';
 import { Providers } from './Providers';
-import { BuilderSettings, HomeAssistantPanel, VoicePanel, MemorySettings, OpenAIApiSettings, SearchSettingsPanel } from './SettingsExtra';
+import { BuilderSettings, HomeAssistantPanel, HuggingFacePanel, VoicePanel, MemorySettings, OpenAIApiSettings, SearchSettingsPanel } from './SettingsExtra';
 import { Tokens } from './Tokens';
 import { Users } from './Users';
 
@@ -16,6 +16,7 @@ const SECTIONS = {
   memory: 'Memory',
   voice: 'Voice',
   homeassistant: 'Home Assistant',
+  huggingface: 'Hugging Face',
   users: 'Users',
   tokens: 'API tokens',
   api: 'OpenAI API',
@@ -54,6 +55,7 @@ export function Settings({ role, meId, active, onWizard }: { role: Role; meId: s
         {panel('memory', <MemorySettings active={active && section === 'memory'} />)}
         {panel('voice', <VoicePanel isAdmin={isAdmin} active={active && section === 'voice'} />)}
         {panel('homeassistant', <HomeAssistantPanel isAdmin={isAdmin} active={active && section === 'homeassistant'} />)}
+        {panel('huggingface', <HuggingFacePanel isAdmin={isAdmin} active={active && section === 'huggingface'} />)}
         {panel('users', <Users meId={meId} active={active && section === 'users'} />)}
         {panel('tokens', <Tokens />)}
         {panel('api', <OpenAIApiSettings active={active && section === 'api'} onTokens={() => setSection('tokens')} />)}

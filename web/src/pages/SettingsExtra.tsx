@@ -1,4 +1,4 @@
-import { SEARCH_SOURCES, type HomeAssistantSettings, type ModelInfo, type VoiceSettings, type ModelRef, type ProviderInfo, type SearchSettings, type SearchSource } from '@hivemind/shared';
+import { SEARCH_SOURCES, type HfSettings, type HomeAssistantSettings, type ModelInfo, type VoiceSettings, type ModelRef, type ProviderInfo, type SearchSettings, type SearchSource } from '@hivemind/shared';
 import { useEffect, useState } from 'react';
 import { api } from '../api';
 import { BuilderModelChooser } from '../canvas/BuilderModelChooser';
@@ -345,6 +345,76 @@ export function HomeAssistantPanel({ isAdmin, active }: { isAdmin: boolean; acti
         </button>
         {test && <span className={`text-xs ${test.ok ? 'text-emerald-400' : 'text-red-400'}`}>{test.text}</span>}
       </div>
+    </div>
+  );
+}
+
+/** Settings → Hugging Face: one account for cloud training (HF Jobs, with a daily spending limit) and publishing models. */
+export function HuggingFacePanel({ isAdmin, active }: { isAdmin: boolean; active: boolean }) {
+  const [s, setS] = useState<HfSettings | null>(null);
+  const [token, setToken] = useState('');
+  const [budget, setBudget] = useState('');
+  useEffect(() => {
+    if (!active) return;
+    api<{ settings: HfSettings }>('/api/hf', { quiet: true })
+      .then((r) => {
+        setS(r.settings);
+        setBudget(String(r.settings.dailyBudgetUsd));
+      })
+      .catch(() => {});
+  }, [active]);
+  if (!s) return null;
+  const save = async (body: { token?: string; dailyBudgetUsd?: number }) => {
+    try {
+      const next = await api<HfSettings>('/api/settings/huggingface', { method: 'PUT', body });
+      setS(next);
+      setToken('');
+      toast(next.hasToken ? `Hugging Face connected as ${next.user}` : 'Hugging Face disconnected', 'ok');
+    } catch {}
+  };
+  return (
+    <div className="card max-w-2xl space-y-3">
+      <h2 className="font-semibold">Hugging Face</h2>
+      <p className="text-sm text-slate-400">
+        Rent a bigger GPU for one training job (Hugging Face Jobs, paid per minute on your Hugging Face account), and publish models you made. Make an access
+        token with <em>write</em> rights at huggingface.co → Settings → Access Tokens; it is stored encrypted. Every cloud job shows its price first and starts only
+        after you confirm it. For teacher models (Generate examples), add the &quot;Hugging Face (Inference Providers)&quot; provider under AI providers.
+      </p>
+      <div className="text-sm">
+        {s.hasToken ? (
+          <span className="text-emerald-300">Connected as {s.user}</span>
+        ) : (
+          <span className="text-slate-400">Not connected</span>
+        )}
+        <span className="ml-3 text-xs text-slate-500">
+          Cloud training today: ${s.spentTodayUsd.toFixed(2)} of ${s.dailyBudgetUsd.toFixed(2)}
+        </span>
+      </div>
+      {isAdmin ? (
+        <div className="space-y-2 text-sm">
+          <label className="flex items-center gap-2">
+            <span className="w-32 shrink-0 text-slate-400">Access token</span>
+            <input className="input py-1" type="password" placeholder={s.hasToken ? 'saved — type to replace' : 'hf_…'} value={token} onChange={(e) => setToken(e.target.value)} />
+          </label>
+          <label className="flex items-center gap-2">
+            <span className="w-32 shrink-0 text-slate-400">Daily limit ($)</span>
+            <input className="input w-28 py-1" type="number" min={0} step={1} value={budget} onChange={(e) => setBudget(e.target.value)} />
+            <span className="text-xs text-slate-500">0 = no cloud training</span>
+          </label>
+          <div className="flex items-center gap-2">
+            <button className="btn" onClick={() => save({ ...(token && { token }), dailyBudgetUsd: Number(budget) })}>
+              Save
+            </button>
+            {s.hasToken && (
+              <button className="btn-ghost text-red-400" onClick={() => save({ token: '' })}>
+                Disconnect
+              </button>
+            )}
+          </div>
+        </div>
+      ) : (
+        <p className="text-sm text-slate-400">Only an admin can connect Hugging Face or change the limit.</p>
+      )}
     </div>
   );
 }

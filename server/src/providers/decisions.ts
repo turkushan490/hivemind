@@ -119,9 +119,11 @@ export function systemOneAdapter(cfg: ProviderConfig): ProviderAdapter {
       if (cfg.preset === 'clef-cloud') return [info('clef', 'Clef'), info('clef-flash', 'Clef Flash')];
       const res = await fetch(`${base}/api/tags`, { signal: AbortSignal.timeout(20_000) });
       if (!res.ok) throw new ProviderError(`Ollama /api/tags answered HTTP ${res.status}`, res.status);
-      const data = (await res.json()) as { models?: { name: string; size?: number }[] };
-      // Ollama does not mark decision models; these are the families it ships with /v1/systemone.
-      return (data.models ?? []).filter((m) => isOllamaDecisionModel(m.name)).map((m) => ({ ...info(m.name), sizeBytes: m.size }));
+      const data = (await res.json()) as { models?: { name: string; size?: number; capabilities?: string[] }[] };
+      // Newer Ollama lists capabilities (decision models made in the Lab too); older ones only the known families.
+      return (data.models ?? [])
+        .filter((m) => m.capabilities?.includes('decision') || isOllamaDecisionModel(m.name))
+        .map((m) => ({ ...info(m.name), sizeBytes: m.size }));
     },
 
     // eslint-disable-next-line require-yield

@@ -1,5 +1,5 @@
-import type { Dataset, DatasetItem, DatasetKind, DatasetSource } from '@hivemind/shared';
-import { DATASET_KINDS } from '@hivemind/shared';
+import type { Dataset, DatasetItem, DatasetKind, DatasetSource, DecisionSpec } from '@hivemind/shared';
+import { DATASET_KINDS, decisionKeys, parseDecisionSpec } from '@hivemind/shared';
 import { newId } from '../crypto.js';
 import { db } from '../db/index.js';
 import { SFT_SYSTEM } from './data.js';
@@ -35,6 +35,7 @@ interface ItemRow {
   source: DatasetSource;
   ref: string | null;
   review: DatasetItem['review'] | null;
+  meta: string | null;
   at: string;
 }
 
@@ -190,6 +191,7 @@ export function exportDataset(datasetId: string): string {
   const ds = db.prepare('SELECT kind, system FROM datasets WHERE id = ?').get(datasetId) as { kind: DatasetKind; system: string | null } | undefined;
   if (!ds) return '';
   const rows = db.prepare("SELECT * FROM dataset_items WHERE dataset_id = ? AND (review IS NULL OR review = 'accepted') ORDER BY id").all(datasetId) as unknown as ItemRow[];
+  if (ds.kind === 'decision') return rows.map((r) => decisionRow(r, ds.system)).filter(Boolean).join('\n');
   return rows
     .map((r) => {
       const system = r.system ?? ds.system;
@@ -200,6 +202,32 @@ export function exportDataset(datasetId: string): string {
       return JSON.stringify({ input: r.input, output: r.output, ...(system && { system }), ...(r.files && { files: JSON.parse(r.files) }) });
     })
     .join('\n');
+}
+
+/** "yes", "Ja", "1"… as the "true"/"false" key of a yes/no question. */
+const noulKey = (a: string) => (/^(true|yes|ja|y|1)$/i.test(a) ? 'true' : /^(false|no|nee|n|0)$/i.test(a) ? 'false' : a);
+
+/**
+ * A decision example for the trainer: {state, question, type, options: [{key, description}], answer}. The question
+ * comes from the example itself or the dataset; a score answer may be the level's text or its number. Examples
+ * whose answer is not one of the options are left out.
+ */
+function decisionRow(r: ItemRow, datasetSpec: string | null): string | undefined {
+  const meta = r.meta ? (JSON.parse(r.meta) as Partial<DecisionSpec>) : {};
+  const spec = parseDecisionSpec(JSON.stringify(meta)) ?? parseDecisionSpec(datasetSpec);
+  if (!spec || !r.input.trim()) return;
+  let answer = r.output.trim();
+  if (spec.type === 'noul') answer = noulKey(answer);
+  const levels = Array.isArray(spec.options) ? spec.options : [];
+  if (spec.type === 'score' && levels.includes(answer)) answer = String(levels.indexOf(answer));
+  if (!decisionKeys(spec).includes(answer)) return;
+  const options =
+    spec.type === 'noul'
+      ? [{ key: 'true', description: null }, { key: 'false', description: null }]
+      : spec.type === 'score'
+        ? levels.map((l, i) => ({ key: String(i), description: l }))
+        : Object.entries(spec.options as Record<string, string>).map(([key, description]) => ({ key, description: description || null }));
+  return JSON.stringify({ state: r.input, question: spec.question, type: spec.type, options, answer });
 }
 
 /** Parses uploaded examples: JSONL (chat "messages" or {input, output}/{prompt, completion}), CSV (2 columns) or plain text. */
@@ -223,6 +251,14 @@ export function parseUpload(text: string, format?: 'jsonl' | 'csv' | 'txt'): New
           const user = [...o.messages].reverse().find((m: any) => m.role === 'user')?.content ?? '';
           const assistant = [...o.messages].reverse().find((m: any) => m.role === 'assistant')?.content ?? '';
           return { input: String(user), output: String(assistant), ...(sys && { system: sys }) };
+        }
+        // A decision example: {state, answer} and optionally its own {question, type, options}.
+        if (o.state !== undefined && o.answer !== undefined) {
+          // Options as exported ([{key, description}]) or as in a Decide block (choice: {key: description}, score: [levels]).
+          const listed = Array.isArray(o.options) && o.options[0]?.key !== undefined ? (o.options as { key: string; description?: string | null }[]) : undefined;
+          const options = listed ? (o.type === 'score' ? listed.map((x) => x.description ?? x.key) : Object.fromEntries(listed.map((x) => [x.key, x.description ?? '']))) : (o.options ?? o.criteria);
+          const spec = parseDecisionSpec(JSON.stringify({ question: o.question, type: o.type ?? 'choice', ...(o.type !== 'noul' && { options }) }));
+          return { input: typeof o.state === 'string' ? o.state : JSON.stringify(o.state), output: String(o.answer), ...(spec && { meta: { ...spec } }) };
         }
         return { input: String(o.input ?? o.prompt ?? o.question ?? o.instruction ?? ''), output: String(o.output ?? o.completion ?? o.answer ?? o.response ?? '') };
       });

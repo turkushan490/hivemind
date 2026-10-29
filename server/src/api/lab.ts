@@ -6,7 +6,8 @@ import { exportJsonl, scoreboard } from '../lab/data.js';
 import { migrateLabTurns, syncLabTurn } from '../lab/datasets.js';
 import { setCanvasModel } from '../lab/services.js';
 import { activeLab, recoverLab, startLab, type LabConfig } from '../lab/runner.js';
-import { cancelTrain, installTrainerScripts, overview, pauseTrain, resumeTrain, resumeTrains, startBuiltinTrainer, startTrain, type TrainDeps } from '../lab/train.js';
+import { hfHardware, hfSettings, saveHfSettings } from '../lab/hf.js';
+import { cancelTrain, cloudEstimate, installTrainerScripts, overview, pauseTrain, publishTrain, resumeTrain, resumeTrains, startBuiltinTrainer, startTrain, type TrainDeps } from '../lab/train.js';
 import { memoryFor } from '../services/memory.js';
 import { requireAdmin, requireUser, type User } from './auth.js';
 import { adapterFor, gpuFreerFor, resolverFor, trainDepsFor, visibleRows } from './providers.js';
@@ -42,8 +43,56 @@ export function labRoutes(app: FastifyInstance) {
   });
 
   app.post('/api/lab/train', { preHandler: requireUser }, async (req) => {
-    const body = (req.body ?? {}) as { base?: string; name?: string; providerId?: string; datasetId?: string; epochs?: number; maxSeqLength?: number; maxSteps?: number; allowSmall?: boolean };
-    return startTrain(req.user!.id, { base: String(body.base ?? ''), name: String(body.name ?? '').trim().toLowerCase(), providerId: String(body.providerId ?? ''), datasetId: body.datasetId, epochs: body.epochs, maxSeqLength: body.maxSeqLength, maxSteps: body.maxSteps, allowSmall: body.allowSmall }, trainDeps(req.user!));
+    const body = (req.body ?? {}) as {
+      base?: string;
+      name?: string;
+      providerId?: string;
+      datasetId?: string;
+      epochs?: number;
+      maxSeqLength?: number;
+      maxSteps?: number;
+      allowSmall?: boolean;
+      flavor?: string;
+      confirmUsd?: number;
+    };
+    return startTrain(
+      req.user!.id,
+      {
+        base: String(body.base ?? ''),
+        name: String(body.name ?? '').trim().toLowerCase(),
+        providerId: String(body.providerId ?? ''),
+        datasetId: body.datasetId,
+        epochs: body.epochs,
+        maxSeqLength: body.maxSeqLength,
+        maxSteps: body.maxSteps,
+        allowSmall: body.allowSmall,
+        ...(body.flavor && { flavor: String(body.flavor), confirmUsd: body.confirmUsd === undefined ? undefined : Number(body.confirmUsd) }),
+      },
+      trainDeps(req.user!),
+    );
+  });
+
+  // ---- Hugging Face: cloud training (HF Jobs) and publishing ----
+  app.get('/api/hf', { preHandler: requireUser }, async () => {
+    const s = hfSettings();
+    if (!s.hasToken) return { settings: s, hardware: [] };
+    try {
+      return { settings: s, hardware: await hfHardware() };
+    } catch (err) {
+      return { settings: s, hardware: [], error: (err as Error).message };
+    }
+  });
+
+  app.put('/api/settings/huggingface', { preHandler: requireAdmin }, async (req) => saveHfSettings((req.body ?? {}) as { token?: string; dailyBudgetUsd?: number }));
+
+  app.post('/api/lab/train/estimate', { preHandler: requireUser }, async (req) => {
+    const b = (req.body ?? {}) as { flavor?: string; base?: string; datasetId?: string; epochs?: number; maxSteps?: number };
+    return cloudEstimate(req.user!.id, { flavor: b.flavor, base: String(b.base ?? ''), datasetId: b.datasetId, epochs: b.epochs, maxSteps: b.maxSteps });
+  });
+
+  app.post('/api/lab/train/:id/publish', { preHandler: requireUser }, async (req) => {
+    const b = (req.body ?? {}) as { repo?: string; private?: boolean };
+    return publishTrain((req.params as { id: string }).id, req.user!.id, { repo: b.repo, private: b.private !== false });
   });
 
   // Everyone except viewers may train (the viewer guard blocks their writes); each controls their own jobs.
@@ -52,7 +101,7 @@ export function labRoutes(app: FastifyInstance) {
   );
 
   app.post('/api/lab/train/:id/pause', { preHandler: requireUser }, async (req, reply) =>
-    pauseTrain((req.params as { id: string }).id, req.user!.id) ? { ok: true } : reply.code(404).send({ error: 'That job is not running' }),
+    pauseTrain((req.params as { id: string }).id, req.user!.id) ? { ok: true } : reply.code(404).send({ error: 'That job is not running here (cloud jobs can only be cancelled)' }),
   );
 
   app.post('/api/lab/train/:id/resume', { preHandler: requireUser }, async (req, reply) =>

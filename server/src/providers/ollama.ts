@@ -16,9 +16,10 @@ export function ollamaAdapter(cfg: ProviderConfig): ProviderAdapter {
       const res = await fetch(`${base}/api/tags`, { signal: AbortSignal.timeout(20_000) });
       await checkResponse(res, 'Ollama /api/tags');
       const data = (await res.json()) as {
-        models?: { name: string; size?: number; modified_at?: string; details?: { parameter_size?: string; quantization_level?: string } }[];
+        models?: { name: string; size?: number; modified_at?: string; capabilities?: string[]; details?: { parameter_size?: string; quantization_level?: string } }[];
       };
-      return (data.models ?? []).map((m) => ({
+      // Decision models can't chat: they are listed under the Ollama decision models provider.
+      return (data.models ?? []).filter((m) => !m.capabilities?.includes('decision')).map((m) => ({
         providerId: cfg.id,
         model: m.name,
         name: m.details?.parameter_size ? `${m.name} (${m.details.parameter_size})` : m.name,

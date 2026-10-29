@@ -74,19 +74,19 @@ describe('make a new model', () => {
     expect(readFileSync(join(train.LAB_DIR, 'trainer', 'token'), 'utf8').length).toBeGreaterThan(20);
   });
 
-  it('refuses too little data, bad names and bad bases', () => {
+  it('refuses too little data, bad names and bad bases', async () => {
     process.env.TRAINER_URL = 'http://trainer.test:8765';
     const base = { base: 'unsloth/Qwen3.5-0.8B', name: 'dm:v1', providerId: 'ollama' };
-    expect(() => train.startTrain('u1', base, deps())).toThrow(/at least 20/);
-    expect(() => train.startTrain('u1', { ...base, name: 'Bad Name', allowSmall: true }, deps())).toThrow(/lowercase/);
-    expect(() => train.startTrain('u1', { ...base, base: '../etc', allowSmall: true }, deps())).toThrow(/Hugging Face repo/);
+    await expect(train.startTrain('u1', base, deps())).rejects.toThrow(/at least 20/);
+    await expect(train.startTrain('u1', { ...base, name: 'Bad Name', allowSmall: true }, deps())).rejects.toThrow(/lowercase/);
+    await expect(train.startTrain('u1', { ...base, base: '../etc', allowSmall: true }, deps())).rejects.toThrow(/Hugging Face repo/);
   });
 
   it('trains, frees the GPU, and imports the GGUF into Ollama', async () => {
     process.env.TRAINER_URL = 'http://trainer.test:8765';
     const calls = fakeServers();
     const freed: string[] = [];
-    const job = train.startTrain('u1', { base: 'unsloth/Qwen3.5-0.8B', name: 'dungeonmind-dm:test', providerId: 'ollama', allowSmall: true, maxSteps: 5 }, deps(freed));
+    const job = await train.startTrain('u1', { base: 'unsloth/Qwen3.5-0.8B', name: 'dungeonmind-dm:test', providerId: 'ollama', allowSmall: true, maxSteps: 5 }, deps(freed));
     expect((await waitFor(job.id, ['done', 'error'])).state).toBe('done');
     expect(freed).toEqual(['gpu-host']);
     const sent = JSON.parse(calls.find((c) => c.url.endsWith('/jobs'))!.body!);
@@ -100,7 +100,7 @@ describe('make a new model', () => {
   it('waits while something else (ComfyUI making an image) still holds the GPU', async () => {
     process.env.TRAINER_URL = 'http://trainer.test:8765';
     const calls = fakeServers(undefined, [12000, 12000, 400]);
-    const job = train.startTrain('u1', { base: 'unsloth/Qwen3.5-0.8B', name: 'dm:wait', providerId: 'ollama', allowSmall: true }, deps());
+    const job = await train.startTrain('u1', { base: 'unsloth/Qwen3.5-0.8B', name: 'dm:wait', providerId: 'ollama', allowSmall: true }, deps());
     const seen = new Set<string>();
     for (let i = 0; i < 400; i++) {
       const row = db.prepare('SELECT state, progress FROM lab_trains WHERE id = ?').get(job.id) as { state: string; progress: string | null };
@@ -116,7 +116,7 @@ describe('make a new model', () => {
   it('shows a trainer failure as an error in Problems', async () => {
     process.env.TRAINER_URL = 'http://trainer.test:8765';
     fakeServers({ state: 'error', error: 'The GPU ran out of memory' });
-    const job = train.startTrain('u1', { base: 'unsloth/Qwen3.5-9B', name: 'dm:oom', providerId: 'ollama', allowSmall: true }, deps());
+    const job = await train.startTrain('u1', { base: 'unsloth/Qwen3.5-9B', name: 'dm:oom', providerId: 'ollama', allowSmall: true }, deps());
     const row = await waitFor(job.id, ['done', 'error']);
     expect(row.error).toMatch(/ran out of memory/);
     expect((db.prepare("SELECT message FROM error_log WHERE message LIKE 'Lab: making dm:oom%'").get() as { message: string }).message).toMatch(/out of memory/);
@@ -155,7 +155,7 @@ describe('make a new model', () => {
       if (url.endsWith('/api/create')) return json({ status: 'success' });
       return json({});
     });
-    const job = train.startTrain('u1', { base: 'unsloth/Qwen3.5-0.8B', name: 'dm:pause', providerId: 'ollama', allowSmall: true }, deps());
+    const job = await train.startTrain('u1', { base: 'unsloth/Qwen3.5-0.8B', name: 'dm:pause', providerId: 'ollama', allowSmall: true }, deps());
     await waitFor(job.id, ['training']);
     expect(train.pauseTrain(job.id, 'u1')).toBe(true);
     expect((await waitFor(job.id, ['paused'])).state).toBe('paused');
@@ -163,5 +163,50 @@ describe('make a new model', () => {
     expect(train.resumeTrain(job.id, 'u1', deps())).toBe(true);
     expect((await waitFor(job.id, ['done', 'error'])).state).toBe('done');
     expect(JSON.parse(calls.filter((c) => c.url.endsWith('/jobs')).at(-1)!.body!).resume).toBe(true);
+  });
+  it('trains on Hugging Face Jobs only after the estimate is confirmed and within the daily limit, then publishes', async () => {
+    const hf = await import('../src/lab/hf.js');
+    const cmds: string[][] = [];
+    let polls = 0;
+    hf.setHfRunner(async (cmd, args, token) => {
+      cmds.push([cmd, ...args]);
+      if (!token) throw new Error('no token');
+      if (cmd === 'whoami') return { name: 'turks' };
+      if (cmd === 'hardware')
+        return { hardware: [{ name: 'l4x1', label: '1x Nvidia L4', gpu: 'L4', count: 1, vramGb: 24, usdPerHour: 0.8 }, { name: 'l4x4', label: '4x L4', gpu: 'L4', count: 4, vramGb: 96, usdPerHour: 3.8 }] };
+      if (cmd === 'job-start') return { jobId: 'hfjob1', repo: 'turks/hivemind-train-x', url: 'https://huggingface.co/jobs/turks/hfjob1' };
+      if (cmd === 'job-status') {
+        if (++polls < 2) return { stage: 'RUNNING', status: { state: 'training', step: 2, totalSteps: 8 } };
+        mkdirSync(join(args[2], 'gguf'), { recursive: true });
+        writeFileSync(join(args[2], 'gguf', 'cloud.Q4_K_M.gguf'), 'cloud weights');
+        return { stage: 'COMPLETED', status: { state: 'done', gguf: 'gguf/cloud.Q4_K_M.gguf' } };
+      }
+      if (cmd === 'publish') return { url: `https://huggingface.co/${args[1]}` };
+      return {};
+    });
+    fakeServers();
+    const opts = { base: 'unsloth/Qwen3.5-0.8B', name: 'dm:cloud', providerId: 'ollama', allowSmall: true, flavor: 'l4x1' };
+    await expect(train.startTrain('u1', opts, deps())).rejects.toThrow(/Connect Hugging Face/);
+    await hf.saveHfSettings({ token: 'hf_test', dailyBudgetUsd: 0.1 });
+    expect(hf.hfSettings()).toMatchObject({ hasToken: true, user: 'turks' });
+    await expect(train.startTrain('u1', opts, deps())).rejects.toThrow(/confirm that amount/);
+    const est = await train.cloudEstimate('u1', opts);
+    expect(est).toMatchObject({ flavor: 'l4x1', label: '1x Nvidia L4' });
+    await expect(train.startTrain('u1', { ...opts, confirmUsd: est.usd }, deps())).rejects.toThrow(/daily limit|cloud limit/);
+    await hf.saveHfSettings({ dailyBudgetUsd: 50 });
+    const freed: string[] = [];
+    const job = await train.startTrain('u1', { ...opts, confirmUsd: est.usd }, deps(freed));
+    expect(job).toMatchObject({ backend: 'hf-jobs', flavor: 'l4x1', estimateUsd: est.usd });
+    // No pause for a paid machine; it doesn't take this server's GPU.
+    expect(train.pauseTrain(job.id, 'u1')).toBe(false);
+    expect(await waitFor(job.id, ['done', 'error'])).toMatchObject({ state: 'done' });
+    expect(freed).toEqual([]);
+    expect(cmds.find((c) => c[0] === 'job-start')![2]).toBe('l4x1');
+    expect(hf.spentToday()).toBe(est.usd);
+    const pub = await train.publishTrain(job.id, 'u1', { repo: 'dm-cloud' });
+    expect(pub.url).toBe('https://huggingface.co/turks/dm-cloud');
+    expect(cmds.find((c) => c[0] === 'publish')!.slice(2, 4)).toEqual(['turks/dm-cloud', '1']);
+    expect(readFileSync(join(train.LAB_DIR, 'train', job.id, 'README.md'), 'utf8')).toContain('base_model: unsloth/Qwen3.5-0.8B');
+    hf.setHfRunner();
   });
 });

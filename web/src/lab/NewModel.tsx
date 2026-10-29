@@ -1,4 +1,4 @@
-import type { Dataset, ProviderInfo, TrainJob, TrainOverview } from '@hivemind/shared';
+import type { Dataset, HfHardware, ProviderInfo, TrainJob, TrainOverview } from '@hivemind/shared';
 import { useEffect, useState } from 'react';
 import { api } from '../api';
 import { toast } from '../notify';
@@ -33,7 +33,7 @@ const today = () => new Date().toISOString().slice(0, 10).replace(/-/g, '');
 
 export function NewModel({ active, providers }: { active: boolean; providers: ProviderInfo[] }) {
   const [info, setInfo] = useState<TrainOverview | null>(null);
-  const [base, setBase] = useStored('lab.train.base', 'unsloth/Qwen3.5-9B');
+  const [base, setBase] = useStored('lab.train.base', 'unsloth/Qwen3.5-2B');
   const [name, setName] = useState(`dungeonmind-dm:${today()}`);
   const [epochs, setEpochs] = useStored('lab.train.epochs', 2);
   const [target, setTarget] = useStored<string>('lab.train.target', '');
@@ -41,16 +41,24 @@ export function NewModel({ active, providers }: { active: boolean; providers: Pr
   const [busy, setBusy] = useState(false);
   const [datasets, setDatasets] = useState<Dataset[]>([]);
   const [datasetId, setDatasetId] = useStored<string>('lab.train.dataset', '');
+  // Where it trains: "local" (this server's GPU) or a Hugging Face Jobs machine.
+  const [where, setWhere] = useStored<string>('lab.train.where', 'local');
+  const [hardware, setHardware] = useState<HfHardware[]>([]);
+  const [estimate, setEstimate] = useState<{ hours: number; usd: number; label: string } | { error: string } | null>(null);
   const ollamas = providers.filter((p) => p.kind === 'ollama' && p.enabled);
   const targetId = ollamas.some((p) => p.id === target) ? target : ollamas[0]?.id;
 
   const load = () => {
     api<Dataset[]>('/api/datasets', { quiet: true })
-      .then((l) => setDatasets(l.filter((d) => d.kind === 'text')))
+      .then((l) => setDatasets(l.filter((d) => d.kind === 'text' || d.kind === 'decision')))
       .catch(() => {});
     return api<TrainOverview>('/api/lab/train', { quiet: true })
       .then((o) => {
         setInfo(o);
+        if (o.hf.hasToken && !hardware.length)
+          api<{ hardware: HfHardware[] }>('/api/hf', { quiet: true })
+            .then((h) => setHardware(h.hardware))
+            .catch(() => {});
         setUrl((u) => u || (o.trainer.url?.includes('127.0.0.1') ? '' : o.trainer.url) || '');
       })
       .catch(() => {});
@@ -73,12 +81,35 @@ export function NewModel({ active, providers }: { active: boolean; providers: Pr
       setBusy(false);
     }
   };
+  const cloud = where !== 'local' && hardware.some((h) => h.name === where) ? hardware.find((h) => h.name === where) : undefined;
+  useEffect(() => {
+    setEstimate(null);
+    if (!cloud || !info) return;
+    const t = setTimeout(() => {
+      api<{ hours: number; usd: number; label: string }>('/api/lab/train/estimate', { body: { flavor: cloud.name, base, epochs, ...(datasetId && { datasetId }) }, quiet: true })
+        .then(setEstimate)
+        .catch((err) => setEstimate({ error: (err as Error).message }));
+    }, 400);
+    return () => clearTimeout(t);
+  }, [cloud?.name, base, epochs, datasetId, !!info]);
+
   const start = async () => {
     if (!targetId) return toast('Add an Ollama server first (Settings → Providers)', 'info');
+    let confirmUsd: number | undefined;
+    if (cloud) {
+      if (!estimate || 'error' in estimate) return toast('Waiting for the price estimate', 'info');
+      if (!confirm(`Train ${name} on Hugging Face (${estimate.label})?\n\nAbout ${estimate.hours} h, about $${estimate.usd.toFixed(2)} on your Hugging Face account. The machine stops when the job ends; Cancel stops it early.`)) return;
+      confirmUsd = estimate.usd;
+    }
     setBusy(true);
     try {
-      await api<TrainJob>('/api/lab/train', { body: { base, name, providerId: targetId, epochs, ...(dataset && { datasetId: dataset.id }) } });
-      toast(running ? `${name} is queued — it starts when the GPU is free` : `Making ${name} — local AI on this GPU pauses until it's done`, 'ok');
+      await api<TrainJob>('/api/lab/train', {
+        body: { base, name, providerId: targetId, epochs, ...(dataset && { datasetId: dataset.id }), ...(cloud && { flavor: cloud.name, confirmUsd }) },
+      });
+      toast(
+        cloud ? `${name} is training on Hugging Face` : running ? `${name} is queued — it starts when the GPU is free` : `Making ${name} — local AI on this GPU pauses until it's done`,
+        'ok',
+      );
       load();
     } catch {
     } finally {
@@ -89,6 +120,15 @@ export function NewModel({ active, providers }: { active: boolean; providers: Pr
     await api(`/api/lab/train/${id}/${what}`, { method: 'POST' }).catch(() => {});
     if (what === 'pause') toast('Pausing after the current step — the GPU is freed when the checkpoint is saved', 'info');
     load();
+  };
+  const publish = async (j: TrainJob) => {
+    const repo = prompt(`Hugging Face repo for ${j.name} (it starts private; make it public on Hugging Face when you like):`, j.name.replace(/:/g, '-'));
+    if (!repo) return;
+    try {
+      const r = await api<{ url: string }>(`/api/lab/train/${j.id}/publish`, { body: { repo, private: true } });
+      toast(`Published: ${r.url}`, 'ok');
+      load();
+    } catch {}
   };
   const cancel = async (id: string) => {
     if (!confirm('Stop making this model? The work so far is lost.')) return;
@@ -101,7 +141,7 @@ export function NewModel({ active, providers }: { active: boolean; providers: Pr
   const dataset = datasets.find((d) => d.id === datasetId) ?? datasets.find((d) => d.name === 'DungeonMind DM') ?? datasets[0];
   const rows = dataset ? dataset.items : info.rows;
   const steps = Math.ceil(rows / 4) * epochs;
-  const estimate = chosen ? steps * chosen.secPerStep + 600 : undefined;
+  const localEstimate = chosen ? steps * chosen.secPerStep + 600 : undefined;
   const enough = rows >= info.minRows;
 
   return (
@@ -115,10 +155,10 @@ export function NewModel({ active, providers }: { active: boolean; providers: Pr
         <label className="block space-y-1 text-xs">
           <span className="font-semibold text-slate-300">Dataset</span>
           <select className="input py-1 text-xs" value={dataset?.id ?? ''} onChange={(e) => setDatasetId(e.target.value)}>
-            {datasets.length === 0 && <option value="">No text datasets yet — make one in Datasets</option>}
+            {datasets.length === 0 && <option value="">No text or decision datasets yet — make one in Datasets</option>}
             {datasets.map((d) => (
               <option key={d.id} value={d.id}>
-                {d.name} · {d.items} examples{d.pending ? ` (+${d.pending} to review)` : ''}
+                {d.name} · {d.kind === 'decision' ? 'decision model · ' : ''}{d.items} examples{d.pending ? ` (+${d.pending} to review)` : ''}
               </option>
             ))}
           </select>
@@ -189,11 +229,33 @@ export function NewModel({ active, providers }: { active: boolean; providers: Pr
             Training examples ready: <span className={`font-mono font-semibold ${enough ? 'text-emerald-300' : 'text-amber-300'}`}>{rows}</span>
             {!enough && <span className="text-amber-300"> — at least {info.minRows} needed; a few hundred is better. Let the Simulator run first.</span>}
           </div>
-          {enough && <div className="text-slate-400">About {dur(estimate)} on a Tesla T4 ({steps} steps), plus the download of the base model the first time.</div>}
+          {enough && !cloud && <div className="text-slate-400">About {dur(localEstimate)} on a Tesla T4 ({steps} steps), plus the download of the base model the first time.</div>}
+          {enough && cloud && (
+            <div className={estimate && 'error' in estimate ? 'text-red-300' : 'text-slate-300'}>
+              {!estimate
+                ? 'Working out the price…'
+                : 'error' in estimate
+                  ? estimate.error
+                  : `About ${estimate.hours} h on ${estimate.label}: about $${estimate.usd.toFixed(2)} on your Hugging Face account (today $${info.hf.spentTodayUsd.toFixed(2)} of $${info.hf.dailyBudgetUsd.toFixed(2)} used).`}
+            </div>
+          )}
         </div>
 
-        <button className="btn w-full" disabled={busy || !enough || !info.trainer.ok} onClick={start}>
-          {running ? `Queue ${name}` : `Make ${name}`}
+        <label className="block space-y-1 text-xs">
+          <span className="font-semibold text-slate-300">Train on</span>
+          <select className="input py-1 text-xs" value={cloud ? cloud.name : 'local'} onChange={(e) => setWhere(e.target.value)}>
+            <option value="local">This server's GPU (free){info.trainer.gpu ? ` · ${info.trainer.gpu.name}` : ''}</option>
+            {hardware.map((h) => (
+              <option key={h.name} value={h.name}>
+                Hugging Face · {h.label} ({h.vramGb} GB) · ${h.usdPerHour.toFixed(2)}/h
+              </option>
+            ))}
+          </select>
+          {!info.hf.hasToken && <span className="text-[11px] text-slate-500">Connect Hugging Face (Settings → Hugging Face) to rent a bigger GPU for one job, or to publish models.</span>}
+        </label>
+
+        <button className="btn w-full" disabled={busy || !enough || (!cloud && !info.trainer.ok) || (!!cloud && (!estimate || 'error' in estimate))} onClick={start}>
+          {cloud ? `Train ${name} on Hugging Face` : running ? `Queue ${name}` : `Make ${name}`}
         </button>
         <p className="text-[11px] text-slate-500">While it trains, Ollama, ComfyUI and the Simulator on this GPU wait. Runs you start meanwhile are queued, not lost.</p>
       </div>
@@ -212,7 +274,7 @@ export function NewModel({ active, providers }: { active: boolean; providers: Pr
                 <span className="font-mono text-sm font-semibold">{j.name}</span>
                 <span className={`text-xs ${s.tone}`}>{s.label}</span>
                 <span className="ml-auto flex gap-3 text-xs">
-                  {live && j.state !== 'waiting' && (
+                  {live && j.state !== 'waiting' && j.backend !== 'hf-jobs' && (
                     <button className="text-slate-400 hover:text-amber-300" onClick={() => act(j.id, 'pause')}>
                       ⏸ Pause
                     </button>
@@ -230,7 +292,20 @@ export function NewModel({ active, providers }: { active: boolean; providers: Pr
                 </span>
               </div>
               <div className="text-[11px] text-slate-500">
-                from {j.base} · {j.rows} examples · started {j.startedAt} UTC
+                from {j.base} · {j.kind === 'decision' ? 'decision model · ' : ''}
+                {j.rows} examples · started {j.startedAt} UTC
+                {j.backend === 'hf-jobs' && (
+                  <>
+                    {' '}
+                    · ☁ Hugging Face {j.flavor}
+                    {j.estimateUsd !== undefined && ` · about $${j.estimateUsd.toFixed(2)}`}
+                    {j.jobUrl && (
+                      <a className="ml-1 text-indigo-300 hover:text-indigo-200" href={j.jobUrl} target="_blank" rel="noreferrer">
+                        job ↗
+                      </a>
+                    )}
+                  </>
+                )}
               </div>
               {(live || j.state === 'done') && (
                 <div className="h-2 overflow-hidden rounded bg-[#21262d]">
@@ -245,7 +320,26 @@ export function NewModel({ active, providers }: { active: boolean; providers: Pr
                   {j.note && <span className="text-slate-500">{j.note}</span>}
                 </div>
               )}
-              {j.state === 'done' && <p className="text-xs text-emerald-300/90">In Ollama as {j.name}. Add it as a DM model in the Simulator to compare it on the Scoreboard.</p>}
+              {j.state === 'done' && (
+                <div className="flex flex-wrap items-center gap-3 text-xs">
+                  <span className="text-emerald-300/90">
+                    {j.kind === 'decision'
+                      ? `In Ollama as ${j.name}: pick it under "Ollama decision models" in a Decide block.`
+                      : `In Ollama as ${j.name}. Add it as a DM model in the Simulator to compare it on the Scoreboard.`}
+                  </span>
+                  {j.publishedUrl ? (
+                    <a className="text-indigo-300 hover:text-indigo-200" href={j.publishedUrl} target="_blank" rel="noreferrer">
+                      On Hugging Face ↗
+                    </a>
+                  ) : (
+                    info.hf.hasToken && (
+                      <button className="text-indigo-300 hover:text-indigo-200" onClick={() => publish(j)}>
+                        ⬆ Publish to Hugging Face
+                      </button>
+                    )
+                  )}
+                </div>
+              )}
               {j.error && <p className="rounded bg-red-950/50 px-2 py-1 text-xs text-red-300">{j.error}</p>}
               {j.log && (live || j.state === 'error') && (
                 <details>

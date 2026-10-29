@@ -36,7 +36,7 @@ export interface NodeServices {
       opts: { review?: boolean; source: 'generated' | 'block' },
     ): { name: string; added: number; items: number; pending: number };
     sample(dataset: string, n: number): { input: string; output: string; system: string | null }[];
-    startTrain(opts: { dataset: string; base: string; name: string; target?: string; epochs?: number }): { id: string; name: string; rows: number; state: string };
+    startTrain(opts: { dataset: string; base: string; name: string; target?: string; epochs?: number }): Promise<{ id: string; name: string; rows: number; state: string }>;
     deploy(pattern: string, model: ModelRef): { canvases: number; blocks: number };
   };
   /** Reads a file from the files folder (images for box questions). */

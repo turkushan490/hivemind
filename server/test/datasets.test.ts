@@ -45,6 +45,29 @@ describe('datasets', () => {
     expect(() => ds.parseUpload('{"a":1}\n{broken')).toThrow(/Line 2/);
   });
 
+  it('decision datasets: a question, answers as option keys, and trainer rows with the options', async () => {
+    const question = { question: 'Which label fits?', type: 'choice', options: { bug: 'Software errors', billing: 'Payments' } };
+    const d = (await call('POST', '/api/datasets', { name: 'Tickets', kind: 'decision' })).json();
+    await call('PATCH', `/api/datasets/${d.id}`, { system: JSON.stringify(question) });
+    const text = [
+      '{"state": "Checkout gives 500 errors", "answer": "bug"}',
+      '{"state": "Refund missing", "answer": "nope"}',
+      '{"state": "Is the hag dead?", "answer": "yes", "question": "Did the turn end the fight?", "type": "noul"}',
+      '{"state": "Hit for 7", "answer": "great", "question": "How good is the turn?", "type": "score", "options": ["bad", "okay", "great"]}',
+    ].join('\n');
+    expect((await call('POST', `/api/datasets/${d.id}/items`, { text, format: 'jsonl' })).json().added).toBe(4);
+    const rows = ds.exportDataset(d.id).split('\n').map((l) => JSON.parse(l));
+    // "nope" is not an option: left out.
+    expect(rows).toEqual([
+      { state: 'Checkout gives 500 errors', question: 'Which label fits?', type: 'choice', options: [{ key: 'bug', description: 'Software errors' }, { key: 'billing', description: 'Payments' }], answer: 'bug' },
+      { state: 'Is the hag dead?', question: 'Did the turn end the fight?', type: 'noul', options: [{ key: 'true', description: null }, { key: 'false', description: null }], answer: 'true' },
+      { state: 'Hit for 7', question: 'How good is the turn?', type: 'score', options: [{ key: '0', description: 'bad' }, { key: '1', description: 'okay' }, { key: '2', description: 'great' }], answer: '2' },
+    ]);
+    // An export uploads again unchanged.
+    const again = ds.parseUpload(rows.map((r) => JSON.stringify(r)).join('\n'));
+    expect(again[2]).toMatchObject({ input: 'Hit for 7', output: '2', meta: { type: 'score', options: ['bad', 'okay', 'great'] } });
+  });
+
   it('pending and rejected examples are never trained on', async () => {
     const d = (await call('POST', '/api/datasets', { name: 'Review me' })).json();
     await call('POST', `/api/datasets/${d.id}/items`, { items: [{ input: 'a', output: '1' }, { input: 'b', output: '2' }] });

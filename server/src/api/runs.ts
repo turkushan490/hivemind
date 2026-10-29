@@ -9,6 +9,7 @@ import { nodeOutputs } from '../services/runOutputs.js';
 import { requireUser, type User } from './auth.js';
 import { canvasAllowed } from './scope.js';
 import { gpuFreerFor, resolverFor, trainingFor } from './providers.js';
+import { batchStatus, startBatch, stopBatch } from '../services/batch.js';
 
 export interface CanvasRow {
   id: string;
@@ -116,6 +117,45 @@ export function runRoutes(app: FastifyInstance) {
     const runId = startRun({ ownerId: req.user!.id, user: req.user!, canvasId: body.canvasId, graph, question, vars, resolve: resolverFor(providerUser), freeGpu: gpuFreerFor(providerUser), training: trainingFor(req.user!) });
     return { runId };
   });
+
+  // ---- Run repeatedly (batch) ----
+  app.get('/api/batch', { preHandler: requireUser }, async (req) => batchStatus(req.user!.id));
+
+  /** Body: {canvasId, questions: string[], times (0 = until stopped), vars}. The canvas runs as saved. */
+  app.post('/api/batch', { preHandler: requireUser }, async (req, reply) => {
+    const body = (req.body ?? {}) as { canvasId?: string; questions?: unknown; times?: number; vars?: unknown };
+    const row = body.canvasId ? canvasFor(req.user!, body.canvasId) : undefined;
+    if (!row) return reply.code(404).send({ error: 'Save the canvas first, then run it repeatedly' });
+    const questions = (Array.isArray(body.questions) ? body.questions : []).map((q) => String(q ?? '').trim()).filter(Boolean).slice(0, 10_000);
+    let vars: Record<string, string>;
+    try {
+      vars = checkVars(body.vars);
+    } catch (err) {
+      return reply.code(400).send({ error: (err as Error).message });
+    }
+    const { graph, providerUser } = runSetup(req.user!, row, undefined);
+    try {
+      validateGraph(graph!);
+    } catch (err) {
+      return reply.code(400).send({ error: (err as Error).message });
+    }
+    const user = req.user!;
+    return startBatch({
+      ownerId: user.id,
+      canvasId: row.id,
+      canvasName: row.name,
+      graph: graph!,
+      questions,
+      times: Math.max(0, Math.min(100_000, Math.floor(Number(body.times) || 0))),
+      vars,
+      start: (question, v) =>
+        startRun({ ownerId: user.id, user, canvasId: row.id, graph: graph!, question, vars: v, resolve: resolverFor(providerUser), freeGpu: gpuFreerFor(providerUser), training: trainingFor(user) }),
+    });
+  });
+
+  app.post('/api/batch/stop', { preHandler: requireUser }, async (req, reply) =>
+    stopBatch(req.user!.id) ? { ok: true } : reply.code(404).send({ error: 'Nothing is running repeatedly' }),
+  );
 
   app.get('/api/runs', { preHandler: requireUser }, async (req): Promise<RunSummary[]> =>
     (

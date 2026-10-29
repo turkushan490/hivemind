@@ -9,7 +9,7 @@ export interface TemplateModels {
   decision?: ModelRef;
 }
 
-export const TEMPLATE_GROUPS = ['Everyday', 'Voice', 'Coding', 'Creative', 'Home / research', 'Website', 'Decisions', 'Tabletop'] as const;
+export const TEMPLATE_GROUPS = ['Everyday', 'Voice', 'Coding', 'Creative', 'Home / research', 'Website', 'Decisions', 'Train', 'Tabletop'] as const;
 export type TemplateGroup = (typeof TEMPLATE_GROUPS)[number];
 
 export interface Template {
@@ -185,6 +185,98 @@ const VOICE: Template[] = [
         edges: [wire(q, route), wire(route, cmd), wire(route, answer), wire(cmd, ha), wire(ha, done), wire(done, out), wire(answer, out)],
       };
     },
+  },
+];
+
+// ---- Train (make your own models: data → training → test → put to work) ----
+
+const today = () => new Date().toISOString().slice(0, 10).replace(/-/g, '');
+
+const TRAIN: Template[] = [
+  {
+    id: 'train-teacher-data',
+    group: 'Train',
+    name: 'Make training data with a teacher',
+    description: 'Type a topic; a strong model writes examples (question + ideal answer) into a dataset. Review them in Lab → Datasets.',
+    build: (m) =>
+      chain(
+        node('input', 0, 120, 'Topic'),
+        node('generate', 320, 120, 'Teacher', { ...((m.judge ?? m.text[0]) && { model: m.judge ?? m.text[0] }), dataset: 'Teacher examples', count: 20, prompt: 'Questions people ask about: {{question}}. Answers: short, friendly, correct.', review: true }),
+        node('output', 640, 120, 'Final answer'),
+      ),
+  },
+  {
+    id: 'train-collect',
+    group: 'Train',
+    name: 'Collect good answers',
+    description: 'A model answers, a judge model checks it; good answers are kept in a dataset. Use "Run repeatedly" with a list of questions to collect many.',
+    build: (m) => {
+      const q = node('input', 0, 160, 'Question');
+      const a = llm(320, 160, 'Answer', m.judge ?? m.text[0]);
+      const check = node('decide', 640, 160, 'Good enough?', {
+        ...(m.decision && { model: m.decision }),
+        state: 'Question: {{question}}\n\nAnswer: {{inputs}}',
+        questions: [{ name: 'good', type: 'noul', instructions: 'Is this a correct, helpful and well written answer to the question?' }],
+      });
+      const keep = node('dataset', 960, 60, 'yes', { dataset: 'Good answers' });
+      const out = node('output', 1280, 160, 'Final answer');
+      return { nodes: [q, a, check, keep, out], edges: [wire(q, a), wire(a, check), wire(check, keep), wire(a, out)] };
+    },
+    needsDecision: true,
+  },
+  {
+    id: 'train-thumbs',
+    group: 'Train',
+    name: 'Train on my 👍 answers',
+    description: 'Trains a small model on the answers you gave a 👍 ("My good answers"). Test it afterwards with "Compare models on a dataset".',
+    build: (m) =>
+      chain(
+        node('input', 0, 120, 'Start'),
+        node('train', 320, 120, 'Train', { dataset: 'My good answers', trainBase: 'unsloth/Qwen3.5-2B', trainName: `my-style:${today()}`, epochs: 2 }),
+        node('output', 640, 120, 'Final answer'),
+      ),
+  },
+  {
+    id: 'train-compare',
+    group: 'Train',
+    name: 'Compare models on a dataset',
+    description: 'Several models answer test examples from a dataset; a judge grades them against the reference answers. Find out if your trained model is better.',
+    build: (m) =>
+      chain(
+        node('input', 0, 120, 'Start'),
+        node('evaluate', 320, 120, 'Evaluate', {
+          ...((m.judge ?? m.text[0]) && { model: m.judge ?? m.text[0] }),
+          models: [m.text[0], m.text[1] ?? m.text[0]].filter((x): x is ModelRef => !!x),
+          dataset: 'My good answers',
+          count: 5,
+        }),
+        node('output', 640, 120, 'Final answer'),
+      ),
+  },
+  {
+    id: 'train-dm',
+    group: 'Train',
+    name: 'Train the DungeonMind DM',
+    description: 'Trains a DM model on the turns the Lab simulator collected (dataset "DungeonMind DM") and tests your current DM model on the same turns. When it is ready, use "Put a trained model to work".',
+    build: (m) => {
+      const q = node('input', 0, 160, 'Start');
+      const t = node('train', 320, 60, 'Train DM', { dataset: 'DungeonMind DM', trainBase: 'unsloth/Qwen3-8B', trainName: `dungeonmind-dm:${today()}`, epochs: 2 });
+      const e = node('evaluate', 320, 280, 'Test DM models', {
+        ...((m.judge ?? m.text[0]) && { model: m.judge ?? m.text[0] }),
+        models: [m.text[0]].filter((x): x is ModelRef => !!x),
+        dataset: 'DungeonMind DM',
+        count: 5,
+      });
+      const out = node('output', 680, 160, 'Final answer');
+      return { nodes: [q, t, e, out], edges: [wire(q, t), wire(q, e), wire(t, out), wire(e, out)] };
+    },
+  },
+  {
+    id: 'train-deploy',
+    group: 'Train',
+    name: 'Put a trained model to work',
+    description: 'Puts a model (e.g. dungeonmind-dm:…) into the AI model blocks of your dnd-* canvases. Pick the model in the Deploy block first.',
+    build: (m) => chain(node('input', 0, 120, 'Start'), node('deploy', 320, 120, 'Deploy', { ...(m.text[0] && { model: m.text[0] }), canvasPattern: 'dnd-*' }), node('output', 640, 120, 'Final answer')),
   },
 ];
 
@@ -596,5 +688,6 @@ export const TEMPLATES: Template[] = [
   },
   ...VOICE,
   ...DECISIONS,
+  ...TRAIN,
   ...TABLETOP,
 ];

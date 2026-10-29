@@ -26,6 +26,7 @@ import { HiveEdge } from './HiveEdge';
 import { HiveNode, InputMic, RunViews, type HiveFlowNode } from './HiveNode';
 import { BuilderPanel } from './BuilderPanel';
 import { Inspector } from './Inspector';
+import { RepeatRun } from './RepeatRun';
 import { COMING_SOON, NODE_META, PALETTE } from './meta';
 import { newNodeId, TEMPLATE_GROUPS, TEMPLATES, type TemplateGroup } from './templates';
 
@@ -561,6 +562,7 @@ function Editor({ active, onProblem }: { active: boolean; onProblem: () => void 
               Run
             </button>
           )}
+          <RepeatRun canvasId={doc.id} question={question} />
         </div>
         )}
       </div>

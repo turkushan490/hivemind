@@ -4,6 +4,7 @@ import { api } from '../api';
 import { GpuBar, WorkBar } from '../canvas/NodeBars';
 import { AnswerView } from '../components/AnswerView';
 import { ExportRun } from '../components/ExportRun';
+import { ThumbsButton } from '../components/ThumbsButton';
 import { NODE_META } from '../canvas/meta';
 import { toast } from '../notify';
 import { IDLE, STATE_LABEL, STATE_TEXT, useRun } from '../run/state';
@@ -181,6 +182,7 @@ export function UsePage({ active, viewer, onProblem, onBuild }: { active: boolea
             {run.final.cost ? <span className="text-xs text-slate-500">${run.final.cost.toFixed(4)}</span> : null}
             {run.final.text && <SpeakButton text={run.final.text} className="ml-auto" />}
             <ExportRun runId={run.runId} className={run.final.text ? '' : 'ml-auto'} />
+            {run.final.text && <ThumbsButton runId={run.runId} />}
             {run.final.text && (
               <button
                 className="btn-ghost px-2 py-0.5 text-xs"
@@ -210,6 +212,7 @@ export function UsePage({ active, viewer, onProblem, onBuild }: { active: boolea
               <div className="mt-2 flex justify-end gap-2">
                 {h.final && <SpeakButton text={h.final} />}
                 <ExportRun runId={h.id} />
+                {h.final && <ThumbsButton runId={h.id} />}
               </div>
             </details>
           ))}

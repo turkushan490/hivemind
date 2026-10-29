@@ -4,6 +4,7 @@ import { api } from '../api';
 import { ModelPicker } from '../canvas/ModelPicker';
 import { toast } from '../notify';
 import { useStored } from '../stored';
+import { DatasetsPanel } from './DatasetsPanel';
 import { NewModel } from './NewModel';
 
 /** The Training Lab (D&D only): simulate games with fake players, check every DM turn, build a dataset, compare models. */
@@ -296,6 +297,7 @@ function Datasets() {
   };
   return (
     <div className="space-y-4">
+      <DatasetsPanel />
       <div className="card flex flex-wrap items-center gap-3">
         <div>
           <h3 className="font-semibold">Dataset</h3>

@@ -9,6 +9,7 @@ import { BlockSettings } from './BlockSettings';
 import { GpuBar, WorkBar } from './NodeBars';
 import { SpeakButton } from '../voice';
 import { ExportRun } from '../components/ExportRun';
+import { ThumbsButton } from '../components/ThumbsButton';
 import { BoxOverlay, DecisionBars } from './DecisionBars';
 
 const SYSTEM_DEFAULT: Partial<Record<string, string>> = { judge: JUDGE_SYSTEM, review: REVIEW_SYSTEM };
@@ -56,6 +57,7 @@ export function Inspector(props: {
               </span>
               {props.final.text && <SpeakButton text={props.final.text} className="ml-auto" />}
               {props.runId && <ExportRun runId={props.runId} className={props.final.text ? '' : 'ml-auto'} />}
+              {props.runId && props.final.text && <ThumbsButton runId={props.runId} />}
             </div>
             {props.final.text ? (
               <div className="max-h-[70vh] overflow-y-auto">

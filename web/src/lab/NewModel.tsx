@@ -1,4 +1,4 @@
-import type { ProviderInfo, TrainJob, TrainOverview } from '@hivemind/shared';
+import type { Dataset, ProviderInfo, TrainJob, TrainOverview } from '@hivemind/shared';
 import { useEffect, useState } from 'react';
 import { api } from '../api';
 import { toast } from '../notify';
@@ -15,6 +15,7 @@ const STATE: Record<string, { label: string; tone: string }> = {
   training: { label: 'Training', tone: 'text-indigo-200' },
   exporting: { label: 'Making the GGUF', tone: 'text-fuchsia-300' },
   importing: { label: 'Putting it into Ollama', tone: 'text-fuchsia-300' },
+  paused: { label: 'Paused — GPU free', tone: 'text-amber-200' },
   done: { label: 'Ready', tone: 'text-emerald-300' },
   error: { label: 'Failed', tone: 'text-red-300' },
   cancelled: { label: 'Cancelled', tone: 'text-slate-400' },
@@ -38,16 +39,22 @@ export function NewModel({ active, providers }: { active: boolean; providers: Pr
   const [target, setTarget] = useStored<string>('lab.train.target', '');
   const [url, setUrl] = useState('');
   const [busy, setBusy] = useState(false);
+  const [datasets, setDatasets] = useState<Dataset[]>([]);
+  const [datasetId, setDatasetId] = useStored<string>('lab.train.dataset', '');
   const ollamas = providers.filter((p) => p.kind === 'ollama' && p.enabled);
   const targetId = ollamas.some((p) => p.id === target) ? target : ollamas[0]?.id;
 
-  const load = () =>
-    api<TrainOverview>('/api/lab/train', { quiet: true })
+  const load = () => {
+    api<Dataset[]>('/api/datasets', { quiet: true })
+      .then((l) => setDatasets(l.filter((d) => d.kind === 'text')))
+      .catch(() => {});
+    return api<TrainOverview>('/api/lab/train', { quiet: true })
       .then((o) => {
         setInfo(o);
         setUrl((u) => u || (o.trainer.url?.includes('127.0.0.1') ? '' : o.trainer.url) || '');
       })
       .catch(() => {});
+  };
   const running = info?.jobs.find((j) => ACTIVE.has(j.state));
   useEffect(() => {
     if (!active) return;
@@ -70,13 +77,18 @@ export function NewModel({ active, providers }: { active: boolean; providers: Pr
     if (!targetId) return toast('Add an Ollama server first (Settings → Providers)', 'info');
     setBusy(true);
     try {
-      await api<TrainJob>('/api/lab/train', { body: { base, name, providerId: targetId, epochs } });
-      toast(`Making ${name} — local AI on this GPU pauses until it's done`, 'ok');
+      await api<TrainJob>('/api/lab/train', { body: { base, name, providerId: targetId, epochs, ...(dataset && { datasetId: dataset.id }) } });
+      toast(running ? `${name} is queued — it starts when the GPU is free` : `Making ${name} — local AI on this GPU pauses until it's done`, 'ok');
       load();
     } catch {
     } finally {
       setBusy(false);
     }
+  };
+  const act = async (id: string, what: 'pause' | 'resume') => {
+    await api(`/api/lab/train/${id}/${what}`, { method: 'POST' }).catch(() => {});
+    if (what === 'pause') toast('Pausing after the current step — the GPU is freed when the checkpoint is saved', 'info');
+    load();
   };
   const cancel = async (id: string) => {
     if (!confirm('Stop making this model? The work so far is lost.')) return;
@@ -86,18 +98,31 @@ export function NewModel({ active, providers }: { active: boolean; providers: Pr
 
   if (!info) return <div className="card text-sm text-slate-400">Loading…</div>;
   const chosen = info.bases.find((b) => b.id === base);
-  const steps = Math.ceil(info.rows / 4) * epochs;
+  const dataset = datasets.find((d) => d.id === datasetId) ?? datasets.find((d) => d.name === 'DungeonMind DM') ?? datasets[0];
+  const rows = dataset ? dataset.items : info.rows;
+  const steps = Math.ceil(rows / 4) * epochs;
   const estimate = chosen ? steps * chosen.secPerStep + 600 : undefined;
-  const enough = info.rows >= info.minRows;
+  const enough = rows >= info.minRows;
 
   return (
     <div className="grid gap-4 lg:grid-cols-[1fr_1.2fr]">
       <div className="card space-y-3">
         <h3 className="font-semibold">Make a new model</h3>
         <p className="text-xs text-slate-400">
-          Trains a base model on your Lab dataset (the good turns plus accepted corrections) and puts the result into Ollama under its own name. Your current
-          models stay as they are.
+          Trains a base model on one of your datasets and puts the result into Ollama under its own name. Your current models stay as they are. Several jobs
+          can be started: they wait their turn for the GPU.
         </p>
+        <label className="block space-y-1 text-xs">
+          <span className="font-semibold text-slate-300">Dataset</span>
+          <select className="input py-1 text-xs" value={dataset?.id ?? ''} onChange={(e) => setDatasetId(e.target.value)}>
+            {datasets.length === 0 && <option value="">No text datasets yet — make one in Datasets</option>}
+            {datasets.map((d) => (
+              <option key={d.id} value={d.id}>
+                {d.name} · {d.items} examples{d.pending ? ` (+${d.pending} to review)` : ''}
+              </option>
+            ))}
+          </select>
+        </label>
 
         <div className={`rounded-md border p-2 text-xs ${info.trainer.ok ? 'border-emerald-800/60 bg-emerald-950/20' : 'border-amber-800/60 bg-amber-950/20'}`}>
           <div className="flex items-center gap-2">
@@ -161,14 +186,14 @@ export function NewModel({ active, providers }: { active: boolean; providers: Pr
 
         <div className="rounded-md bg-[#0d1117] p-2 text-xs">
           <div>
-            Training examples ready: <span className={`font-mono font-semibold ${enough ? 'text-emerald-300' : 'text-amber-300'}`}>{info.rows}</span>
+            Training examples ready: <span className={`font-mono font-semibold ${enough ? 'text-emerald-300' : 'text-amber-300'}`}>{rows}</span>
             {!enough && <span className="text-amber-300"> — at least {info.minRows} needed; a few hundred is better. Let the Simulator run first.</span>}
           </div>
           {enough && <div className="text-slate-400">About {dur(estimate)} on a Tesla T4 ({steps} steps), plus the download of the base model the first time.</div>}
         </div>
 
-        <button className="btn w-full" disabled={busy || !enough || !info.trainer.ok || !!running} onClick={start}>
-          {running ? 'A model is being made…' : `Make ${name}`}
+        <button className="btn w-full" disabled={busy || !enough || !info.trainer.ok} onClick={start}>
+          {running ? `Queue ${name}` : `Make ${name}`}
         </button>
         <p className="text-[11px] text-slate-500">While it trains, Ollama, ComfyUI and the Simulator on this GPU wait. Runs you start meanwhile are queued, not lost.</p>
       </div>
@@ -186,11 +211,23 @@ export function NewModel({ active, providers }: { active: boolean; providers: Pr
                 <span className={`h-2.5 w-2.5 rounded-full ${live ? 'hm-breathe bg-indigo-400 shadow-[0_0_10px_#818cf8]' : j.state === 'done' ? 'bg-emerald-400' : 'bg-slate-600'}`} />
                 <span className="font-mono text-sm font-semibold">{j.name}</span>
                 <span className={`text-xs ${s.tone}`}>{s.label}</span>
-                {live && (
-                  <button className="ml-auto text-xs text-slate-500 hover:text-red-400" onClick={() => cancel(j.id)}>
-                    Cancel
-                  </button>
-                )}
+                <span className="ml-auto flex gap-3 text-xs">
+                  {live && j.state !== 'waiting' && (
+                    <button className="text-slate-400 hover:text-amber-300" onClick={() => act(j.id, 'pause')}>
+                      ⏸ Pause
+                    </button>
+                  )}
+                  {j.state === 'paused' && (
+                    <button className="text-emerald-300 hover:text-emerald-200" onClick={() => act(j.id, 'resume')}>
+                      ▶ Resume
+                    </button>
+                  )}
+                  {live && (
+                    <button className="text-slate-500 hover:text-red-400" onClick={() => cancel(j.id)}>
+                      Cancel
+                    </button>
+                  )}
+                </span>
               </div>
               <div className="text-[11px] text-slate-500">
                 from {j.base} · {j.rows} examples · started {j.startedAt} UTC

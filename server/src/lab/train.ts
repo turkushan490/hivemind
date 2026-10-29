@@ -163,6 +163,8 @@ export interface TrainDeps {
 }
 
 const running = new Map<string, AbortController>();
+/** Jobs asked to pause; the run loop sends the pause to the trainer. */
+const pausing = new Set<string>();
 
 /** The dataset a job trains on: the one asked for, else the Lab's "DungeonMind DM" dataset. */
 function datasetFor(ownerId: string, datasetId?: string) {
@@ -232,12 +234,14 @@ export function startTrain(
     rows,
     ds.id,
   );
-  void run(id, ownerId, deps, false);
+  void run(id, ownerId, deps, 'new');
   return toJob(db.prepare('SELECT * FROM lab_trains WHERE id = ?').get(id) as unknown as TrainRow);
 }
 
-/** The whole job; resume=true picks up a job that was already started on the trainer (after a HiveMind restart). */
-async function run(id: string, ownerId: string, deps: TrainDeps, resume: boolean) {
+/** new: start on the trainer; follow: it already runs there (after a restart); resume: continue a paused job. */
+type RunMode = 'new' | 'follow' | 'resume';
+
+async function run(id: string, ownerId: string, deps: TrainDeps, mode: RunMode) {
   const row = db.prepare('SELECT * FROM lab_trains WHERE id = ?').get(id) as unknown as TrainRow;
   const abort = new AbortController();
   running.set(id, abort);
@@ -254,7 +258,7 @@ async function run(id: string, ownerId: string, deps: TrainDeps, resume: boolean
       if (abort.signal.aborted) return;
       update(id, 'starting', { note: 'Freeing the GPU (Ollama, ComfyUI)' });
       await deps.freeGpu(target.hostKey).catch(() => {});
-      if (!resume) {
+      if (mode !== 'follow') {
         // Something outside HiveMind (an image still being made in ComfyUI) can keep the memory: wait until it's free.
         for (;;) {
           if (abort.signal.aborted) return update(id, 'cancelled', { note: 'Cancelled while waiting for the GPU' });
@@ -264,14 +268,20 @@ async function run(id: string, ownerId: string, deps: TrainDeps, resume: boolean
           await new Promise((r) => setTimeout(r, pollMs() * 6));
           await deps.freeGpu(target.hostKey).catch(() => {});
         }
-        await trainer('/jobs', { method: 'POST', body: JSON.stringify({ id, ...JSON.parse(row.settings) }) });
+        await trainer('/jobs', { method: 'POST', body: JSON.stringify({ id, ...JSON.parse(row.settings), ...(mode === 'resume' && { resume: true }) }) });
       }
+      let pauseSent = false;
       // Poll until the trainer is done; the lock stays held, so local AI on this GPU waits.
       for (;;) {
         if (abort.signal.aborted) {
           await trainer(`/jobs/${id}/cancel`, { method: 'POST' }, 30_000).catch(() => {});
           update(id, 'cancelled', { note: 'Cancelled' });
           return;
+        }
+        if (pausing.has(id) && !pauseSent) {
+          pauseSent = true;
+          update(id, row.state, { note: 'Pausing after the current step (saving a checkpoint)…' });
+          await trainer(`/jobs/${id}/pause`, { method: 'POST' }).catch(() => {});
         }
         let s: Record<string, any>;
         try {
@@ -285,6 +295,8 @@ async function run(id: string, ownerId: string, deps: TrainDeps, resume: boolean
         const progress = { step: s.step, totalSteps: s.totalSteps, loss: s.loss, etaS: s.etaS, note: s.note, log: s.log };
         if (s.state === 'error') throw new Error(s.error || 'The trainer failed (see the log)');
         if (s.state === 'cancelled') return update(id, 'cancelled', progress);
+        // Paused: the checkpoint is saved and the GPU lock is given back when this returns.
+        if (s.state === 'paused') return update(id, 'paused', progress);
         if (s.state === 'done') {
           update(id, 'importing', { ...progress, note: `Importing ${s.gguf} into Ollama` });
           await importGguf(join(TRAIN_DIR, id, s.gguf), row.name, deps.ollamaUrl(row.provider_id)!, abort.signal);
@@ -300,7 +312,25 @@ async function run(id: string, ownerId: string, deps: TrainDeps, resume: boolean
     logError({ source: 'server', message: `Lab: making ${row.name} failed: ${message}`, userId: ownerId });
   } finally {
     running.delete(id);
+    pausing.delete(id);
   }
+}
+
+/** Pause: the trainer saves a checkpoint after the current step and the GPU is free until Resume. */
+export function pauseTrain(id: string, ownerId: string): boolean {
+  const row = db.prepare('SELECT id FROM lab_trains WHERE id = ? AND owner_id = ?').get(id, ownerId);
+  if (!row || !running.has(id)) return false;
+  pausing.add(id);
+  return true;
+}
+
+/** Resume a paused job: it queues for the GPU again and continues from its checkpoint. */
+export function resumeTrain(id: string, ownerId: string, deps: TrainDeps): boolean {
+  const row = db.prepare('SELECT state FROM lab_trains WHERE id = ? AND owner_id = ?').get(id, ownerId) as { state: TrainState } | undefined;
+  if (!row || row.state !== 'paused' || running.has(id)) return false;
+  update(id, 'waiting', { note: 'Waiting for the GPU to continue' });
+  void run(id, ownerId, deps, 'resume');
+  return true;
 }
 
 export function cancelTrain(id: string, ownerId: string): boolean {
@@ -313,13 +343,13 @@ export function cancelTrain(id: string, ownerId: string): boolean {
 
 /** After a restart: jobs that were running keep going on the trainer, so HiveMind follows them again. */
 export function resumeTrains(depsFor: (ownerId: string) => TrainDeps) {
-  const rows = db.prepare("SELECT id, owner_id, state FROM lab_trains WHERE state NOT IN ('done', 'error', 'cancelled', 'interrupted')").all() as { id: string; owner_id: string; state: TrainState }[];
+  const rows = db.prepare("SELECT id, owner_id, state FROM lab_trains WHERE state NOT IN ('done', 'error', 'cancelled', 'interrupted', 'paused')").all() as { id: string; owner_id: string; state: TrainState }[];
   for (const r of rows) {
     if (r.state === 'waiting' || r.state === 'importing') {
       update(r.id, 'interrupted', undefined, 'HiveMind restarted before this step finished; start it again');
       continue;
     }
-    void run(r.id, r.owner_id, depsFor(r.owner_id), true);
+    void run(r.id, r.owner_id, depsFor(r.owner_id), 'follow');
   }
 }
 

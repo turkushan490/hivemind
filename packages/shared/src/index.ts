@@ -572,7 +572,7 @@ export interface DatasetItem {
 
 // ---- Lab: make a new model (GET /api/lab/train) ----
 
-export type TrainState = 'starting' | 'waiting' | 'loading' | 'training' | 'exporting' | 'importing' | 'done' | 'error' | 'cancelled' | 'interrupted';
+export type TrainState = 'starting' | 'waiting' | 'loading' | 'training' | 'exporting' | 'importing' | 'paused' | 'done' | 'error' | 'cancelled' | 'interrupted';
 
 export interface TrainJob {
   id: string;

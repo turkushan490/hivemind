@@ -10,6 +10,7 @@ import inspect
 import json
 import math
 import os
+import signal
 import sys
 import time
 import traceback
@@ -18,6 +19,10 @@ from pathlib import Path
 DIR = Path(sys.argv[1])
 JOB = json.loads((DIR / "job.json").read_text())
 STARTED = time.time()
+
+# Pause (SIGUSR1 from server.py): save a checkpoint after the current step and stop; resume continues from it.
+PAUSE = {"asked": False}
+signal.signal(signal.SIGUSR1, lambda *_: PAUSE.update(asked=True))
 
 
 def status(state: str, **extra) -> None:
@@ -113,6 +118,11 @@ def main() -> None:
                 rows=len(texts),
             )
 
+        def on_step_end(self, args, state, control, **kw):  # noqa: ANN001
+            if PAUSE["asked"]:
+                control.should_save = True
+                control.should_training_stop = True
+
     cfg = dict(
         output_dir=str(DIR / "checkpoints"),
         dataset_text_field="text",
@@ -130,15 +140,22 @@ def main() -> None:
         fp16=not bf16,
         bf16=bf16,
         logging_steps=1,
-        save_strategy="no",
+        # A checkpoint now and then (only the newest is kept), so pause and a crash lose little work.
+        save_strategy="steps",
+        save_steps=int(JOB.get("saveSteps", 50)),
+        save_total_limit=1,
         report_to="none",
         seed=3407,
     )
     args = SFTConfig(**only_known(SFTConfig.__init__, cfg))
     trainer_args = dict(model=model, train_dataset=ds, args=args, callbacks=[Progress()], processing_class=tok, tokenizer=tok)
     trainer = SFTTrainer(**only_known(SFTTrainer.__init__, trainer_args))
-    status("training", step=0, totalSteps=total, rows=len(texts), note="Training started")
-    result = trainer.train()
+    resume = bool(JOB.get("resume")) and any((DIR / "checkpoints").glob("checkpoint-*"))
+    status("training", step=0, totalSteps=total, rows=len(texts), note="Continuing from the last checkpoint" if resume else "Training started")
+    result = trainer.train(resume_from_checkpoint=True if resume else None)
+    if PAUSE["asked"]:
+        status("paused", step=trainer.state.global_step, totalSteps=trainer.state.max_steps or total, note="Paused — the GPU is free; resume continues here")
+        return
 
     status("exporting", note=f"Making the GGUF ({JOB.get('quant', 'q4_k_m')})", loss=getattr(result, "training_loss", None))
     out = DIR / "gguf"

@@ -5,7 +5,7 @@ import { logError } from '../errors.js';
 import { exportJsonl, scoreboard } from '../lab/data.js';
 import { migrateLabTurns, syncLabTurn } from '../lab/datasets.js';
 import { activeLab, recoverLab, startLab, type LabConfig } from '../lab/runner.js';
-import { cancelTrain, installTrainerScripts, overview, resumeTrains, startBuiltinTrainer, startTrain, type TrainDeps } from '../lab/train.js';
+import { cancelTrain, installTrainerScripts, overview, pauseTrain, resumeTrain, resumeTrains, startBuiltinTrainer, startTrain, type TrainDeps } from '../lab/train.js';
 import { memoryFor } from '../services/memory.js';
 import { requireAdmin, requireUser, type User } from './auth.js';
 import { adapterFor, gpuFreerFor, resolverFor, visibleRows } from './providers.js';
@@ -35,7 +35,7 @@ export function labRoutes(app: FastifyInstance) {
     logError({ source: 'server', message: `Lab: trainer setup failed: ${(err as Error).message}` });
   }
 
-  app.get('/api/lab/train', { preHandler: requireAdmin }, async (req) => overview(req.user!.id));
+  app.get('/api/lab/train', { preHandler: requireUser }, async (req) => overview(req.user!.id));
 
   app.put('/api/lab/train/settings', { preHandler: requireAdmin }, async (req, reply) => {
     const url = String((req.body as { url?: string } | undefined)?.url ?? '').trim();
@@ -44,13 +44,22 @@ export function labRoutes(app: FastifyInstance) {
     return overview(req.user!.id);
   });
 
-  app.post('/api/lab/train', { preHandler: requireAdmin }, async (req) => {
-    const body = (req.body ?? {}) as { base?: string; name?: string; providerId?: string; epochs?: number; maxSeqLength?: number; maxSteps?: number; allowSmall?: boolean };
-    return startTrain(req.user!.id, { base: String(body.base ?? ''), name: String(body.name ?? '').trim().toLowerCase(), providerId: String(body.providerId ?? ''), epochs: body.epochs, maxSeqLength: body.maxSeqLength, maxSteps: body.maxSteps, allowSmall: body.allowSmall }, trainDeps(req.user!));
+  app.post('/api/lab/train', { preHandler: requireUser }, async (req) => {
+    const body = (req.body ?? {}) as { base?: string; name?: string; providerId?: string; datasetId?: string; epochs?: number; maxSeqLength?: number; maxSteps?: number; allowSmall?: boolean };
+    return startTrain(req.user!.id, { base: String(body.base ?? ''), name: String(body.name ?? '').trim().toLowerCase(), providerId: String(body.providerId ?? ''), datasetId: body.datasetId, epochs: body.epochs, maxSeqLength: body.maxSeqLength, maxSteps: body.maxSteps, allowSmall: body.allowSmall }, trainDeps(req.user!));
   });
 
-  app.post('/api/lab/train/:id/cancel', { preHandler: requireAdmin }, async (req, reply) =>
+  // Everyone except viewers may train (the viewer guard blocks their writes); each controls their own jobs.
+  app.post('/api/lab/train/:id/cancel', { preHandler: requireUser }, async (req, reply) =>
     cancelTrain((req.params as { id: string }).id, req.user!.id) ? { ok: true } : reply.code(404).send({ error: 'That job is not running' }),
+  );
+
+  app.post('/api/lab/train/:id/pause', { preHandler: requireUser }, async (req, reply) =>
+    pauseTrain((req.params as { id: string }).id, req.user!.id) ? { ok: true } : reply.code(404).send({ error: 'That job is not running' }),
+  );
+
+  app.post('/api/lab/train/:id/resume', { preHandler: requireUser }, async (req, reply) =>
+    resumeTrain((req.params as { id: string }).id, req.user!.id, trainDeps(req.user!)) ? { ok: true } : reply.code(409).send({ error: 'Only a paused job can be resumed' }),
   );
 
   app.get('/api/lab', { preHandler: requireUser }, async (req) => {

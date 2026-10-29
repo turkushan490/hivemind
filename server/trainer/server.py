@@ -135,6 +135,14 @@ class Handler(BaseHTTPRequestHandler):
                 )
                 current = {"id": job_id, "proc": proc, "dir": d}
             return self.send(200, {"ok": True, "id": job_id})
+        m = re.match(r"^/jobs/([^/]+)/pause$", self.path)
+        if m:
+            # train.py saves a checkpoint after the current step, writes "paused" and exits; HiveMind polls for that.
+            with lock:
+                if current and current["id"] == m.group(1) and current["proc"].poll() is None:
+                    os.kill(current["proc"].pid, signal.SIGUSR1)
+                    return self.send(200, {"ok": True})
+            return self.send(404, {"error": "That job is not running"})
         m = re.match(r"^/jobs/([^/]+)/cancel$", self.path)
         if m:
             with lock:

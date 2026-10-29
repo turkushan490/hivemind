@@ -63,6 +63,11 @@ const BLOCKS: Record<NodeType, string> = {
   discord: 'posts "body" (default {{input}}) to a Discord channel; the user pastes the webhook URL later. Put it after the block whose answer should be posted.',
   decide: 'a DECISION model (only "decision" models from the list) answers typed "questions" about the text wired in, in ~0.1 s: [{"name","type":"noul" (yes/no) | "choice" (with "options":[{"name","description"}]) | "score" (with "levels" low→high),"instructions"}]. Optional "threshold" (default 0.6). Blocks wired after it labelled "yes"/"no" (first noul question) or with a choice option name (or "fallback") only run when that answer wins; use it for spam filters, guards before actions and routing.',
   image: 'makes an image. Needs "model" (an image model from the list). Draws "prompt" if set, else the text of the block before it (put a model before it that writes an image prompt).',
+  generate: 'TRAINING: a teacher model ("model") writes "count" training examples (input + ideal output) for what "prompt" describes, and stores them in "dataset" (a name). Use it to make training data.',
+  dataset: 'TRAINING: keeps the answer wired into it as a training example in "dataset" (a name), with the question as input. "review": true puts it in the review queue first. Put a Decide or Judge before it to keep only good answers.',
+  train: 'TRAINING: starts training a new model on "dataset": "trainBase" (e.g. unsloth/Qwen3.5-2B), "trainName" (e.g. my-helper:v1). It runs in the background for a long time; only use when the user asks to train or fine-tune.',
+  evaluate: 'TRAINING: tests "models" (1+) on "count" examples from "dataset"; "model" judges them against the reference answers and the scores come out as a table.',
+  deploy: 'TRAINING: puts "model" into the AI model blocks of the user\'s canvases matching "canvasPattern" (e.g. dnd-*). Only when the user asks to use a trained model.',
 };
 
 const ref = (m: ModelInfo) => `${m.providerId}|${m.model}`;
@@ -259,6 +264,18 @@ export function toGraph(c: BuilderCanvas, models: ModelInfo[]): { graph: CanvasG
       if (type === 'webhook' && raw.url) config.url = String(raw.url);
       if (type === 'webhook') config.method = (HTTP_METHODS as readonly string[]).includes(String(raw.method).toUpperCase()) ? (String(raw.method).toUpperCase() as NodeConfig['method']) : 'POST';
       if (raw.body) config.body = typeof raw.body === 'string' ? raw.body : JSON.stringify(raw.body);
+    }
+    if (type === 'generate' || type === 'dataset' || type === 'train' || type === 'evaluate' || type === 'deploy') {
+      const r = raw as unknown as Record<string, unknown>;
+      if (type !== 'deploy') config.dataset = String(r.dataset || 'My dataset').slice(0, 80);
+      if (type === 'generate' || type === 'evaluate') config.count = Math.max(1, Math.min(type === 'generate' ? 200 : 50, Number(r.count) || (type === 'generate' ? 10 : 5)));
+      if (r.review === true) config.review = true;
+      if (type === 'train') {
+        config.trainBase = /^[\w.-]+\/[\w.-]+$/.test(String(r.trainBase)) ? String(r.trainBase) : 'unsloth/Qwen3.5-2B';
+        config.trainName = String(r.trainName || 'my-model:v1').toLowerCase().replace(/[^a-z0-9._:-]+/g, '-').slice(0, 60);
+        config.epochs = Math.max(1, Math.min(5, Number(r.epochs) || 2));
+      }
+      if (type === 'deploy') config.canvasPattern = String(r.canvasPattern || 'dnd-*');
     }
     nodes.push({ id, type, label: raw.label ? String(raw.label).slice(0, 60) : undefined, position: { x: 0, y: 0 }, config });
   }

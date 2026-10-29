@@ -312,6 +312,11 @@ function Editor({ active, onProblem }: { active: boolean; onProblem: () => void 
     }
     if (kind === 'memory') config.key = 'default';
     if (kind === 'decide') config.questions = [{ name: 'spam', type: 'noul', instructions: 'Is this spam?' }];
+    // Training blocks start with a dataset name, and Train with a base that fits a 16 GB GPU.
+    if (kind === 'generate') Object.assign(config, { dataset: 'My dataset', count: 10, prompt: 'Short, friendly answers to questions about …' });
+    if (kind === 'dataset' || kind === 'evaluate') config.dataset = 'My dataset';
+    if (kind === 'train') Object.assign(config, { dataset: 'My dataset', trainBase: 'unsloth/Qwen3.5-2B', trainName: `my-model:${new Date().toISOString().slice(0, 10).replace(/-/g, '')}`, epochs: 2 });
+    if (kind === 'deploy') config.canvasPattern = 'dnd-*';
     // With a decision provider, new Routers decide with Jev: much faster and nearly free.
     if (kind === 'router' && firstDecision) Object.assign(config, { decideWith: 'jev', decider: { providerId: firstDecision.providerId, model: firstDecision.model } });
     setNodes((ns) => [...ns.map((n) => ({ ...n, selected: false })), { id, type: 'hive', position: pos, selected: true, data: { kind, config } }]);

@@ -3,6 +3,7 @@ import type { DecisionRequest, DecisionResult } from '../providers/decisions.js'
 import type { ChatMessage } from '../providers/types.js';
 import { DECIDE_NODE, DEFAULT_THRESHOLD, toView } from './decide.js';
 import { ACTION_NODES } from './actions.js';
+import { TRAINING_NODES } from './training.js';
 
 /** Output of an upstream node, as seen by the node that runs next. */
 export interface NodeInput {
@@ -27,6 +28,17 @@ export interface NodeServices {
   freeGpu?(hostKey: string, exceptProviderId?: string): Promise<void>;
   /** Home Assistant address and token (Settings → Home Assistant), or undefined when not set up. */
   homeAssistant?(): { url: string; token: string } | undefined;
+  /** Training blocks: datasets, training jobs and deploying models, for the user who runs the canvas (not viewers). */
+  training?: {
+    addExamples(
+      dataset: string,
+      items: { input?: string; output?: string; system?: string; ref?: string }[],
+      opts: { review?: boolean; source: 'generated' | 'block' },
+    ): { name: string; added: number; items: number; pending: number };
+    sample(dataset: string, n: number): { input: string; output: string; system: string | null }[];
+    startTrain(opts: { dataset: string; base: string; name: string; target?: string; epochs?: number }): { id: string; name: string; rows: number; state: string };
+    deploy(pattern: string, model: ModelRef): { canvases: number; blocks: number };
+  };
   /** Reads a file from the files folder (images for box questions). */
   readFile?(path: string): Buffer;
 }
@@ -561,4 +573,7 @@ export const NODES: Record<NodeType, NodeDefinition> = {
 
   // ---- Action ----
   ...ACTION_NODES,
+
+  // ---- Train ----
+  ...TRAINING_NODES,
 };

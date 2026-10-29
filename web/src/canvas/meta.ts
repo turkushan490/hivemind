@@ -1,6 +1,6 @@
 import type { NodeType } from '@hivemind/shared';
 
-export type NodeGroup = 'Core' | 'Logic' | 'Data' | 'Create' | 'Action';
+export type NodeGroup = 'Core' | 'Logic' | 'Data' | 'Create' | 'Action' | 'Train';
 
 export interface NodeMeta {
   title: string;
@@ -181,6 +181,52 @@ export const NODE_META: Record<NodeType, NodeMeta> = {
     hasInput: true,
     hasOutput: true,
   },
+  generate: {
+    title: 'Generate examples',
+    color: '#fde047',
+    group: 'Train',
+    description: 'A teacher model (a strong cloud model, or a local one) writes training examples — an input and the ideal answer — for what you describe, and stores them in a dataset.',
+    usesModel: true,
+    hasInput: true,
+    hasOutput: true,
+  },
+  dataset: {
+    title: 'Add to dataset',
+    color: '#bef264',
+    group: 'Train',
+    description: 'Keeps the answer wired into it as a training example (with the question as input) in a dataset. Put a Decide or Judge before it to keep only the good ones, or send them to the review queue.',
+    usesModel: false,
+    hasInput: true,
+    hasOutput: true,
+  },
+  train: {
+    title: 'Train model',
+    color: '#f0abfc',
+    group: 'Train',
+    description: 'Starts training a new model on a dataset (it waits for the GPU and runs in the background for minutes to hours). The new model lands in Ollama under its own name; follow it in Lab → New model.',
+    usesModel: false,
+    hasInput: true,
+    hasOutput: true,
+  },
+  evaluate: {
+    title: 'Evaluate',
+    color: '#67e8f9',
+    group: 'Train',
+    description: 'Gives test examples from a dataset to several models; a judge model grades their answers against the reference answers. The scores come out as a table.',
+    usesModel: true,
+    multiModel: 1,
+    hasInput: true,
+    hasOutput: true,
+  },
+  deploy: {
+    title: 'Deploy model',
+    color: '#86efac',
+    group: 'Train',
+    description: 'Puts a model (e.g. the one you just trained) into the AI model blocks of the canvases you name, such as dnd-*.',
+    usesModel: true,
+    hasInput: true,
+    hasOutput: true,
+  },
 };
 
 export const PALETTE: { group: NodeGroup; types: NodeType[] }[] = [
@@ -189,6 +235,7 @@ export const PALETTE: { group: NodeGroup; types: NodeType[] }[] = [
   { group: 'Data', types: ['template', 'file', 'search', 'memory'] },
   { group: 'Create', types: ['image', 'save'] },
   { group: 'Action', types: ['homeassistant', 'webhook', 'discord'] },
+  { group: 'Train', types: ['generate', 'dataset', 'train', 'evaluate', 'deploy'] },
 ];
 
 /** Planned blocks, shown in the palette so the roadmap is visible. */
@@ -247,5 +294,17 @@ export function summary(kind: NodeType, c: import('@hivemind/shared').NodeConfig
     }
     case 'template':
       return { text: (c.prompt ?? '{{question}} {{inputs}}').replace(/\s+/g, ' ').slice(0, 40) };
+    case 'generate':
+      return !c.model ? { text: 'Pick a teacher model →', missing: true } : { text: `${c.count ?? 10} examples${c.dataset ? ` → ${c.dataset}` : ''} · ${c.model.model}` };
+    case 'dataset':
+      return c.dataset?.trim() ? { text: `→ ${c.dataset}${c.review ? ' (review)' : ''}` } : { text: 'Name the dataset →', missing: true };
+    case 'train':
+      return c.dataset?.trim() && c.trainBase && c.trainName ? { text: `${c.dataset} → ${c.trainName}` } : { text: 'Pick dataset, base and name →', missing: true };
+    case 'evaluate': {
+      const n = c.models?.length ?? 0;
+      return n && c.model && c.dataset ? { text: `${n} model${n > 1 ? 's' : ''} · ${c.count ?? 5} tests · ${c.dataset}` } : { text: 'Pick models, judge and dataset →', missing: true };
+    }
+    case 'deploy':
+      return c.model && c.canvasPattern ? { text: `${c.model.model} → ${c.canvasPattern}` } : { text: 'Pick the model and canvases →', missing: true };
   }
 }

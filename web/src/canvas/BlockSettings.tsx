@@ -253,6 +253,12 @@ function KindSettings(p: Props) {
       );
     case 'image':
       return <ImageSettings {...p} />;
+    case 'generate':
+    case 'dataset':
+    case 'train':
+    case 'evaluate':
+    case 'deploy':
+      return <TrainSettings {...p} />;
     case 'homeassistant':
       return <HomeAssistantSettings {...p} />;
     case 'webhook':
@@ -919,4 +925,125 @@ function JevScoreOption(p: Props) {
       {on && <ModelPicker key={`${p.nodeId}-jev`} kind="decision" models={p.models} providers={p.providers} value={p.config.jevScore} onChange={(jevScore) => p.onChange({ jevScore })} />}
     </div>
   );
+}
+
+/** Generate examples, Add to dataset, Train, Evaluate, Deploy: which dataset, how many, and what to train. */
+function TrainSettings(p: Props) {
+  const c = p.config;
+  const [datasets, setDatasets] = useState<{ id: string; name: string; items: number; kind: string }[]>([]);
+  const [bases, setBases] = useState<{ id: string; name: string; note: string }[]>([]);
+  useEffect(() => {
+    api<{ id: string; name: string; items: number; kind: string }[]>('/api/datasets', { quiet: true }).then(setDatasets).catch(() => {});
+    if (p.kind === 'train') api<{ bases: { id: string; name: string; note: string }[] }>('/api/lab/train', { quiet: true }).then((o) => setBases(o.bases)).catch(() => {});
+  }, [p.kind]);
+  const listId = `datasets-${p.nodeId}`;
+  const ollamas = p.providers.filter((x) => x.kind === 'ollama' && x.enabled);
+  const datasetField = p.kind !== 'deploy' && (
+    <label className="block space-y-1">
+      <Label>Dataset</Label>
+      <input className="input" list={listId} placeholder="e.g. My writing style" value={c.dataset ?? ''} onChange={(e) => p.onChange({ dataset: e.target.value || undefined })} />
+      <datalist id={listId}>
+        {datasets.map((d) => (
+          <option key={d.id} value={d.name}>
+            {d.items} examples
+          </option>
+        ))}
+      </datalist>
+      <span className="text-xs text-slate-500">
+        {p.kind === 'evaluate' ? 'Test examples come from here.' : 'Made when it doesn’t exist yet.'} <code>{'{{vars.name}}'}</code> works. See and review it in Lab → Datasets.
+      </span>
+    </label>
+  );
+  switch (p.kind) {
+    case 'generate':
+      return (
+        <div className="space-y-2">
+          <label className="block space-y-1">
+            <Label>What should the examples be about?</Label>
+            <textarea className="input min-h-24 text-xs" value={c.prompt ?? ''} onChange={(e) => p.onChange({ prompt: e.target.value || undefined })} />
+            <span className="text-xs text-slate-500">Describe the task and the style of the answers. Text wired in is added as {'{{inputs}}'}.</span>
+          </label>
+          <label className="block space-y-1">
+            <span className="text-xs text-slate-400">Examples to write: {c.count ?? 10}</span>
+            <input type="range" className="w-full" min={1} max={200} value={c.count ?? 10} onChange={(e) => p.onChange({ count: Number(e.target.value) })} />
+          </label>
+          {datasetField}
+          <label className="flex items-center gap-2 text-xs text-slate-300">
+            <input type="checkbox" checked={!!c.review} onChange={(e) => p.onChange({ review: e.target.checked || undefined })} /> Let me review them first
+          </label>
+        </div>
+      );
+    case 'dataset':
+      return (
+        <div className="space-y-2">
+          {datasetField}
+          <label className="block space-y-1">
+            <Label>Input of the example</Label>
+            <input className="input text-xs" placeholder="{{question}}" value={c.prompt ?? ''} onChange={(e) => p.onChange({ prompt: e.target.value || undefined })} />
+            <span className="text-xs text-slate-500">The answer wired in becomes the output.</span>
+          </label>
+          <label className="flex items-center gap-2 text-xs text-slate-300">
+            <input type="checkbox" checked={!!c.review} onChange={(e) => p.onChange({ review: e.target.checked || undefined })} /> Put new examples in the review queue
+          </label>
+        </div>
+      );
+    case 'train':
+      return (
+        <div className="space-y-2">
+          {datasetField}
+          <label className="block space-y-1">
+            <Label>Base model</Label>
+            <select className="input text-xs" value={c.trainBase ?? ''} onChange={(e) => p.onChange({ trainBase: e.target.value })}>
+              {!bases.some((b) => b.id === c.trainBase) && c.trainBase && <option value={c.trainBase}>{c.trainBase}</option>}
+              {bases.map((b) => (
+                <option key={b.id} value={b.id}>
+                  {b.name} — {b.note}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="block space-y-1">
+            <Label>New model name</Label>
+            <input className="input text-xs" placeholder="my-model:v1" value={c.trainName ?? ''} onChange={(e) => p.onChange({ trainName: e.target.value.toLowerCase().replace(/\s+/g, '-') || undefined })} />
+          </label>
+          <label className="block space-y-1">
+            <Label>Put it on</Label>
+            <select className="input text-xs" value={c.trainTarget ?? ''} onChange={(e) => p.onChange({ trainTarget: e.target.value || undefined })}>
+              <option value="">{ollamas[0]?.name ?? 'Ollama'} (default)</option>
+              {ollamas.slice(1).map((o) => (
+                <option key={o.id} value={o.id}>
+                  {o.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="block space-y-1">
+            <span className="text-xs text-slate-400">Rounds over the data (epochs): {c.epochs ?? 2}</span>
+            <input type="range" className="w-full" min={1} max={5} value={c.epochs ?? 2} onChange={(e) => p.onChange({ epochs: Number(e.target.value) })} />
+          </label>
+          <p className="text-xs text-slate-500">The run goes on right away; training waits for the GPU and runs in the background. Follow, pause or cancel it in Lab → New model.</p>
+        </div>
+      );
+    case 'evaluate':
+      return (
+        <div className="space-y-2">
+          <ModelList {...p} title="Models to test" min={1} />
+          {datasetField}
+          <label className="block space-y-1">
+            <span className="text-xs text-slate-400">Test examples: {c.count ?? 5}</span>
+            <input type="range" className="w-full" min={1} max={50} value={c.count ?? 5} onChange={(e) => p.onChange({ count: Number(e.target.value) })} />
+          </label>
+        </div>
+      );
+    case 'deploy':
+      return (
+        <label className="block space-y-1">
+          <Label>Canvases to update</Label>
+          <input className="input text-xs" placeholder="dnd-*" value={c.canvasPattern ?? ''} onChange={(e) => p.onChange({ canvasPattern: e.target.value || undefined })} />
+          <span className="text-xs text-slate-500">Canvas ids: <code>dnd-*</code> means every canvas whose id starts with dnd-; or ids separated by commas. Their AI model blocks get the model above.</span>
+        </label>
+      );
+    default:
+      return null;
+  }
 }

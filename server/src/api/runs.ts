@@ -8,7 +8,7 @@ import { cancelRun, startRun, subscribe } from '../events/runs.js';
 import { nodeOutputs } from '../services/runOutputs.js';
 import { requireUser, type User } from './auth.js';
 import { canvasAllowed } from './scope.js';
-import { gpuFreerFor, resolverFor } from './providers.js';
+import { gpuFreerFor, resolverFor, trainingFor } from './providers.js';
 
 export interface CanvasRow {
   id: string;
@@ -113,7 +113,7 @@ export function runRoutes(app: FastifyInstance) {
     } catch (err) {
       return reply.code(400).send({ error: (err as Error).message });
     }
-    const runId = startRun({ ownerId: req.user!.id, user: req.user!, canvasId: body.canvasId, graph, question, vars, resolve: resolverFor(providerUser), freeGpu: gpuFreerFor(providerUser) });
+    const runId = startRun({ ownerId: req.user!.id, user: req.user!, canvasId: body.canvasId, graph, question, vars, resolve: resolverFor(providerUser), freeGpu: gpuFreerFor(providerUser), training: trainingFor(req.user!) });
     return { runId };
   });
 

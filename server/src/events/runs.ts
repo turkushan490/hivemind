@@ -2,7 +2,7 @@ import type { CanvasGraph, RunEvent, RunStatus } from '@hivemind/shared';
 import { newId } from '../crypto.js';
 import { db } from '../db/index.js';
 import { runGraph, type EngineDeps } from '../engine/run.js';
-import type { ChatContext } from '../nodes/index.js';
+import type { ChatContext, NodeServices } from '../nodes/index.js';
 import { logError } from '../errors.js';
 import { memoryFor } from '../services/memory.js';
 import type { User } from '../api/auth.js';
@@ -39,6 +39,8 @@ export function startRun(opts: {
   chat?: ChatContext;
   resolve: EngineDeps['resolve'];
   freeGpu?: (hostKey: string, exceptProviderId?: string) => Promise<void>;
+  /** Training blocks' services (datasets, training jobs, deploy); left out for viewers and limited tokens. */
+  training?: NodeServices['training'];
 }): string {
   const id = newId();
   const run: LiveRun = { id, ownerId: opts.ownerId, events: [], listeners: new Set(), abort: new AbortController(), finished: false };
@@ -98,6 +100,7 @@ export function startRun(opts: {
         freeGpu: opts.freeGpu,
         homeAssistant: homeAssistantConnection,
         readFile: (path) => readFileSync(safePath(path)),
+        training: opts.training,
       },
     }, run.abort.signal, opts.vars ?? {}, opts.chat)
     .then((r) => {

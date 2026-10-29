@@ -8,7 +8,7 @@ import { authenticate } from './auth.js';
 import { getPrefs } from './builder.js';
 import { routeCanvas } from '../services/canvasRouter.js';
 import { logError } from '../errors.js';
-import { gpuFreerFor, resolverFor } from './providers.js';
+import { gpuFreerFor, resolverFor, trainingFor } from './providers.js';
 import { canvasesFor, runSetup } from './runs.js';
 
 
@@ -69,7 +69,7 @@ export function v1Routes(app: FastifyInstance) {
     }
 
     const user = req.user!;
-    const runId = startRun({ ownerId: user.id, user, canvasId: row.id, graph, question, vars, chat, resolve: resolverFor(providerUser), freeGpu: gpuFreerFor(providerUser) });
+    const runId = startRun({ ownerId: user.id, user, canvasId: row.id, graph, question, vars, chat, resolve: resolverFor(providerUser), freeGpu: gpuFreerFor(providerUser), training: trainingFor(user) });
     const model = body.model;
     const live = streamSource(graph);
     const events: RunEvent[] = [];

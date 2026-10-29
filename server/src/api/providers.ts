@@ -4,6 +4,7 @@ import { decrypt, encrypt, newId } from '../crypto.js';
 import { db, getSetting, setSetting } from '../db/index.js';
 import type { ResolvedProvider } from '../engine/run.js';
 import { createAdapter } from '../providers/index.js';
+import { trainingServices } from '../lab/services.js';
 import { isOllamaDecisionModel, SPAM_TEST, SPAM_TEST_STATE } from '../providers/decisions.js';
 import { logError } from '../errors.js';
 import { requireUser, type User } from './auth.js';
@@ -118,6 +119,23 @@ export function gpuFreerFor(user: User) {
     const rows = visibleRows(user).filter((r) => r.enabled && r.local && r.id !== exceptProviderId && hostOf(r.base_url) === hostKey);
     await Promise.allSettled(rows.map((r) => adapterFor(r).freeMemory?.()));
   };
+}
+
+/** What training jobs of this user need: their providers, the GPU freer, and where new models go (an Ollama server). */
+export function trainDepsFor(user: User) {
+  const ollamas = () => visibleRows(user).filter((r) => r.kind === 'ollama' && r.enabled);
+  return {
+    resolve: resolverFor(user),
+    freeGpu: gpuFreerFor(user),
+    ollamaUrl: (id: string) => ollamas().find((r) => r.id === id)?.base_url,
+    defaultTarget: () => ollamas()[0]?.id,
+  };
+}
+
+/** The training blocks' services for a run, or undefined for viewers and limited API tokens. */
+export function trainingFor(user: User | undefined) {
+  if (!user || user.role === 'viewer' || user.scope) return undefined;
+  return trainingServices(user.id, trainDepsFor(user));
 }
 
 /** Fresh install: add Ollama so local models work right away. */

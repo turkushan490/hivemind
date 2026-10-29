@@ -97,7 +97,9 @@ export function Inspector(props: {
 
       {meta.usesModel && !(node.data.kind === 'llm' && cfg.auto) && !(node.data.kind === 'router' && cfg.decideWith === 'jev') && (
         <div className="space-y-1">
-          <div className="text-xs font-semibold text-slate-300">Model</div>
+          <div className="text-xs font-semibold text-slate-300">
+            {node.data.kind === 'generate' ? 'Teacher model (writes the examples)' : node.data.kind === 'evaluate' ? 'Judge model (grades the answers)' : node.data.kind === 'deploy' ? 'Model to put to work' : 'Model'}
+          </div>
           {/* Keyed by block, so switching blocks never shows the previous block's open/closed list or search. */}
           <ModelPicker key={node.id} kind={node.data.kind === 'image' ? 'image' : node.data.kind === 'decide' ? 'decision' : 'text'} models={props.models} providers={props.providers} value={cfg.model} onChange={(model) => props.onChange({ config: { model } })} />
         </div>

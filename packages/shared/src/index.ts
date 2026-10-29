@@ -1,7 +1,7 @@
 // Types shared by the server, the web UI and (later) the Android app.
 // The canvas format and run events are the contract between them.
 
-export const NODE_TYPES = ['input', 'llm', 'review', 'judge', 'output', 'router', 'debate', 'vote', 'decide', 'template', 'file', 'search', 'memory', 'save', 'image', 'homeassistant', 'webhook', 'discord'] as const;
+export const NODE_TYPES = ['input', 'llm', 'review', 'judge', 'output', 'router', 'debate', 'vote', 'decide', 'template', 'file', 'search', 'memory', 'save', 'image', 'homeassistant', 'webhook', 'discord', 'generate', 'dataset', 'train', 'evaluate', 'deploy'] as const;
 export type NodeType = (typeof NODE_TYPES)[number];
 
 /** Which model a node uses: a configured provider plus a model id on it. */
@@ -59,9 +59,20 @@ export interface NodeConfig {
   /** File: the file's text, and its name. */
   text?: string;
   fileName?: string;
-  /** Web search: where to search, and how many results. */
+  /** Web search: where to search, and how many results. Generate examples / Evaluate: how many examples. */
   source?: SearchSource;
   count?: number;
+  /** Generate examples, Add to dataset, Train, Evaluate: the dataset's name (made when it doesn't exist yet). */
+  dataset?: string;
+  /** Add to dataset: new examples wait in the review queue instead of being trained on right away. */
+  review?: boolean;
+  /** Train: the base model (Hugging Face repo), the new model's name, the Ollama provider it goes to, rounds over the data. */
+  trainBase?: string;
+  trainName?: string;
+  trainTarget?: string;
+  epochs?: number;
+  /** Deploy: which of your canvases get the model in their AI model blocks ("dnd-*", or ids separated by commas). */
+  canvasPattern?: string;
   /** Memory: what to remember under (may use {{vars.name}}, e.g. "dnd:{{vars.tableId}}"), recall or save, how many to recall. */
   key?: string;
   mode?: 'recall' | 'save' | 'search';

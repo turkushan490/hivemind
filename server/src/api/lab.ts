@@ -4,11 +4,12 @@ import { db, setSetting } from '../db/index.js';
 import { logError } from '../errors.js';
 import { exportJsonl, scoreboard } from '../lab/data.js';
 import { migrateLabTurns, syncLabTurn } from '../lab/datasets.js';
+import { setCanvasModel } from '../lab/services.js';
 import { activeLab, recoverLab, startLab, type LabConfig } from '../lab/runner.js';
 import { cancelTrain, installTrainerScripts, overview, pauseTrain, resumeTrain, resumeTrains, startBuiltinTrainer, startTrain, type TrainDeps } from '../lab/train.js';
 import { memoryFor } from '../services/memory.js';
 import { requireAdmin, requireUser, type User } from './auth.js';
-import { adapterFor, gpuFreerFor, resolverFor, visibleRows } from './providers.js';
+import { adapterFor, gpuFreerFor, resolverFor, trainDepsFor, visibleRows } from './providers.js';
 
 const isRef = (m: unknown): m is ModelRef => !!m && typeof (m as ModelRef).providerId === 'string' && typeof (m as ModelRef).model === 'string';
 
@@ -22,11 +23,7 @@ export function labRoutes(app: FastifyInstance) {
   }
 
   // ---- New model (fine-tune on the Lab dataset; admin only, it takes the GPU for hours) ----
-  const trainDeps = (user: User): TrainDeps => ({
-    resolve: resolverFor(user),
-    freeGpu: gpuFreerFor(user),
-    ollamaUrl: (id) => visibleRows(user).find((r) => r.id === id && r.kind === 'ollama' && r.enabled)?.base_url,
-  });
+  const trainDeps = (user: User): TrainDeps => trainDepsFor(user);
   try {
     installTrainerScripts();
     startBuiltinTrainer();
@@ -182,21 +179,11 @@ export function labRoutes(app: FastifyInstance) {
   app.post('/api/lab/default', { preHandler: requireUser }, async (req, reply) => {
     const model = (req.body as { model?: unknown } | undefined)?.model;
     if (!isRef(model)) return reply.code(400).send({ error: 'Send the model' });
-    const rows = db.prepare("SELECT id, graph FROM canvases WHERE owner_id = ? AND id LIKE 'dnd-%'").all(req.user!.id) as { id: string; graph: string }[];
-    let blocks = 0;
-    for (const r of rows) {
-      const g = JSON.parse(r.graph) as CanvasGraph;
-      for (const n of g.nodes) {
-        if (n.type !== 'llm' || n.config.auto) continue;
-        n.config.model = model;
-        blocks++;
-      }
-      db.prepare("UPDATE canvases SET graph = ?, updated_at = datetime('now') WHERE id = ?").run(JSON.stringify(g), r.id);
-    }
-    if (!rows.length) {
+    const { canvases, blocks } = setCanvasModel(req.user!.id, 'dnd-*', model);
+    if (!canvases) {
       logError({ source: 'server', message: 'Lab: no dnd-* canvases to set the default model on (install them from DungeonMind first)', userId: req.user!.id });
       return reply.code(404).send({ error: 'No DungeonMind canvases (dnd-*) yet: DungeonMind installs them on its first start' });
     }
-    return { canvases: rows.length, blocks };
+    return { canvases, blocks };
   });
 }

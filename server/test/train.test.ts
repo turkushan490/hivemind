@@ -33,14 +33,14 @@ const deps = (freed: string[] = []) => ({
 });
 
 /** A fake trainer (job runs, then done with a GGUF in the Lab folder) plus a fake Ollama; returns every call. */
-function fakeServers(final: Record<string, unknown> = { state: 'done', gguf: 'gguf/model.Q4_K_M.gguf' }) {
+function fakeServers(final: Record<string, unknown> = { state: 'done', gguf: 'gguf/model.Q4_K_M.gguf' }, gpuUsed: number[] = []) {
   const calls: { method: string; url: string; body?: string }[] = [];
   let polls = 0;
   vi.stubGlobal('fetch', async (url: string, init: RequestInit = {}) => {
     const method = init.method ?? 'GET';
     calls.push({ method, url, body: typeof init.body === 'string' ? init.body : undefined });
     const json = (data: unknown, status = 200) => new Response(JSON.stringify(data), { status });
-    if (url.endsWith('/health')) return json({ ok: true, busy: null, gpu: { name: 'Tesla T4', usedMb: 500, totalMb: 16384 } });
+    if (url.endsWith('/health')) return json({ ok: true, busy: null, gpu: { name: 'Tesla T4', usedMb: gpuUsed.shift() ?? 500, totalMb: 16384 } });
     if (url.endsWith('/jobs') && method === 'POST') {
       // The trainer writes the GGUF into the shared Lab folder.
       const id = JSON.parse(String(init.body)).id;
@@ -94,6 +94,22 @@ describe('make a new model', () => {
     const create = JSON.parse(calls.find((c) => c.url.endsWith('/api/create'))!.body!);
     expect(create.model).toBe('dungeonmind-dm:test');
     expect(Object.values(create.files)[0]).toMatch(/^sha256:[0-9a-f]{64}$/);
+  });
+
+  it('waits while something else (ComfyUI making an image) still holds the GPU', async () => {
+    process.env.TRAINER_URL = 'http://trainer.test:8765';
+    const calls = fakeServers(undefined, [12000, 12000, 400]);
+    const job = train.startTrain('u1', { base: 'unsloth/Qwen3.5-0.8B', name: 'dm:wait', providerId: 'ollama', allowSmall: true }, deps());
+    const seen = new Set<string>();
+    for (let i = 0; i < 400; i++) {
+      const row = db.prepare('SELECT state, progress FROM lab_trains WHERE id = ?').get(job.id) as { state: string; progress: string | null };
+      if (row.state === 'waiting' && row.progress?.includes('GPU is busy')) seen.add('busy');
+      if (row.state === 'done') break;
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    expect(seen.has('busy')).toBe(true);
+    expect(calls.filter((c) => c.url.endsWith('/health')).length).toBe(3);
+    expect((await waitFor(job.id, ['done', 'error'])).state).toBe('done');
   });
 
   it('shows a trainer failure as an error in Problems', async () => {

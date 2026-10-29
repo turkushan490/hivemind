@@ -27,6 +27,8 @@ const TRAIN_DIR = join(LAB_DIR, 'train');
 export const MIN_ROWS = 20;
 /** How often the trainer is asked for progress (TRAIN_POLL_MS for tests). */
 const pollMs = () => Number(process.env.TRAIN_POLL_MS) || 5000;
+/** Training starts only when the GPU has at most this much in use (desktop and other small programs). */
+const gpuFreeMb = () => Number(process.env.TRAIN_GPU_FREE_MB) || 1536;
 
 export const BASES: TrainBase[] = [
   { id: 'unsloth/Qwen3.5-9B', name: 'Qwen3.5 9B', note: 'Best quality that fits a 16 GB GPU; the base OmniCoder is built on. Slowest.', secPerStep: 25 },
@@ -192,7 +194,18 @@ async function run(id: string, ownerId: string, deps: TrainDeps, resume: boolean
       if (abort.signal.aborted) return;
       update(id, 'starting', { note: 'Freeing the GPU (Ollama, ComfyUI)' });
       await deps.freeGpu(target.hostKey).catch(() => {});
-      if (!resume) await trainer('/jobs', { method: 'POST', body: JSON.stringify({ id, ...JSON.parse(row.settings) }) });
+      if (!resume) {
+        // Something outside HiveMind (an image still being made in ComfyUI) can keep the memory: wait until it's free.
+        for (;;) {
+          if (abort.signal.aborted) return update(id, 'cancelled', { note: 'Cancelled while waiting for the GPU' });
+          const gpu = (await trainer('/health').catch(() => undefined))?.gpu as { usedMb?: number; totalMb?: number } | undefined;
+          if (!gpu?.usedMb || gpu.usedMb <= gpuFreeMb()) break;
+          update(id, 'waiting', { note: `The GPU is busy (${(gpu.usedMb / 1024).toFixed(1)} GB in use, e.g. an image in ComfyUI) — training starts when it's free` });
+          await new Promise((r) => setTimeout(r, pollMs() * 6));
+          await deps.freeGpu(target.hostKey).catch(() => {});
+        }
+        await trainer('/jobs', { method: 'POST', body: JSON.stringify({ id, ...JSON.parse(row.settings) }) });
+      }
       // Poll until the trainer is done; the lock stays held, so local AI on this GPU waits.
       for (;;) {
         if (abort.signal.aborted) {

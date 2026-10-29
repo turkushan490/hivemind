@@ -48,7 +48,10 @@ def main() -> None:
     from trl import SFTConfig, SFTTrainer
     from unsloth import FastModel
 
-    model, processor = FastModel.from_pretrained(model_name=base, max_seq_length=max_len, load_in_4bit=True, full_finetuning=False)
+    # Older GPUs (Tesla T4) have no bfloat16: load and train in float16 there, or the fp16 scaler fails on bf16 weights.
+    bf16 = torch.cuda.is_available() and torch.cuda.is_bf16_supported()
+    dtype = torch.bfloat16 if bf16 else torch.float16
+    model, processor = FastModel.from_pretrained(model_name=base, max_seq_length=max_len, load_in_4bit=True, full_finetuning=False, dtype=dtype)
     # Multimodal bases (Qwen3.5) come with a processor; text training uses its tokenizer.
     tok = getattr(processor, "tokenizer", processor)
     peft_args = dict(
@@ -83,7 +86,6 @@ def main() -> None:
     total = max(1, math.ceil(len(texts) / (batch * accum)) * math.ceil(epochs))
     if JOB.get("maxSteps"):
         total = int(JOB["maxSteps"])
-    bf16 = torch.cuda.is_available() and torch.cuda.is_bf16_supported()
 
     class Progress(TrainerCallback):
         def on_log(self, args, state, control, logs=None, **kw):  # noqa: ANN001

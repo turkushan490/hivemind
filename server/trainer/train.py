@@ -11,6 +11,7 @@ import json
 import math
 import os
 import re
+import shutil
 import signal
 import sys
 import time
@@ -243,10 +244,20 @@ def main() -> None:
     status("exporting", note=f"Making the GGUF ({JOB.get('quant', 'q4_k_m')})", loss=getattr(result, "training_loss", None))
     out = DIR / "gguf"
     out.mkdir(exist_ok=True)
-    model.save_pretrained_gguf(str(out), tok, quantization_method=JOB.get("quant", "q4_k_m"))
-    ggufs = sorted((p for p in out.rglob("*.gguf") if "mmproj" not in p.name.lower()), key=lambda p: p.stat().st_size, reverse=True)
+    quant = JOB.get("quant", "q4_k_m")
+    model.save_pretrained_gguf(str(out), tok, quantization_method=quant)
+    # Newer Unsloth writes the GGUF next to the merged model ("gguf_gguf/"); the quantized one, never the vision file.
+    found = [p for d in (out, DIR / f"{out.name}_gguf") if d.exists() for p in d.rglob("*.gguf") if "mmproj" not in p.name.lower()]
+    ggufs = sorted(found, key=lambda p: (quant.lower() not in p.name.lower(), -p.stat().st_size))
     if not ggufs:
         raise RuntimeError("Training worked, but no GGUF file was made (llama.cpp export failed — see the log)")
+    if ggufs[0].parent != out:
+        ggufs[0] = ggufs[0].replace(out / ggufs[0].name)
+    # The merged 16-bit weights and the f16 GGUF were only steps on the way (gigabytes): keep just the result.
+    for p in out.iterdir():
+        if p.is_file() and p != ggufs[0] and p.suffix in (".safetensors", ".gguf", ".bin"):
+            p.unlink()
+    shutil.rmtree(DIR / f"{out.name}_gguf", ignore_errors=True)
     if decision:
         status("exporting", note="Marking the GGUF as a decision model")
         mark_decision_model(ggufs[0])

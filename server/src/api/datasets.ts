@@ -15,7 +15,9 @@ import {
   updateDataset,
   updateItem,
 } from '../lab/datasets.js';
+import { captionPictures, picturesFromFolder } from '../lab/imageLora.js';
 import { requireUser } from './auth.js';
+import { trainDepsFor } from './providers.js';
 
 /** Training data for every kind of model. Viewers can't change anything (the viewer guard blocks writes). */
 export function datasetRoutes(app: FastifyInstance) {
@@ -51,6 +53,26 @@ export function datasetRoutes(app: FastifyInstance) {
     if (!items.length) return reply.code(400).send({ error: 'No examples found in what was sent' });
     if (items.length > 50_000) return reply.code(413).send({ error: 'At most 50 000 examples at once' });
     return { added: addItems(ds.id, b.text !== undefined ? 'upload' : 'manual', items), dataset: getDataset(req.user!.id, ds.id) };
+  });
+
+  /** Image datasets: every picture in a Files folder (a same-named .txt is its caption). */
+  app.post('/api/datasets/:id/pictures', { preHandler: requireUser }, async (req, reply) => {
+    const ds = getDataset(req.user!.id, (req.params as { id: string }).id);
+    if (!ds) return reply.code(404).send({ error: 'Dataset not found' });
+    if (ds.kind !== 'image') return reply.code(400).send({ error: 'Pictures go into an image dataset' });
+    const pics = picturesFromFolder(String((req.body as { folder?: string } | undefined)?.folder ?? ''));
+    if (!pics.length) return reply.code(400).send({ error: 'No pictures (.png, .jpg, .webp) in that folder' });
+    return { added: addItems(ds.id, 'upload', pics.map((p) => ({ input: '', output: p.caption, files: [p.file], ref: `file:${p.file}` }))), dataset: getDataset(req.user!.id, ds.id) };
+  });
+
+  /** Captions a few uncaptioned pictures with a vision model in Ollama; the page calls again until none are left. */
+  app.post('/api/datasets/:id/caption', { preHandler: requireUser }, async (req, reply) => {
+    const ds = getDataset(req.user!.id, (req.params as { id: string }).id);
+    if (!ds) return reply.code(404).send({ error: 'Dataset not found' });
+    const b = (req.body ?? {}) as { providerId?: string; model?: string };
+    const ollamaUrl = trainDepsFor(req.user!).ollamaUrl(String(b.providerId ?? ''));
+    if (!ollamaUrl || !b.model) return reply.code(400).send({ error: 'Pick an Ollama model that can see pictures' });
+    return captionPictures(ds.id, { ollamaUrl, model: String(b.model) });
   });
 
   app.patch('/api/datasets/items/:itemId', { preHandler: requireUser }, async (req) => {

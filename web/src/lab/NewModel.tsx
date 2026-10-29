@@ -1,4 +1,4 @@
-import type { Dataset, HfHardware, ProviderInfo, TrainJob, TrainOverview } from '@hivemind/shared';
+import type { Dataset, HfHardware, ModelInfo, ProviderInfo, TrainJob, TrainOverview } from '@hivemind/shared';
 import { useEffect, useState } from 'react';
 import { api } from '../api';
 import { toast } from '../notify';
@@ -44,13 +44,24 @@ export function NewModel({ active, providers }: { active: boolean; providers: Pr
   // Where it trains: "local" (this server's GPU) or a Hugging Face Jobs machine.
   const [where, setWhere] = useStored<string>('lab.train.where', 'local');
   const [hardware, setHardware] = useState<HfHardware[]>([]);
+  // Image LoRAs: a ComfyUI checkpoint to train on, the steps and a trigger word.
+  const [checkpoints, setCheckpoints] = useState<ModelInfo[]>([]);
+  const [checkpoint, setCheckpoint] = useStored<string>('lab.train.checkpoint', '');
+  const [imageSteps, setImageSteps] = useState<number | ''>('');
+  const [trigger, setTrigger] = useState('');
+  useEffect(() => {
+    if (!active) return;
+    api<{ models: ModelInfo[] }>('/api/models', { quiet: true })
+      .then((r) => setCheckpoints(r.models.filter((m) => m.kind === 'image' && providers.some((p) => p.id === m.providerId && p.kind === 'comfyui'))))
+      .catch(() => {});
+  }, [active, providers.length]);
   const [estimate, setEstimate] = useState<{ hours: number; usd: number; label: string } | { error: string } | null>(null);
   const ollamas = providers.filter((p) => p.kind === 'ollama' && p.enabled);
   const targetId = ollamas.some((p) => p.id === target) ? target : ollamas[0]?.id;
 
   const load = () => {
     api<Dataset[]>('/api/datasets', { quiet: true })
-      .then((l) => setDatasets(l.filter((d) => d.kind === 'text' || d.kind === 'decision')))
+      .then((l) => setDatasets(l.filter((d) => d.kind !== 'voice')))
       .catch(() => {});
     return api<TrainOverview>('/api/lab/train', { quiet: true })
       .then((o) => {
@@ -93,6 +104,21 @@ export function NewModel({ active, providers }: { active: boolean; providers: Pr
     return () => clearTimeout(t);
   }, [cloud?.name, base, epochs, datasetId, !!info]);
 
+  const startImage = async () => {
+    const ck = checkpoints.find((c) => `${c.providerId}|${c.model}` === checkpoint) ?? checkpoints[0];
+    if (!ck || !dataset) return toast('Add ComfyUI under Settings → Providers first', 'info');
+    setBusy(true);
+    try {
+      await api<TrainJob>('/api/lab/train', {
+        body: { base: ck.model, name, providerId: ck.providerId, datasetId: dataset.id, ...(imageSteps && { steps: imageSteps }), ...(trigger.trim() && { trigger: trigger.trim() }) },
+      });
+      toast(`Training the LoRA ${name} in ComfyUI — it starts when ComfyUI's queue is empty`, 'ok');
+      load();
+    } catch {
+    } finally {
+      setBusy(false);
+    }
+  };
   const start = async () => {
     if (!targetId) return toast('Add an Ollama server first (Settings → Providers)', 'info');
     let confirmUsd: number | undefined;
@@ -143,6 +169,8 @@ export function NewModel({ active, providers }: { active: boolean; providers: Pr
   const steps = Math.ceil(rows / 4) * epochs;
   const localEstimate = chosen ? steps * chosen.secPerStep + 600 : undefined;
   const enough = rows >= info.minRows;
+  const image = dataset?.kind === 'image';
+  const autoSteps = Math.max(300, Math.min(3000, rows * 100));
 
   return (
     <div className="grid gap-4 lg:grid-cols-[1fr_1.2fr]">
@@ -164,6 +192,50 @@ export function NewModel({ active, providers }: { active: boolean; providers: Pr
           </select>
         </label>
 
+        {image && (
+          <div className="space-y-2 rounded-md border border-[#30363d] p-2 text-xs">
+            <p className="text-slate-400">
+              An image LoRA is trained by your ComfyUI with its own training nodes, after the work already in its queue. The result goes into ComfyUI&apos;s
+              models/loras/hivemind, ready for Image blocks.
+            </p>
+            {!info.images.ready && (
+              <p className="text-amber-300">ComfyUI&apos;s folder is not mounted in HiveMind yet: add a path to the container (the ComfyUI folder, mounted at /comfyui).</p>
+            )}
+            <label className="block space-y-1">
+              <span className="text-slate-300">Checkpoint to train on (SDXL fits a 16 GB GPU at 512 px)</span>
+              <select className="input py-1 text-xs" value={checkpoint} onChange={(e) => setCheckpoint(e.target.value)}>
+                {checkpoints.length === 0 && <option value="">No ComfyUI checkpoints — add ComfyUI under Settings → Providers</option>}
+                {checkpoints.map((c) => (
+                  <option key={`${c.providerId}|${c.model}`} value={`${c.providerId}|${c.model}`}>
+                    {c.model}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <div className="grid grid-cols-2 gap-2">
+              <label className="space-y-1">
+                <span className="text-slate-400">Trigger word (optional)</span>
+                <input className="input py-1 text-xs" placeholder="e.g. grim man" value={trigger} onChange={(e) => setTrigger(e.target.value)} />
+              </label>
+              <label className="space-y-1">
+                <span className="text-slate-400">Steps (empty = {autoSteps})</span>
+                <input className="input py-1 text-xs" type="number" min={10} max={5000} value={imageSteps} onChange={(e) => setImageSteps(e.target.value ? Number(e.target.value) : '')} />
+              </label>
+            </div>
+            <div className="text-slate-400">
+              {rows} pictures · about {dur((imageSteps || autoSteps) * info.images.secPerStep + 120)} on a Tesla T4.
+            </div>
+            <label className="block space-y-1">
+              <span className="text-slate-400">LoRA name</span>
+              <input className="input py-1 text-xs" value={name} onChange={(e) => setName(e.target.value.toLowerCase().replace(/\s+/g, '-'))} />
+            </label>
+            <button className="btn w-full" disabled={busy || rows < 5 || !info.images.ready || !checkpoints.length} onClick={startImage}>
+              Train the LoRA {name}
+            </button>
+          </div>
+        )}
+
+        <div hidden={image} className="space-y-3">
         <div className={`rounded-md border p-2 text-xs ${info.trainer.ok ? 'border-emerald-800/60 bg-emerald-950/20' : 'border-amber-800/60 bg-amber-950/20'}`}>
           <div className="flex items-center gap-2">
             <span className={`h-2 w-2 rounded-full ${info.trainer.ok ? 'bg-emerald-400' : 'bg-amber-400'}`} />
@@ -258,6 +330,7 @@ export function NewModel({ active, providers }: { active: boolean; providers: Pr
           {cloud ? `Train ${name} on Hugging Face` : running ? `Queue ${name}` : `Make ${name}`}
         </button>
         <p className="text-[11px] text-slate-500">While it trains, Ollama, ComfyUI and the Simulator on this GPU wait. Runs you start meanwhile are queued, not lost.</p>
+        </div>
       </div>
 
       <div className="card space-y-3">
@@ -274,7 +347,7 @@ export function NewModel({ active, providers }: { active: boolean; providers: Pr
                 <span className="font-mono text-sm font-semibold">{j.name}</span>
                 <span className={`text-xs ${s.tone}`}>{s.label}</span>
                 <span className="ml-auto flex gap-3 text-xs">
-                  {live && j.state !== 'waiting' && j.backend !== 'hf-jobs' && (
+                  {live && j.state !== 'waiting' && j.backend !== 'hf-jobs' && j.backend !== 'comfyui' && (
                     <button className="text-slate-400 hover:text-amber-300" onClick={() => act(j.id, 'pause')}>
                       ⏸ Pause
                     </button>
@@ -323,7 +396,9 @@ export function NewModel({ active, providers }: { active: boolean; providers: Pr
               {j.state === 'done' && (
                 <div className="flex flex-wrap items-center gap-3 text-xs">
                   <span className="text-emerald-300/90">
-                    {j.kind === 'decision'
+                    {j.kind === 'image'
+                      ? `In ComfyUI as ${j.lora ?? j.name}: pick it as the LoRA in an Image block.`
+                      : j.kind === 'decision'
                       ? `In Ollama as ${j.name}: pick it under "Ollama decision models" in a Decide block.`
                       : `In Ollama as ${j.name}. Add it as a DM model in the Simulator to compare it on the Scoreboard.`}
                   </span>
@@ -332,7 +407,8 @@ export function NewModel({ active, providers }: { active: boolean; providers: Pr
                       On Hugging Face ↗
                     </a>
                   ) : (
-                    info.hf.hasToken && (
+                    info.hf.hasToken &&
+                    j.kind !== 'image' && (
                       <button className="text-indigo-300 hover:text-indigo-200" onClick={() => publish(j)}>
                         ⬆ Publish to Hugging Face
                       </button>

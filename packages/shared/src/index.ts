@@ -630,10 +630,12 @@ export interface TrainJob {
   error?: string;
   /** The last lines the trainer printed. */
   log?: string;
-  /** What it learns from: text/chat or a decision dataset. */
-  kind?: 'text' | 'decision';
-  /** Where it trains: this server's GPU, or a rented one on Hugging Face Jobs. */
-  backend?: 'local' | 'hf-jobs';
+  /** What it learns from: text/chat, a decision dataset, or pictures (an image LoRA). */
+  kind?: 'text' | 'decision' | 'image';
+  /** Where it trains: this server's GPU, a rented one on Hugging Face Jobs, or ComfyUI (image LoRAs). */
+  backend?: 'local' | 'hf-jobs' | 'comfyui';
+  /** Image LoRAs: the file in ComfyUI's models/loras once it's done. */
+  lora?: string;
   /** Cloud jobs: the machine, the estimate its owner confirmed, and the job's page. */
   flavor?: string;
   estimateUsd?: number;
@@ -682,6 +684,8 @@ export interface TrainOverview {
   jobs: TrainJob[];
   /** Hugging Face: connected or not, the daily limit and what was spent today. */
   hf: HfSettings;
+  /** Image LoRAs (trained by ComfyUI): whether ComfyUI's folder is mounted, and seconds per step for the estimate. */
+  images: { ready: boolean; secPerStep: number };
 }
 
 // ---- Stats (GET /api/stats) ----

@@ -23,6 +23,8 @@ export const config = {
   ollamaUrl: process.env.OLLAMA_URL || 'http://localhost:11434',
   /** Optional: your ComfyUI, added once as an image provider. */
   comfyUrl: process.env.COMFYUI_URL || '',
+  /** Optional: ComfyUI's own folder mounted into HiveMind (input, output, models), for training image LoRAs. */
+  comfyDir: process.env.COMFYUI_DIR || (existsSync('/comfyui/models') ? '/comfyui' : ''),
   /** Optional: a TypeSafe key, added once as the Jev decision provider. */
   typesafeKey: process.env.TYPESAFE_API_KEY || '',
   /** Set to true behind HTTPS (e.g. Nginx Proxy Manager) so cookies get the Secure flag. */

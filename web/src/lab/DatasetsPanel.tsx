@@ -1,4 +1,4 @@
-import type { Dataset, DatasetItem, DatasetKind, DecisionSpec } from '@hivemind/shared';
+import type { Dataset, DatasetItem, DatasetKind, DecisionSpec, ModelInfo, ProviderInfo } from '@hivemind/shared';
 import { parseDecisionSpec } from '@hivemind/shared';
 import { useEffect, useRef, useState } from 'react';
 import { api } from '../api';
@@ -152,9 +152,8 @@ export function DatasetsPanel() {
               </p>
             </>
           )}
-          {(current.kind === 'image' || current.kind === 'voice') && (
-            <p className="text-xs text-amber-300/90">Training {KIND_LABEL[current.kind].toLowerCase()} models comes in a later update; you can already collect examples.</p>
-          )}
+          {current.kind === 'image' && <Pictures key={current.id} dataset={current} onChanged={() => (load(), loadItems(current.id))} />}
+          {current.kind === 'voice' && <p className="text-xs text-amber-300/90">Training voices comes in a later update; you can already collect examples.</p>}
           <div className="max-h-[28rem] space-y-1.5 overflow-auto">
             {items.length === 0 && <p className="text-xs text-slate-500">No examples yet.</p>}
             {items.map((it) => (
@@ -179,6 +178,9 @@ export function DatasetsPanel() {
                     </button>
                   </span>
                 </div>
+                {it.files?.[0] && /\.(png|jpe?g|webp)$/i.test(it.files[0]) && (
+                  <img className="float-left mr-2 h-14 w-14 rounded object-cover" loading="lazy" src={`/api/files/raw?inline=1&path=${encodeURIComponent(it.files[0])}`} alt="" />
+                )}
                 {it.input && <div className="mb-1 line-clamp-3 whitespace-pre-wrap text-slate-400">{it.input}</div>}
                 <div className="line-clamp-4 whitespace-pre-wrap text-slate-200">{it.output}</div>
               </div>
@@ -239,6 +241,85 @@ function DecisionQuestion({ dataset, onSaved }: { dataset: Dataset; onSaved: () 
         />
       )}
       <p className="text-slate-500">Answers are option keys{type === 'noul' ? ' (true / false, or yes / no)' : type === 'score' ? ' (a level, or its number from 0)' : ''}.</p>
+    </div>
+  );
+}
+
+/** Image datasets: pictures from a Files folder, captioned by hand (a .txt beside each picture) or by a vision model in Ollama. */
+function Pictures({ dataset, onChanged }: { dataset: Dataset; onChanged: () => void }) {
+  const [folder, setFolder] = useState('');
+  const [models, setModels] = useState<ModelInfo[]>([]);
+  const [model, setModel] = useState('');
+  const [captioning, setCaptioning] = useState<string | null>(null);
+  const stop = useRef(false);
+  useEffect(() => {
+    Promise.all([api<{ models: ModelInfo[] }>('/api/models', { quiet: true }), api<ProviderInfo[]>('/api/providers', { quiet: true })])
+      .then(([m, p]) => {
+        const ollama = new Set(p.filter((x) => x.kind === 'ollama' && x.enabled).map((x) => x.id));
+        const list = m.models.filter((x) => ollama.has(x.providerId) && !x.kind);
+        setModels(list);
+        // Models that can see pictures, when one is there: gemma4, qwen3.5 / qwen-vl, llava, minicpm-v.
+        const seeing = list.find((x) => /gemma[34]|qwen3\.5|qwen.*vl|llava|minicpm-v|vision/i.test(x.model));
+        setModel((v) => v || `${(seeing ?? list[0])?.providerId ?? ''}|${(seeing ?? list[0])?.model ?? ''}`);
+      })
+      .catch(() => {});
+  }, []);
+
+  const add = async () => {
+    if (!folder.trim()) return toast('Type the folder in Files that holds the pictures', 'info');
+    try {
+      const r = await api<{ added: number }>(`/api/datasets/${dataset.id}/pictures`, { body: { folder: folder.trim() } });
+      toast(`Added ${r.added} pictures`, 'ok');
+      onChanged();
+    } catch {}
+  };
+  const caption = async () => {
+    const [providerId, name] = model.split('|');
+    if (!name) return toast('Pick a model that can see pictures', 'info');
+    stop.current = false;
+    setCaptioning('Starting…');
+    try {
+      for (let total = 0; !stop.current; ) {
+        const r = await api<{ captioned: number; left: number }>(`/api/datasets/${dataset.id}/caption`, { body: { providerId, model: name } });
+        total += r.captioned;
+        setCaptioning(`${total} captioned, ${r.left} to go`);
+        onChanged();
+        if (!r.left || !r.captioned) break;
+      }
+    } catch {
+    } finally {
+      setCaptioning(null);
+    }
+  };
+
+  return (
+    <div className="space-y-1.5 rounded-md border border-[#30363d] p-2 text-xs">
+      <div className="flex flex-wrap items-center gap-2">
+        <input className="input w-56 py-1 text-xs" placeholder="Folder in Files, e.g. lora/my-face" value={folder} onChange={(e) => setFolder(e.target.value)} />
+        <button className="btn-ghost px-3 py-1 text-xs" onClick={add}>
+          + Add pictures
+        </button>
+        <span className="text-slate-500">10–30 sharp pictures of one person, style or thing. A .txt with the same name is its caption.</span>
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        <select className="input w-64 py-1 text-xs" value={model} onChange={(e) => setModel(e.target.value)}>
+          {models.map((m) => (
+            <option key={`${m.providerId}|${m.model}`} value={`${m.providerId}|${m.model}`}>
+              {m.name}
+            </option>
+          ))}
+        </select>
+        {captioning ? (
+          <button className="btn-ghost px-3 py-1 text-xs" onClick={() => (stop.current = true)}>
+            ■ Stop ({captioning})
+          </button>
+        ) : (
+          <button className="btn-ghost px-3 py-1 text-xs" onClick={caption}>
+            ✎ Caption the rest with AI
+          </button>
+        )}
+        <span className="text-slate-500">Needs a model that can see pictures (gemma4, qwen3.5…).</span>
+      </div>
     </div>
   );
 }

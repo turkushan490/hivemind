@@ -12,6 +12,7 @@ import { withHostLock, type ResolvedProvider } from '../engine/run.js';
 import { logError } from '../errors.js';
 import { SFT_SYSTEM } from './data.js';
 import { DM_DATASET, ensureDataset, exportDataset, getDataset, migrateLabTurns, trainableCount } from './datasets.js';
+import { checkComfyDir, comfyDir, IMAGE_SEC_PER_STEP, runComfyJob, validCheckpoint, type ImageJobSettings } from './imageLora.js';
 import { estimateCloud, hfHardware, hfRun, hfSettings, modelCard, requireHfToken, spentToday } from './hf.js';
 import { activeLab } from './runner.js';
 
@@ -138,11 +139,12 @@ interface TrainRow {
 }
 
 const toJob = (r: TrainRow): TrainJob => {
-  const set = JSON.parse(r.settings || '{}') as { flavor?: string; estimateUsd?: number; jobUrl?: string; publishedUrl?: string };
+  const set = JSON.parse(r.settings || '{}') as { flavor?: string; estimateUsd?: number; jobUrl?: string; publishedUrl?: string; lora?: string };
   return {
     ...baseJob(r),
-    ...(r.kind === 'decision' && { kind: 'decision' as const }),
-    backend: r.backend === 'hf-jobs' ? 'hf-jobs' : 'local',
+    ...((r.kind === 'decision' || r.kind === 'image') && { kind: r.kind }),
+    backend: r.backend === 'hf-jobs' || r.backend === 'comfyui' ? r.backend : 'local',
+    ...(set.lora && { lora: set.lora }),
     ...(set.flavor && { flavor: set.flavor }),
     ...(set.estimateUsd !== undefined && { estimateUsd: set.estimateUsd }),
     ...(set.jobUrl && { jobUrl: set.jobUrl }),
@@ -182,6 +184,8 @@ export interface TrainDeps {
   freeGpu(hostKey: string, exceptProviderId?: string): Promise<void>;
   /** Base URL of the Ollama server the new model goes to. */
   ollamaUrl(providerId: string): string | undefined;
+  /** Base URL of the ComfyUI that trains image LoRAs. */
+  comfyUrl?(providerId: string): string | undefined;
 }
 
 const running = new Map<string, AbortController>();
@@ -216,7 +220,7 @@ export async function overview(ownerId: string): Promise<TrainOverview> {
     }
   } else t.error = 'Training needs the HiveMind image with the training stack and an NVIDIA GPU';
   const jobs = (db.prepare('SELECT * FROM lab_trains WHERE owner_id = ? ORDER BY started_at DESC LIMIT 20').all(ownerId) as unknown as TrainRow[]).map(toJob);
-  return { trainer: t, rows: overviewRows(ownerId), minRows: MIN_ROWS, bases: BASES, jobs, hf: hfSettings() };
+  return { trainer: t, rows: overviewRows(ownerId), minRows: MIN_ROWS, bases: BASES, jobs, hf: hfSettings(), images: { ready: !!comfyDir(), secPerStep: IMAGE_SEC_PER_STEP } };
 }
 
 /** Time and price of training this dataset on a Hugging Face machine (shown before a cloud job starts). */
@@ -249,9 +253,13 @@ export async function startTrain(
     flavor?: string;
     /** The estimate (dollars) the user agreed to; a cloud job needs it. */
     confirmUsd?: number;
+    /** Image LoRAs: training steps and the trigger word put before every caption. */
+    steps?: number;
+    trigger?: string;
   },
   deps: TrainDeps,
 ): Promise<TrainJob> {
+  if (opts.datasetId && getDataset(ownerId, opts.datasetId)?.kind === 'image') return startImageTrain(ownerId, { ...opts, datasetId: opts.datasetId }, deps);
   if (!/^[A-Za-z0-9][\w.-]*\/[A-Za-z0-9][\w.-]*$/.test(opts.base)) throw Object.assign(new Error('The base model must be a Hugging Face repo, e.g. unsloth/Qwen3.5-9B'), { statusCode: 400 });
   if (!validName(opts.name)) throw Object.assign(new Error('Name the new model like dungeonmind-dm:v1 (lowercase letters, digits, . _ -)'), { statusCode: 400 });
   if (!deps.ollamaUrl(opts.providerId)) throw Object.assign(new Error('Pick the Ollama server the new model goes to'), { statusCode: 400 });
@@ -316,6 +324,40 @@ export async function startTrain(
   return toJob(db.prepare('SELECT * FROM lab_trains WHERE id = ?').get(id) as unknown as TrainRow);
 }
 
+/** An image LoRA: base = a ComfyUI checkpoint, providerId = the ComfyUI that trains it (see imageLora.ts). */
+function startImageTrain(ownerId: string, opts: { base: string; name: string; providerId: string; datasetId: string; steps?: number; trigger?: string; allowSmall?: boolean }, deps: TrainDeps): TrainJob {
+  checkComfyDir();
+  if (!validCheckpoint(opts.base)) throw Object.assign(new Error('Pick the ComfyUI checkpoint to train on (an SDXL one works best on a 16 GB GPU)'), { statusCode: 400 });
+  if (!validName(opts.name)) throw Object.assign(new Error('Name the LoRA like my-style:v1 (lowercase letters, digits, . _ -)'), { statusCode: 400 });
+  if (!deps.comfyUrl?.(opts.providerId)) throw Object.assign(new Error('Pick the ComfyUI that trains it (Settings → Providers)'), { statusCode: 400 });
+  const ds = getDataset(ownerId, opts.datasetId)!;
+  const rows = (db.prepare("SELECT COUNT(*) AS n FROM dataset_items WHERE dataset_id = ? AND files IS NOT NULL AND (review IS NULL OR review = 'accepted')").get(ds.id) as { n: number }).n;
+  if (rows < (opts.allowSmall ? 1 : 5)) throw Object.assign(new Error(`Only ${rows} pictures in "${ds.name}": 10 to 30 good ones work best`), { statusCode: 400 });
+  const settings: ImageJobSettings = {
+    kind: 'image',
+    checkpoint: opts.base,
+    // About 100 steps per picture, within 300–3000 (2000 steps is about 2 hours on a T4).
+    steps: Math.max(10, Math.min(5000, opts.steps ?? Math.max(300, Math.min(3000, rows * 100)))),
+    rank: 32,
+    learningRate: 1e-4,
+    resolution: 512,
+    ...(opts.trigger?.trim() && { trigger: opts.trigger.trim().slice(0, 60) }),
+  };
+  const id = newId().replace(/[^A-Za-z0-9_-]/g, '');
+  db.prepare("INSERT INTO lab_trains (id, owner_id, base, name, provider_id, settings, rows, state, dataset_id, kind, backend) VALUES (?, ?, ?, ?, ?, ?, ?, 'waiting', ?, 'image', 'comfyui')").run(
+    id,
+    ownerId,
+    opts.base,
+    opts.name,
+    opts.providerId,
+    JSON.stringify(settings),
+    rows,
+    ds.id,
+  );
+  void run(id, ownerId, deps, 'new');
+  return toJob(db.prepare('SELECT * FROM lab_trains WHERE id = ?').get(id) as unknown as TrainRow);
+}
+
 /** new: start on the trainer; follow: it already runs there (after a restart); resume: continue a paused job. */
 type RunMode = 'new' | 'follow' | 'resume';
 
@@ -325,6 +367,26 @@ async function run(id: string, ownerId: string, deps: TrainDeps, mode: RunMode) 
   running.set(id, abort);
   try {
     if (row.backend === 'hf-jobs') return await runCloud(row, deps, mode, abort.signal);
+    if (row.backend === 'comfyui') {
+      const comfyUrl = deps.comfyUrl?.(row.provider_id);
+      if (!comfyUrl) throw new Error('The ComfyUI that trains this LoRA is gone (Settings → Providers)');
+      const target = await deps.resolve(row.provider_id);
+      return await runComfyJob(
+        {
+          id,
+          name: row.name,
+          settings: row.settings,
+          datasetId: (db.prepare('SELECT dataset_id FROM lab_trains WHERE id = ?').get(id) as { dataset_id: string }).dataset_id,
+          comfyUrl,
+          hostKey: target.hostKey,
+          freeGpu: () => deps.freeGpu(target.hostKey, row.provider_id),
+          save: (patch) => saveSettings(id, patch),
+        },
+        mode,
+        abort.signal,
+        update,
+      );
+    }
     const target = await deps.resolve(row.provider_id);
     // A simulation would only wait behind the lock for hours: stop it.
     const lab = activeLab();
@@ -399,7 +461,7 @@ async function run(id: string, ownerId: string, deps: TrainDeps, mode: RunMode) 
 export function pauseTrain(id: string, ownerId: string): boolean {
   const row = db.prepare('SELECT backend FROM lab_trains WHERE id = ? AND owner_id = ?').get(id, ownerId) as { backend: string } | undefined;
   // A cloud machine is paid while it runs: there is no pause, only cancel.
-  if (!row || row.backend === 'hf-jobs' || !running.has(id)) return false;
+  if (!row || row.backend === 'hf-jobs' || row.backend === 'comfyui' || !running.has(id)) return false;
   pausing.add(id);
   return true;
 }

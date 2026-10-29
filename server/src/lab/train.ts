@@ -10,7 +10,8 @@ import { newId, randomToken } from '../crypto.js';
 import { db, getSetting } from '../db/index.js';
 import { withHostLock, type ResolvedProvider } from '../engine/run.js';
 import { logError } from '../errors.js';
-import { exportJsonl } from './data.js';
+import { SFT_SYSTEM } from './data.js';
+import { DM_DATASET, ensureDataset, exportDataset, getDataset, migrateLabTurns, trainableCount } from './datasets.js';
 import { activeLab } from './runner.js';
 
 /**
@@ -163,8 +164,19 @@ export interface TrainDeps {
 
 const running = new Map<string, AbortController>();
 
+/** The dataset a job trains on: the one asked for, else the Lab's "DungeonMind DM" dataset. */
+function datasetFor(ownerId: string, datasetId?: string) {
+  if (datasetId) {
+    const ds = getDataset(ownerId, datasetId);
+    if (!ds) throw Object.assign(new Error('Dataset not found'), { statusCode: 404 });
+    return ds;
+  }
+  migrateLabTurns();
+  return ensureDataset(ownerId, DM_DATASET, 'text', SFT_SYSTEM);
+}
+
 export function overviewRows(ownerId: string): number {
-  return exportJsonl(ownerId).split('\n').filter(Boolean).length;
+  return trainableCount(datasetFor(ownerId).id);
 }
 
 export async function overview(ownerId: string): Promise<TrainOverview> {
@@ -186,17 +198,19 @@ export async function overview(ownerId: string): Promise<TrainOverview> {
 /** Starts a job: the dataset is written now, the training waits for the GPU and then runs in the background. */
 export function startTrain(
   ownerId: string,
-  opts: { base: string; name: string; providerId: string; epochs?: number; maxSeqLength?: number; maxSteps?: number; allowSmall?: boolean },
+  opts: { base: string; name: string; providerId: string; datasetId?: string; epochs?: number; maxSeqLength?: number; maxSteps?: number; allowSmall?: boolean },
   deps: TrainDeps,
 ): TrainJob {
   if (!/^[A-Za-z0-9][\w.-]*\/[A-Za-z0-9][\w.-]*$/.test(opts.base)) throw Object.assign(new Error('The base model must be a Hugging Face repo, e.g. unsloth/Qwen3.5-9B'), { statusCode: 400 });
   if (!validName(opts.name)) throw Object.assign(new Error('Name the new model like dungeonmind-dm:v1 (lowercase letters, digits, . _ -)'), { statusCode: 400 });
   if (!deps.ollamaUrl(opts.providerId)) throw Object.assign(new Error('Pick the Ollama server the new model goes to'), { statusCode: 400 });
-  if ([...running.keys()].length) throw Object.assign(new Error('A model is already being made: wait for it or cancel it'), { statusCode: 409 });
-  const dataset = exportJsonl(ownerId);
+  // Several jobs may be started: they queue for the GPU lock and run one after another on the same GPU.
+  const ds = datasetFor(ownerId, opts.datasetId);
+  if (ds.kind !== 'text') throw Object.assign(new Error(`Training ${ds.kind} models comes in a later step; this dataset is "${ds.kind}"`), { statusCode: 400 });
+  const dataset = exportDataset(ds.id);
   const rows = dataset.split('\n').filter(Boolean).length;
   if (rows < (opts.allowSmall ? 1 : MIN_ROWS))
-    throw Object.assign(new Error(`Only ${rows} training examples: let the simulator collect at least ${MIN_ROWS} good turns first (a few hundred is better)`), { statusCode: 400 });
+    throw Object.assign(new Error(`Only ${rows} training examples in "${ds.name}": collect at least ${MIN_ROWS} (a few hundred is better)`), { statusCode: 400 });
   const id = newId().replace(/[^A-Za-z0-9_-]/g, '');
   const dir = join(TRAIN_DIR, id);
   mkdirSync(dir, { recursive: true });
@@ -208,7 +222,7 @@ export function startTrain(
     ...(opts.maxSteps && { maxSteps: Math.max(1, Math.min(100_000, opts.maxSteps)) }),
     quant: 'q4_k_m',
   };
-  db.prepare("INSERT INTO lab_trains (id, owner_id, base, name, provider_id, settings, rows, state) VALUES (?, ?, ?, ?, ?, ?, ?, 'waiting')").run(
+  db.prepare("INSERT INTO lab_trains (id, owner_id, base, name, provider_id, settings, rows, state, dataset_id) VALUES (?, ?, ?, ?, ?, ?, ?, 'waiting', ?)").run(
     id,
     ownerId,
     opts.base,
@@ -216,6 +230,7 @@ export function startTrain(
     opts.providerId,
     JSON.stringify(settings),
     rows,
+    ds.id,
   );
   void run(id, ownerId, deps, false);
   return toJob(db.prepare('SELECT * FROM lab_trains WHERE id = ?').get(id) as unknown as TrainRow);

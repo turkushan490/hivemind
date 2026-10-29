@@ -4,6 +4,7 @@ import { db } from '../db/index.js';
 import { runGraph, withHostLock, type EngineDeps, type ResolvedProvider } from '../engine/run.js';
 import { logError } from '../errors.js';
 import { fill, labelled, type NodeInput, type NodeServices } from '../nodes/index.js';
+import { syncLabTurn } from './datasets.js';
 import { FAST_PASS, JUDGE_SCHEMA, JUDGE_SYSTEM, parseVerdict, readFastPass, type ErrorType, type FastVerdict, type Verdict } from './judge.js';
 import { applyTurn, DM_PROMPT, DM_SCHEMA, DM_SYSTEM, rng, rollFor, setupGame, simGraph, type DmTurn } from './sim.js';
 import { Party } from './state.js';
@@ -201,7 +202,7 @@ export class LabRun {
 
     const errorTypes = [...errors];
     const output = dmDone?.text ?? `(${dmError ?? 'no answer'})`;
-    db.prepare(
+    const inserted = db.prepare(
       `INSERT INTO lab_turns (run_id, game, turn, seed, model, prompt_version, input, output, json_valid, verdict, jev_verdict, error_types, story_score, jev_story, tokens_per_s, ms, corrected, review)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
@@ -225,6 +226,10 @@ export class LabRun {
       // Bad turns go to the review queue (accept the correction, edit it, or reject the turn).
       errorTypes.length ? 'pending' : null,
     );
+    // Clean turns become training examples in the "DungeonMind DM" dataset right away.
+    try {
+      syncLabTurn(this.ownerId, Number(inserted.lastInsertRowid));
+    } catch {}
     if (turn?.narration) t.recent.push(`DM: ${turn.narration.slice(0, 400)}`);
     this.status.turns++;
     if (errorTypes.length) this.status.badTurns++;

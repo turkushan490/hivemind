@@ -197,6 +197,36 @@ const MIGRATIONS = [
     finished_at TEXT
   );
   `,
+  `
+  CREATE TABLE datasets (
+    id TEXT PRIMARY KEY,
+    owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    kind TEXT NOT NULL DEFAULT 'text',
+    description TEXT,
+    system TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE (owner_id, name)
+  );
+  CREATE TABLE dataset_items (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    dataset_id TEXT NOT NULL REFERENCES datasets(id) ON DELETE CASCADE,
+    input TEXT NOT NULL DEFAULT '',
+    output TEXT NOT NULL DEFAULT '',
+    system TEXT,
+    files TEXT,
+    source TEXT NOT NULL,
+    ref TEXT,
+    review TEXT,
+    meta TEXT,
+    at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  CREATE INDEX dataset_items_ds ON dataset_items(dataset_id, id);
+  CREATE UNIQUE INDEX dataset_items_ref ON dataset_items(dataset_id, ref) WHERE ref IS NOT NULL;
+  ALTER TABLE lab_trains ADD COLUMN dataset_id TEXT;
+  ALTER TABLE lab_trains ADD COLUMN kind TEXT NOT NULL DEFAULT 'text';
+  ALTER TABLE lab_trains ADD COLUMN backend TEXT NOT NULL DEFAULT 'local';
+  `,
 ];
 
 export const db = new DatabaseSync(join(config.dataDir, 'hivemind.db'));

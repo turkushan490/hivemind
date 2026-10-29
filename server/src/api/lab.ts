@@ -3,6 +3,7 @@ import type { FastifyInstance } from 'fastify';
 import { db, setSetting } from '../db/index.js';
 import { logError } from '../errors.js';
 import { exportJsonl, scoreboard } from '../lab/data.js';
+import { migrateLabTurns, syncLabTurn } from '../lab/datasets.js';
 import { activeLab, recoverLab, startLab, type LabConfig } from '../lab/runner.js';
 import { cancelTrain, installTrainerScripts, overview, resumeTrains, startBuiltinTrainer, startTrain, type TrainDeps } from '../lab/train.js';
 import { memoryFor } from '../services/memory.js';
@@ -14,6 +15,11 @@ const isRef = (m: unknown): m is ModelRef => !!m && typeof (m as ModelRef).provi
 /** The Lab (D&D only): simulated games, datasets, review queue, JSONL export and the scoreboard. */
 export function labRoutes(app: FastifyInstance) {
   recoverLab();
+  try {
+    migrateLabTurns();
+  } catch (err) {
+    logError({ source: 'server', message: `Lab: moving Lab turns into the DungeonMind DM dataset failed: ${(err as Error).message}` });
+  }
 
   // ---- New model (fine-tune on the Lab dataset; admin only, it takes the GPU for hours) ----
   const trainDeps = (user: User): TrainDeps => ({
@@ -139,6 +145,7 @@ export function labRoutes(app: FastifyInstance) {
       }
     }
     db.prepare('UPDATE lab_turns SET review = ?, corrected = ? WHERE id = ?').run(body.review, corrected ?? null, id);
+    syncLabTurn(req.user!.id, id);
     return { ok: true };
   });
 

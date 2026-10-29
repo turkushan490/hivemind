@@ -536,6 +536,40 @@ export function councilGraph(models: ModelRef[], judge: ModelRef, withReview = f
   return { nodes, edges };
 }
 
+// ---- Datasets (training data for every kind of model) ----
+
+export const DATASET_KINDS = ['text', 'image', 'decision', 'voice'] as const;
+export type DatasetKind = (typeof DATASET_KINDS)[number];
+
+/** Where an example came from. */
+export type DatasetSource = 'lab' | 'thumbs' | 'upload' | 'generated' | 'block' | 'manual';
+
+export interface Dataset {
+  id: string;
+  name: string;
+  kind: DatasetKind;
+  description?: string;
+  /** System prompt every text example is trained with (e.g. the DM rules). */
+  system?: string;
+  createdAt: string;
+  items: number;
+  /** Examples waiting for review (they are not trained on until accepted). */
+  pending: number;
+}
+
+export interface DatasetItem {
+  id: number;
+  input: string;
+  output: string;
+  system?: string;
+  /** Pictures or audio in the files folder (image / voice datasets). */
+  files?: string[];
+  source: DatasetSource;
+  /** null = ok; pending examples wait for review; rejected ones are never trained on. */
+  review?: 'pending' | 'accepted' | 'rejected';
+  at: string;
+}
+
 // ---- Lab: make a new model (GET /api/lab/train) ----
 
 export type TrainState = 'starting' | 'waiting' | 'loading' | 'training' | 'exporting' | 'importing' | 'done' | 'error' | 'cancelled' | 'interrupted';

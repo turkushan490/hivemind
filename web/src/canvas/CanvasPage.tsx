@@ -161,7 +161,7 @@ function Editor({ active, onProblem }: { active: boolean; onProblem: () => void 
     } catch {}
   }, [graphJson, doc, saved, replaying]);
 
-  const confirmDiscard = () => !dirty || nodes.length === 0 || confirm('You have unsaved changes on this canvas. Throw them away?');
+  const confirmDiscard = () => !dirty || nodes.length === 0 || confirm('You have unsaved changes on this workflow. Throw them away?');
 
   const show = (g: CanvasGraph) => {
     const f = toFlow(g);
@@ -206,7 +206,7 @@ function Editor({ active, onProblem }: { active: boolean; onProblem: () => void 
   const editCopy = () => {
     const b = backup.current;
     const bDirty = b && b.saved !== JSON.stringify({ name: b.doc.name, graph: toGraph(b.nodes, b.edges) });
-    if (bDirty && !confirm('Your canvas has unsaved changes. Replace it with this run’s canvas?')) return;
+    if (bDirty && !confirm('Your workflow has unsaved changes. Replace it with this run’s workflow?')) return;
     backup.current = null;
     replay.close();
     setNodes((ns) => ns.map((n) => ({ ...n, selected: false })));
@@ -245,7 +245,7 @@ function Editor({ active, onProblem }: { active: boolean; onProblem: () => void 
   const sharedNow = !!canvases.find((c) => c.id === doc.id)?.shared;
 
   const remove = async () => {
-    if (!doc.id || !confirm(`Delete the canvas "${doc.name}"?`)) return;
+    if (!doc.id || !confirm(`Delete the workflow "${doc.name}"?`)) return;
     await api(`/api/canvases/${doc.id}`, { method: 'DELETE' });
     setDoc({ name: doc.name });
     setSaved(undefined);
@@ -434,15 +434,15 @@ function Editor({ active, onProblem }: { active: boolean; onProblem: () => void 
                   downloadText(`${doc.name || 'canvas'}.hivemind.json`, JSON.stringify({ hivemind: 1, type: 'canvas', name: doc.name, ...graph }, null, 2), 'application/json');
                 }}
               >
-                Export this canvas
+                Export this workflow
                 <span className="block text-xs text-slate-500">a .hivemind.json file to share or back up</span>
               </button>
               <a className="block rounded px-3 py-2 text-sm hover:bg-[#21262d]" href="/api/export/canvases.zip" onClick={() => setShowFile(false)}>
-                Export all canvases
-                <span className="block text-xs text-slate-500">one ZIP with every saved canvas</span>
+                Export all workflows
+                <span className="block text-xs text-slate-500">one ZIP with every saved workflow</span>
               </a>
               <label className="block cursor-pointer rounded px-3 py-2 text-sm hover:bg-[#21262d]">
-                Import canvases…
+                Import workflows…
                 <span className="block text-xs text-slate-500">.hivemind.json or ZIP — added as new canvases</span>
                 <input
                   type="file"
@@ -463,7 +463,7 @@ function Editor({ active, onProblem }: { active: boolean; onProblem: () => void 
                     const created = data.created as { id: string; name: string }[];
                     const list = await api<Canvas[]>('/api/canvases', { quiet: true }).catch(() => canvases);
                     setCanvases(list);
-                    toast(`Imported ${created.length} canvas${created.length === 1 ? '' : 'es'}`, 'ok');
+                    toast(`Imported ${created.length} workflow${created.length === 1 ? '' : 'es'}`, 'ok');
                     const first = list.find((c) => c.id === created[0]?.id);
                     if (first) openCanvas(first);
                   }}
@@ -576,7 +576,7 @@ function Editor({ active, onProblem }: { active: boolean; onProblem: () => void 
       <Clock.Provider value={replaying ? replay.now : Date.now}>
       <div className="flex min-h-0 flex-1">
         <aside className={`w-52 shrink-0 space-y-4 overflow-y-auto border-r border-[#30363d] bg-[#11161d] p-3 ${replaying ? 'pointer-events-none opacity-40' : ''}`}>
-          <div className="text-[11px] font-semibold tracking-wider text-slate-500 uppercase">Drag onto the canvas</div>
+          <div className="text-[11px] font-semibold tracking-wider text-slate-500 uppercase">Drag onto the workflow</div>
           {PALETTE.map((g) => (
           <div key={g.group} className="space-y-1.5">
             <div className="text-xs font-semibold text-slate-500">{g.group}</div>

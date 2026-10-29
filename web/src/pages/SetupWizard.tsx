@@ -116,7 +116,7 @@ export function SetupWizard({ onDone, onOpen }: { onDone: () => void; onOpen: (t
             <>
               <h2 className="text-xl font-semibold">You’re ready</h2>
               <p className="text-slate-300">
-                Open the Canvas and click <b>✨ Builder</b> on the right. Try: <i>“Three local models answer, a judge merges the best parts”</i>.
+                Open the Workflow and click <b>✨ Builder</b> on the right. Try: <i>“Three local models answer, a judge merges the best parts”</i>.
               </p>
               {!builder && <p className="text-sm text-amber-300">No Builder model picked yet — you can do that in the Builder tab later.</p>}
             </>
@@ -138,7 +138,7 @@ export function SetupWizard({ onDone, onOpen }: { onDone: () => void; onOpen: (t
             </button>
           ) : (
             <button className="btn" onClick={() => finish('canvas')}>
-              Open the Canvas
+              Open the Workflow
             </button>
           )}
         </div>

@@ -45,7 +45,7 @@ export function RepeatRun({ canvasId, question }: { canvasId?: string; question:
   }, [open]);
 
   const start = async () => {
-    if (!canvasId) return toast('Save the canvas first, then run it repeatedly', 'info');
+    if (!canvasId) return toast('Save the workflow first, then run it repeatedly', 'info');
     const list = questions.split('\n').map((q) => q.trim()).filter(Boolean);
     if (!list.length) return toast('Write at least one question', 'info');
     try {

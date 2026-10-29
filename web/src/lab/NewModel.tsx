@@ -4,7 +4,7 @@ import { api } from '../api';
 import { toast } from '../notify';
 import { useStored } from '../stored';
 
-/** Lab → New model: fine-tune a base model on the Lab dataset and put the result into Ollama as a new model. */
+/** Lab → New model: fine-tune a base model on any of your datasets (text, decision, pictures) and put the result to work. */
 
 const ACTIVE = new Set(['waiting', 'starting', 'loading', 'training', 'exporting', 'importing']);
 
@@ -31,10 +31,12 @@ const dur = (s?: number) => {
 
 const today = () => new Date().toISOString().slice(0, 10).replace(/-/g, '');
 
-export function NewModel({ active, providers }: { active: boolean; providers: ProviderInfo[] }) {
+export function NewModel({ active, providers, onDatasets }: { active: boolean; providers: ProviderInfo[]; onDatasets: () => void }) {
   const [info, setInfo] = useState<TrainOverview | null>(null);
   const [base, setBase] = useStored('lab.train.base', 'unsloth/Qwen3.5-2B');
-  const [name, setName] = useState(`dungeonmind-dm:${today()}`);
+  // The name follows the dataset (my-dataset:20261029) until you type your own.
+  const [name, setName] = useState('');
+  const [named, setNamed] = useState(false);
   const [epochs, setEpochs] = useStored('lab.train.epochs', 2);
   const [target, setTarget] = useStored<string>('lab.train.target', '');
   const [url, setUrl] = useState('');
@@ -110,9 +112,9 @@ export function NewModel({ active, providers }: { active: boolean; providers: Pr
     setBusy(true);
     try {
       await api<TrainJob>('/api/lab/train', {
-        body: { base: ck.model, name, providerId: ck.providerId, datasetId: dataset.id, ...(imageSteps && { steps: imageSteps }), ...(trigger.trim() && { trigger: trigger.trim() }) },
+        body: { base: ck.model, name: shownName, providerId: ck.providerId, datasetId: dataset.id, ...(imageSteps && { steps: imageSteps }), ...(trigger.trim() && { trigger: trigger.trim() }) },
       });
-      toast(`Training the LoRA ${name} in ComfyUI — it starts when ComfyUI's queue is empty`, 'ok');
+      toast(`Training the LoRA ${shownName} in ComfyUI — it starts when ComfyUI's queue is empty`, 'ok');
       load();
     } catch {
     } finally {
@@ -124,16 +126,16 @@ export function NewModel({ active, providers }: { active: boolean; providers: Pr
     let confirmUsd: number | undefined;
     if (cloud) {
       if (!estimate || 'error' in estimate) return toast('Waiting for the price estimate', 'info');
-      if (!confirm(`Train ${name} on Hugging Face (${estimate.label})?\n\nAbout ${estimate.hours} h, about $${estimate.usd.toFixed(2)} on your Hugging Face account. The machine stops when the job ends; Cancel stops it early.`)) return;
+      if (!confirm(`Train ${shownName} on Hugging Face (${estimate.label})?\n\nAbout ${estimate.hours} h, about $${estimate.usd.toFixed(2)} on your Hugging Face account. The machine stops when the job ends; Cancel stops it early.`)) return;
       confirmUsd = estimate.usd;
     }
     setBusy(true);
     try {
       await api<TrainJob>('/api/lab/train', {
-        body: { base, name, providerId: targetId, epochs, ...(dataset && { datasetId: dataset.id }), ...(cloud && { flavor: cloud.name, confirmUsd }) },
+        body: { base, name: shownName, providerId: targetId, epochs, ...(dataset && { datasetId: dataset.id }), ...(cloud && { flavor: cloud.name, confirmUsd }) },
       });
       toast(
-        cloud ? `${name} is training on Hugging Face` : running ? `${name} is queued — it starts when the GPU is free` : `Making ${name} — local AI on this GPU pauses until it's done`,
+        cloud ? `${shownName} is training on Hugging Face` : running ? `${shownName} is queued — it starts when the GPU is free` : `Making ${shownName} — local AI on this GPU pauses until it's done`,
         'ok',
       );
       load();
@@ -164,7 +166,8 @@ export function NewModel({ active, providers }: { active: boolean; providers: Pr
 
   if (!info) return <div className="card text-sm text-slate-400">Loading…</div>;
   const chosen = info.bases.find((b) => b.id === base);
-  const dataset = datasets.find((d) => d.id === datasetId) ?? datasets.find((d) => d.name === 'DungeonMind DM') ?? datasets[0];
+  const dataset = datasets.find((d) => d.id === datasetId) ?? datasets.find((d) => d.items > 0) ?? datasets[0];
+  const shownName = named ? name : `${(dataset?.name ?? 'my-model').toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') || 'my-model'}:${today()}`;
   const rows = dataset ? dataset.items : info.rows;
   const steps = Math.ceil(rows / 4) * epochs;
   const localEstimate = chosen ? steps * chosen.secPerStep + 600 : undefined;
@@ -183,7 +186,7 @@ export function NewModel({ active, providers }: { active: boolean; providers: Pr
         <label className="block space-y-1 text-xs">
           <span className="font-semibold text-slate-300">Dataset</span>
           <select className="input py-1 text-xs" value={dataset?.id ?? ''} onChange={(e) => setDatasetId(e.target.value)}>
-            {datasets.length === 0 && <option value="">No text or decision datasets yet — make one in Datasets</option>}
+            {datasets.length === 0 && <option value="">No datasets yet — make one in Datasets</option>}
             {datasets.map((d) => (
               <option key={d.id} value={d.id}>
                 {d.name} · {d.kind === 'decision' ? 'decision model · ' : ''}{d.items} examples{d.pending ? ` (+${d.pending} to review)` : ''}
@@ -227,15 +230,19 @@ export function NewModel({ active, providers }: { active: boolean; providers: Pr
             </div>
             <label className="block space-y-1">
               <span className="text-slate-400">LoRA name</span>
-              <input className="input py-1 text-xs" value={name} onChange={(e) => setName(e.target.value.toLowerCase().replace(/\s+/g, '-'))} />
+              <input className="input py-1 text-xs" value={shownName} onChange={(e) => (setNamed(true), setName(e.target.value.toLowerCase().replace(/\s+/g, '-')))} />
             </label>
             <button className="btn w-full" disabled={busy || rows < 5 || !info.images.ready || !checkpoints.length} onClick={startImage}>
-              Train the LoRA {name}
+              Train the LoRA {shownName}
             </button>
           </div>
         )}
 
         <div hidden={image} className="space-y-3">
+        <button className="text-xs text-indigo-300 hover:text-indigo-200" onClick={onDatasets}>
+          + Make a new dataset (text / chat, decisions or pictures) →
+        </button>
+
         <div className={`rounded-md border p-2 text-xs ${info.trainer.ok ? 'border-emerald-800/60 bg-emerald-950/20' : 'border-amber-800/60 bg-amber-950/20'}`}>
           <div className="flex items-center gap-2">
             <span className={`h-2 w-2 rounded-full ${info.trainer.ok ? 'bg-emerald-400' : 'bg-amber-400'}`} />
@@ -278,7 +285,7 @@ export function NewModel({ active, providers }: { active: boolean; providers: Pr
         <div className="grid grid-cols-2 gap-2 text-xs">
           <label className="space-y-1">
             <span className="text-slate-400">New model name</span>
-            <input className="input py-1 text-xs" value={name} onChange={(e) => setName(e.target.value.toLowerCase().replace(/\s+/g, '-'))} />
+            <input className="input py-1 text-xs" value={shownName} onChange={(e) => (setNamed(true), setName(e.target.value.toLowerCase().replace(/\s+/g, '-')))} />
           </label>
           <label className="space-y-1">
             <span className="text-slate-400">Put it on</span>
@@ -299,7 +306,13 @@ export function NewModel({ active, providers }: { active: boolean; providers: Pr
         <div className="rounded-md bg-[#0d1117] p-2 text-xs">
           <div>
             Training examples ready: <span className={`font-mono font-semibold ${enough ? 'text-emerald-300' : 'text-amber-300'}`}>{rows}</span>
-            {!enough && <span className="text-amber-300"> — at least {info.minRows} needed; a few hundred is better. Let the Simulator run first.</span>}
+            {!enough && (
+              <span className="text-amber-300">
+                {' '}
+                — at least {info.minRows} needed; a few hundred is better. Add them in Datasets: upload a file, 👍 good answers, or let a workflow write them (Train
+                templates in Canvas).
+              </span>
+            )}
           </div>
           {enough && !cloud && <div className="text-slate-400">About {dur(localEstimate)} on a Tesla T4 ({steps} steps), plus the download of the base model the first time.</div>}
           {enough && cloud && (
@@ -327,7 +340,7 @@ export function NewModel({ active, providers }: { active: boolean; providers: Pr
         </label>
 
         <button className="btn w-full" disabled={busy || !enough || (!cloud && !info.trainer.ok) || (!!cloud && (!estimate || 'error' in estimate))} onClick={start}>
-          {cloud ? `Train ${name} on Hugging Face` : running ? `Queue ${name}` : `Make ${name}`}
+          {cloud ? `Train ${shownName} on Hugging Face` : running ? `Queue ${shownName}` : `Make ${shownName}`}
         </button>
         <p className="text-[11px] text-slate-500">While it trains, Ollama, ComfyUI and the Simulator on this GPU wait. Runs you start meanwhile are queued, not lost.</p>
         </div>
@@ -400,7 +413,7 @@ export function NewModel({ active, providers }: { active: boolean; providers: Pr
                       ? `In ComfyUI as ${j.lora ?? j.name}: pick it as the LoRA in an Image block.`
                       : j.kind === 'decision'
                       ? `In Ollama as ${j.name}: pick it under "Ollama decision models" in a Decide block.`
-                      : `In Ollama as ${j.name}. Add it as a DM model in the Simulator to compare it on the Scoreboard.`}
+                      : `In Ollama as ${j.name}: pick it as the model of any block, like your other Ollama models.`}
                   </span>
                   {j.publishedUrl ? (
                     <a className="text-indigo-300 hover:text-indigo-200" href={j.publishedUrl} target="_blank" rel="noreferrer">

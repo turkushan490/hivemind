@@ -225,7 +225,7 @@ function ProviderCard(props: {
               <button
                 className="btn-ghost ml-auto text-red-400"
                 onClick={async () => {
-                  if (!confirm(`Remove ${p.name}? Canvases using it will stop working.`)) return;
+                  if (!confirm(`Remove ${p.name}? Workflows using it will stop working.`)) return;
                   await api(`/api/providers/${p.id}`, { method: 'DELETE' });
                   props.onChanged();
                 }}

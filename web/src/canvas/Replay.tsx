@@ -74,7 +74,7 @@ export function History({ onPick, onClose }: { onPick: (id: string) => void; onC
       </div>
       <div className="max-h-[60vh] overflow-y-auto p-1">
         {runs === null && <p className="p-3 text-sm text-slate-400">Loading…</p>}
-        {runs?.length === 0 && <p className="p-3 text-sm text-slate-400">No runs yet. Press Run on a canvas first.</p>}
+        {runs?.length === 0 && <p className="p-3 text-sm text-slate-400">No runs yet. Press Run on a workflow first.</p>}
         {runs?.map((r) => {
           const started = parseDb(r.startedAt);
           const took = parseDb(r.finishedAt) - started;

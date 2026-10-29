@@ -130,6 +130,7 @@ export function trainDepsFor(user: User) {
     ollamaUrl: (id: string) => ollamas().find((r) => r.id === id)?.base_url,
     comfyUrl: (id: string) => visibleRows(user).find((r) => r.id === id && r.kind === 'comfyui' && r.enabled)?.base_url,
     defaultTarget: () => ollamas()[0]?.id,
+    defaultComfy: () => visibleRows(user).find((r) => r.kind === 'comfyui' && r.enabled)?.id,
   };
 }
 

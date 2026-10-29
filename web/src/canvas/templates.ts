@@ -272,10 +272,107 @@ const TRAIN: Template[] = [
     },
   },
   {
+    id: 'train-skill',
+    group: 'Train',
+    name: 'Teach a small model a skill (all in one)',
+    description: 'Type what the model should be good at. A teacher model writes 100 examples, then a small model trains on them and the run waits until it is in Ollama.',
+    build: (m) =>
+      chain(
+        node('input', 0, 120, 'Skill'),
+        node('generate', 320, 120, 'Teacher writes examples', {
+          ...((m.judge ?? m.text[0]) && { model: m.judge ?? m.text[0] }),
+          dataset: 'My skill',
+          count: 100,
+          prompt: 'Questions and requests about: {{question}}. Answers: correct, clear and in the style an expert would use.',
+        }),
+        node('train', 640, 120, 'Train', { dataset: 'My skill', trainBase: 'unsloth/Qwen3.5-2B', trainName: `my-skill:${today()}`, epochs: 2, trainWait: true }),
+        node('output', 960, 120, 'Final answer'),
+      ),
+  },
+  {
+    id: 'train-decision',
+    group: 'Train',
+    name: 'Make your own decision model',
+    description:
+      'A teacher writes texts with the right answer to one question (here: how does a customer feel?), then a tiny model learns to answer it in a split second. Use it in Decide blocks under "Ollama decision models". Change the question and options in the Generate block.',
+    build: (m) =>
+      chain(
+        node('input', 0, 120, 'Topic'),
+        node('generate', 320, 120, 'Teacher writes examples', {
+          ...((m.judge ?? m.text[0]) && { model: m.judge ?? m.text[0] }),
+          dataset: 'Customer mood',
+          datasetKind: 'decision',
+          count: 120,
+          prompt: 'Short customer messages about: {{question}}. Mix happy, unhappy and neutral ones, some sarcastic, some with typos.',
+          questions: [
+            {
+              name: 'answer',
+              type: 'choice',
+              instructions: 'How does the customer feel?',
+              options: [
+                { name: 'happy', description: 'Pleased, thankful, positive' },
+                { name: 'unhappy', description: 'Angry, disappointed, complaining' },
+                { name: 'neutral', description: 'Just a question or a fact' },
+              ],
+            },
+          ],
+        }),
+        node('train', 640, 120, 'Train decision model', { dataset: 'Customer mood', trainBase: 'unsloth/Qwen3.5-0.8B', trainName: `customer-mood:${today()}`, epochs: 3, trainWait: true }),
+        node('output', 960, 120, 'Final answer'),
+      ),
+  },
+  {
+    id: 'train-lora-collect',
+    group: 'Train',
+    name: 'Make pictures for an image LoRA',
+    description:
+      'Your image model makes 4 pictures of what you type; they go into the picture dataset "My LoRA", with the prompt as caption. Use "Run repeatedly" with different prompts for 20–30 pictures, or add your own photos in Lab → Datasets.',
+    build: (m) =>
+      chain(
+        node('input', 0, 120, 'What to picture'),
+        node('image', 320, 120, 'Pictures', { ...(m.image && { model: m.image }), width: 1024, height: 1024, batch: 4 }),
+        node('dataset', 640, 120, 'Add to LoRA dataset', { dataset: 'My LoRA', datasetKind: 'image' }),
+        node('output', 960, 120, 'Final answer'),
+      ),
+  },
+  {
+    id: 'train-lora',
+    group: 'Train',
+    name: 'Train an image LoRA',
+    description:
+      'Trains a LoRA on the picture dataset "My LoRA" in your ComfyUI (after its queue is empty). It ends up in models/loras/hivemind, ready for Image blocks. Set the checkpoint and trigger word in the Train block.',
+    build: (m) =>
+      chain(
+        node('input', 0, 120, 'Start'),
+        node('train', 320, 120, 'Train LoRA', { dataset: 'My LoRA', ...(m.image && { trainBase: m.image.model }), trainName: `my-lora:${today()}`, trainTrigger: 'mylora style' }),
+        node('output', 640, 120, 'Final answer'),
+      ),
+  },
+  {
+    id: 'train-cloud',
+    group: 'Train',
+    name: 'Train a bigger model on Hugging Face',
+    description:
+      'Trains Qwen3.5 9B (too big for a 16 GB GPU) on a rented Hugging Face L4, only when it costs at most $5. Needs your Hugging Face token in Settings. The model comes back into your Ollama.',
+    build: () =>
+      chain(
+        node('input', 0, 120, 'Start'),
+        node('train', 320, 120, 'Train on Hugging Face', {
+          dataset: 'My skill',
+          trainBase: 'unsloth/Qwen3.5-9B',
+          trainName: `my-skill-9b:${today()}`,
+          epochs: 2,
+          trainFlavor: 'l4x1',
+          trainMaxUsd: 5,
+        }),
+        node('output', 640, 120, 'Final answer'),
+      ),
+  },
+  {
     id: 'train-deploy',
     group: 'Train',
     name: 'Put a trained model to work',
-    description: 'Puts a model (e.g. dungeonmind-dm:…) into the AI model blocks of your dnd-* canvases. Pick the model in the Deploy block first.',
+    description: 'Puts a trained model into the AI model blocks of other workflows (here every workflow whose id starts with dnd-). Pick the model in the Deploy block first.',
     build: (m) => chain(node('input', 0, 120, 'Start'), node('deploy', 320, 120, 'Deploy', { ...(m.text[0] && { model: m.text[0] }), canvasPattern: 'dnd-*' }), node('output', 640, 120, 'Final answer')),
   },
 ];

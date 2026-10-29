@@ -115,7 +115,7 @@ export function BuilderPanel(props: {
       <div ref={list} className="flex-1 space-y-3 overflow-y-auto p-4">
         {msgs.length === 0 && (
           <div className="space-y-2">
-            <p className="text-sm text-slate-300">Tell me what you need and I’ll build the canvas. I can also change the one you have.</p>
+            <p className="text-sm text-slate-300">Tell me what you need and I’ll build the workflow. I can also change the one you have.</p>
             {EXAMPLES.map((ex) => (
               <button
                 key={ex}
@@ -151,7 +151,7 @@ export function BuilderPanel(props: {
               )}
               {m.applied && (
                 <div className="flex items-center gap-2 text-xs text-slate-500">
-                  <span className="text-emerald-400">Applied to the canvas</span>
+                  <span className="text-emerald-400">Applied to the workflow</span>
                   {m.ms !== undefined && <span>· {(m.ms / 1000).toFixed(1)}s</span>}
                   {i === msgs.length - 1 && props.onUndo && (
                     <button className="ml-auto text-indigo-400 hover:underline" onClick={props.onUndo}>
@@ -166,7 +166,7 @@ export function BuilderPanel(props: {
         {busy !== null && (
           <div className="mr-6 flex items-center gap-2 rounded-2xl rounded-bl-sm border border-violet-800/60 bg-violet-950/30 px-3 py-2 text-sm text-violet-200">
             <span className="hm-core-dot" />
-            Designing your canvas… {((now - busy) / 1000).toFixed(0)}s
+            Designing your workflow… {((now - busy) / 1000).toFixed(0)}s
           </div>
         )}
       </div>

@@ -269,7 +269,7 @@ function KindSettings(p: Props) {
           <label className="block space-y-1">
             <Label>Webhook URL</Label>
             <input className="input text-xs" placeholder="https://discord.com/api/webhooks/…" value={p.config.url ?? ''} onChange={(e) => p.onChange({ url: e.target.value || undefined })} />
-            <span className="text-xs text-slate-500">Discord channel → Edit channel → Integrations → Webhooks → Copy URL. Anyone with this URL can post, so keep the canvas private.</span>
+            <span className="text-xs text-slate-500">Discord channel → Edit channel → Integrations → Webhooks → Copy URL. Anyone with this URL can post, so keep the workflow private.</span>
           </label>
           <label className="block space-y-1">
             <Label>Message</Label>
@@ -686,7 +686,7 @@ function WebhookSettings(p: Props) {
           value={c.headers ?? ''}
           onChange={(e) => p.onChange({ headers: e.target.value || undefined })}
         />
-        <span className="text-xs text-slate-500">One per line. Headers are saved in the canvas (and its exports).</span>
+        <span className="text-xs text-slate-500">One per line. Headers are saved in the workflow (and its exports).</span>
       </label>
       {method !== 'GET' && (
         <label className="block space-y-1">
@@ -932,10 +932,18 @@ function TrainSettings(p: Props) {
   const c = p.config;
   const [datasets, setDatasets] = useState<{ id: string; name: string; items: number; kind: string }[]>([]);
   const [bases, setBases] = useState<{ id: string; name: string; note: string }[]>([]);
+  const [hardware, setHardware] = useState<{ name: string; label: string; usdPerHour: number }[]>([]);
   useEffect(() => {
     api<{ id: string; name: string; items: number; kind: string }[]>('/api/datasets', { quiet: true }).then(setDatasets).catch(() => {});
-    if (p.kind === 'train') api<{ bases: { id: string; name: string; note: string }[] }>('/api/lab/train', { quiet: true }).then((o) => setBases(o.bases)).catch(() => {});
+    if (p.kind === 'train') {
+      api<{ bases: { id: string; name: string; note: string }[] }>('/api/lab/train', { quiet: true }).then((o) => setBases(o.bases)).catch(() => {});
+      api<{ hardware: { name: string; label: string; usdPerHour: number }[] }>('/api/hf', { quiet: true }).then((h) => setHardware(h.hardware)).catch(() => {});
+    }
   }, [p.kind]);
+  // A picture dataset trains a LoRA in ComfyUI on one of its checkpoints; the others a language model.
+  const pictures = datasets.find((d) => d.name.toLowerCase() === (c.dataset ?? '').toLowerCase())?.kind === 'image';
+  const comfys = p.providers.filter((x) => x.kind === 'comfyui' && x.enabled);
+  const checkpoints = p.models.filter((m) => m.kind === 'image' && comfys.some((x) => x.id === m.providerId));
   const listId = `datasets-${p.nodeId}`;
   const ollamas = p.providers.filter((x) => x.kind === 'ollama' && x.enabled);
   const datasetField = p.kind !== 'deploy' && (
@@ -968,6 +976,14 @@ function TrainSettings(p: Props) {
             <input type="range" className="w-full" min={1} max={200} value={c.count ?? 10} onChange={(e) => p.onChange({ count: Number(e.target.value) })} />
           </label>
           {datasetField}
+          <label className="block space-y-1">
+            <Label>Kind of examples</Label>
+            <select className="input text-xs" value={c.datasetKind === 'decision' ? 'decision' : 'text'} onChange={(e) => p.onChange({ datasetKind: e.target.value === 'decision' ? 'decision' : undefined })}>
+              <option value="text">Text / chat — question and ideal answer</option>
+              <option value="decision">Decision — a text and the right option (to train a decision model)</option>
+            </select>
+          </label>
+          {c.datasetKind === 'decision' && <TeachQuestion {...p} />}
           <label className="flex items-center gap-2 text-xs text-slate-300">
             <input type="checkbox" checked={!!c.review} onChange={(e) => p.onChange({ review: e.target.checked || undefined })} /> Let me review them first
           </label>
@@ -977,6 +993,14 @@ function TrainSettings(p: Props) {
       return (
         <div className="space-y-2">
           {datasetField}
+          <label className="block space-y-1">
+            <Label>Kind of dataset (when it's made)</Label>
+            <select className="input text-xs" value={c.datasetKind ?? 'text'} onChange={(e) => p.onChange({ datasetKind: e.target.value === 'text' ? undefined : (e.target.value as 'decision' | 'image') })}>
+              <option value="text">Text / chat — question in, answer out</option>
+              <option value="decision">Decision — the answer is an option key (set the question in Lab → Datasets)</option>
+              <option value="image">Pictures — wire in an Image block; its prompt is the caption</option>
+            </select>
+          </label>
           <label className="block space-y-1">
             <Label>Input of the example</Label>
             <input className="input text-xs" placeholder="{{question}}" value={c.prompt ?? ''} onChange={(e) => p.onChange({ prompt: e.target.value || undefined })} />
@@ -991,22 +1015,48 @@ function TrainSettings(p: Props) {
       return (
         <div className="space-y-2">
           {datasetField}
-          <label className="block space-y-1">
-            <Label>Base model</Label>
-            <select className="input text-xs" value={c.trainBase ?? ''} onChange={(e) => p.onChange({ trainBase: e.target.value })}>
-              {!bases.some((b) => b.id === c.trainBase) && c.trainBase && <option value={c.trainBase}>{c.trainBase}</option>}
-              {bases.map((b) => (
-                <option key={b.id} value={b.id}>
-                  {b.name} — {b.note}
-                </option>
-              ))}
-            </select>
-          </label>
+          {pictures ? (
+            <>
+              <label className="block space-y-1">
+                <Label>Checkpoint to train the LoRA on (ComfyUI)</Label>
+                <select className="input text-xs" value={c.trainBase ?? ''} onChange={(e) => p.onChange({ trainBase: e.target.value })}>
+                  <option value="">Pick a checkpoint (SDXL fits a 16 GB GPU)</option>
+                  {checkpoints.map((m) => (
+                    <option key={m.model} value={m.model}>
+                      {m.model}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <div className="grid grid-cols-2 gap-2">
+                <label className="space-y-1">
+                  <Label>Trigger word</Label>
+                  <input className="input text-xs" placeholder="e.g. grim man" value={c.trainTrigger ?? ''} onChange={(e) => p.onChange({ trainTrigger: e.target.value || undefined })} />
+                </label>
+                <label className="space-y-1">
+                  <Label>Steps (empty = auto)</Label>
+                  <input className="input text-xs" type="number" min={10} max={5000} value={c.trainSteps ?? ''} onChange={(e) => p.onChange({ trainSteps: e.target.value ? Number(e.target.value) : undefined })} />
+                </label>
+              </div>
+            </>
+          ) : (
+            <label className="block space-y-1">
+              <Label>Base model</Label>
+              <select className="input text-xs" value={c.trainBase ?? ''} onChange={(e) => p.onChange({ trainBase: e.target.value })}>
+                {!bases.some((b) => b.id === c.trainBase) && c.trainBase && <option value={c.trainBase}>{c.trainBase}</option>}
+                {bases.map((b) => (
+                  <option key={b.id} value={b.id}>
+                    {b.name} — {b.note}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
           <label className="block space-y-1">
             <Label>New model name</Label>
             <input className="input text-xs" placeholder="my-model:v1" value={c.trainName ?? ''} onChange={(e) => p.onChange({ trainName: e.target.value.toLowerCase().replace(/\s+/g, '-') || undefined })} />
           </label>
-          <label className="block space-y-1">
+          <label className="block space-y-1" hidden={pictures}>
             <Label>Put it on</Label>
             <select className="input text-xs" value={c.trainTarget ?? ''} onChange={(e) => p.onChange({ trainTarget: e.target.value || undefined })}>
               <option value="">{ollamas[0]?.name ?? 'Ollama'} (default)</option>
@@ -1021,7 +1071,31 @@ function TrainSettings(p: Props) {
             <span className="text-xs text-slate-400">Rounds over the data (epochs): {c.epochs ?? 2}</span>
             <input type="range" className="w-full" min={1} max={5} value={c.epochs ?? 2} onChange={(e) => p.onChange({ epochs: Number(e.target.value) })} />
           </label>
-          <p className="text-xs text-slate-500">The run goes on right away; training waits for the GPU and runs in the background. Follow, pause or cancel it in Lab → New model.</p>
+          {!pictures && (
+            <div className="space-y-1">
+              <Label>Train on</Label>
+              <select className="input text-xs" value={c.trainFlavor ?? ''} onChange={(e) => p.onChange({ trainFlavor: e.target.value || undefined })}>
+                <option value="">This server&apos;s GPU (free)</option>
+                {hardware.map((h) => (
+                  <option key={h.name} value={h.name}>
+                    Hugging Face · {h.label} · ${h.usdPerHour.toFixed(2)}/h
+                  </option>
+                ))}
+              </select>
+              {c.trainFlavor && (
+                <label className="flex items-center gap-2 text-xs text-slate-300">
+                  Start only when it costs at most $
+                  <input className="input w-20 py-1 text-xs" type="number" min={0} step={0.5} value={c.trainMaxUsd ?? ''} onChange={(e) => p.onChange({ trainMaxUsd: e.target.value ? Number(e.target.value) : undefined })} />
+                </label>
+              )}
+              {hardware.length === 0 && <span className="text-xs text-slate-500">Connect Hugging Face in Settings to rent a bigger GPU.</span>}
+            </div>
+          )}
+          <label className="flex items-center gap-2 text-xs text-slate-300">
+            <input type="checkbox" checked={!!c.trainWait} onChange={(e) => p.onChange({ trainWait: e.target.checked || undefined })} /> Wait until it&apos;s ready (so the next blocks can use the
+            new model)
+          </label>
+          <p className="text-xs text-slate-500">Training waits for the GPU and runs in the background; follow, pause or cancel it in Lab → New model.</p>
         </div>
       );
     case 'evaluate':
@@ -1038,12 +1112,43 @@ function TrainSettings(p: Props) {
     case 'deploy':
       return (
         <label className="block space-y-1">
-          <Label>Canvases to update</Label>
+          <Label>Workflows to update</Label>
           <input className="input text-xs" placeholder="dnd-*" value={c.canvasPattern ?? ''} onChange={(e) => p.onChange({ canvasPattern: e.target.value || undefined })} />
-          <span className="text-xs text-slate-500">Canvas ids: <code>dnd-*</code> means every canvas whose id starts with dnd-; or ids separated by commas. Their AI model blocks get the model above.</span>
+          <span className="text-xs text-slate-500">Workflow ids: <code>dnd-*</code> means every workflow whose id starts with dnd-; or ids separated by commas. Their AI model blocks get the model above.</span>
         </label>
       );
     default:
       return null;
   }
+}
+
+/** Generate examples for a decision model: the question it learns, its kind and its options. */
+function TeachQuestion(p: Props) {
+  const q = p.config.questions?.[0] ?? { name: 'answer', type: 'choice' as const, instructions: '' };
+  const set = (patch: Partial<typeof q>) => p.onChange({ questions: [{ ...q, ...patch }] });
+  const lines = q.type === 'score' ? (q.levels ?? []).join('\n') : (q.options ?? []).map((o) => (o.description ? `${o.name}: ${o.description}` : o.name)).join('\n');
+  const parse = (text: string) => {
+    const rows = text.split('\n').map((l) => l.trim()).filter(Boolean);
+    if (q.type === 'score') return set({ levels: rows });
+    set({ options: rows.map((l) => (l.includes(':') ? { name: l.slice(0, l.indexOf(':')).trim(), description: l.slice(l.indexOf(':') + 1).trim() } : { name: l })) });
+  };
+  return (
+    <div className="space-y-1.5 rounded-md border border-[#30363d] p-2">
+      <input className="input text-xs" placeholder="The question, e.g. How does the customer feel?" value={q.instructions} onChange={(e) => set({ instructions: e.target.value })} />
+      <select className="input text-xs" value={q.type} onChange={(e) => set({ type: e.target.value as typeof q.type })}>
+        <option value="choice">Choice — one of the options</option>
+        <option value="noul">Yes / no</option>
+        <option value="score">Score — levels low → high</option>
+      </select>
+      {q.type !== 'noul' && (
+        <textarea
+          className="input min-h-16 text-xs"
+          placeholder={q.type === 'score' ? 'One level per line, lowest first' : 'One option per line: key: description'}
+          defaultValue={lines}
+          onBlur={(e) => parse(e.target.value)}
+        />
+      )}
+      <span className="text-xs text-slate-500">The dataset gets this question; the teacher writes texts and their right answers.</span>
+    </div>
+  );
 }

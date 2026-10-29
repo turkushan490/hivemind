@@ -20,7 +20,7 @@ interface Me {
   role: 'admin' | 'user' | 'viewer';
 }
 
-const TABS = { use: 'Use', canvas: 'Canvas', files: 'Files', run: 'Quick council', stats: 'Stats', lab: 'Lab', settings: 'Settings', problems: 'Problems' } as const;
+const TABS = { use: 'Use', canvas: 'Workflow', files: 'Files', run: 'Quick council', stats: 'Stats', lab: 'Lab', settings: 'Settings', problems: 'Problems' } as const;
 type Tab = keyof typeof TABS;
 /** Viewers only use canvases. */
 const VIEWER_TABS: Tab[] = ['use', 'settings', 'problems'];

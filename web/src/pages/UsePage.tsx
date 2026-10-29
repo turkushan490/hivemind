@@ -80,14 +80,14 @@ export function UsePage({ active, viewer, onProblem, onBuild }: { active: boolea
   if (canvases.length === 0)
     return (
       <div className="card mx-auto mt-10 max-w-lg space-y-3 text-center">
-        <h2 className="text-lg font-semibold">No canvases yet</h2>
+        <h2 className="text-lg font-semibold">No workflows yet</h2>
         {viewer ? (
-          <p className="text-sm text-slate-400">Nothing is shared with you yet. Ask someone to press “Share” on a canvas — it shows up here.</p>
+          <p className="text-sm text-slate-400">Nothing is shared with you yet. Ask someone to press “Share” on a workflow — it shows up here.</p>
         ) : (
           <>
-            <p className="text-sm text-slate-400">Build one on the Canvas (or let the ✨ Builder do it) and save it — it shows up here as an app.</p>
+            <p className="text-sm text-slate-400">Build one on the Workflow (or let the ✨ Builder do it) and save it — it shows up here as an app.</p>
             <button className="btn" onClick={onBuild}>
-              Open the Canvas
+              Open the Workflow
             </button>
           </>
         )}

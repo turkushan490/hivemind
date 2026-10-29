@@ -21,7 +21,7 @@ export function BuilderSettings({ active, onWizard }: { active: boolean; onWizar
     <div className="card max-w-2xl space-y-3">
       <h2 className="font-semibold">Builder AI</h2>
       <p className="text-sm text-slate-400">
-        The Builder (✨ on the Canvas) turns what you ask into a canvas. It writes a small plan, so mid-size models (4–9B local, or a cloud model)
+        The Builder (✨ on the Workflow) turns what you ask into a workflow. It writes a small plan, so mid-size models (4–9B local, or a cloud model)
         work best. Now: <span className="text-slate-200">{model?.model ?? 'not chosen'}</span>
       </p>
       <BuilderModelChooser
@@ -205,7 +205,7 @@ export function OpenAIApiSettings({ active, onTokens }: { active: boolean; onTok
     fetch('/v1/models')
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
       .then((d) => setModels(d.data))
-      .catch((err) => toast(`Could not list the canvases: ${(err as Error).message}`));
+      .catch((err) => toast(`Could not list the workflows: ${(err as Error).message}`));
   }, [active]);
   const base = `${location.origin}/v1`;
   const model = models[0]?.id ?? '<canvas id>';
@@ -225,7 +225,7 @@ print(reply.choices[0].message.content)`;
     <div className="card max-w-2xl space-y-3">
       <h2 className="font-semibold">OpenAI-compatible API</h2>
       <p className="text-sm text-slate-400">
-        Every saved canvas works as a “model” for apps that speak the OpenAI API (Home Assistant, Open WebUI, scripts). The last user message is the
+        Every saved workflow works as a “model” for apps that speak the OpenAI API (Home Assistant, Open WebUI, scripts). The last user message is the
         question, the Final answer is the reply. Streaming works too. Log in with an{' '}
         <button className="text-indigo-400 hover:underline" onClick={onTokens}>
           API token
@@ -237,8 +237,8 @@ print(reply.choices[0].message.content)`;
         <CopyBlock text={base} />
       </div>
       <div className="space-y-1">
-        <div className="text-xs font-semibold text-slate-300">Your canvases (model ids)</div>
-        {models.length === 0 && <p className="text-sm text-slate-500">No saved canvases yet.</p>}
+        <div className="text-xs font-semibold text-slate-300">Your workflows (model ids)</div>
+        {models.length === 0 && <p className="text-sm text-slate-500">No saved workflows yet.</p>}
         {models.map((m) => (
           <div key={m.id} className="flex items-center gap-2 border-t border-[#30363d] pt-1 text-sm">
             <span className="font-medium">{m.name}</span>
@@ -453,7 +453,7 @@ function CanvasRouterCard({ active }: { active: boolean }) {
     <div className="card max-w-2xl space-y-2">
       <h2 className="font-semibold">Canvas router ⚡ (optional)</h2>
       <p className="text-sm text-slate-400">
-        A decision model reads each spoken question and picks the canvas it belongs to (by name and description), in about 0.1 s. Works for the mic in Use mode and for
+        A decision model reads each spoken question and picks the workflow it belongs to (by name and description), in about 0.1 s. Works for the mic in Use mode and for
         Home Assistant: use the model <code>auto</code> in the OpenAI-compatible API.
       </p>
       {decisions.length === 0 ? (

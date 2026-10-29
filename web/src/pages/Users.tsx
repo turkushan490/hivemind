@@ -12,7 +12,7 @@ interface UserRow {
 
 const ROLE_INFO: Record<Role, string> = {
   admin: 'Everything, including users and shared settings',
-  user: 'Builds and runs their own canvases, adds their own AI keys',
+  user: 'Builds and runs their own workflows, adds their own AI keys',
   viewer: 'Only uses shared canvases (Use mode, voice, API tokens)',
 };
 
@@ -81,7 +81,7 @@ export function Users({ meId, active }: { meId: string; active: boolean }) {
             <button
               className="btn-ghost text-xs text-red-400"
               onClick={async () => {
-                if (!confirm(`Remove ${u.username}? Their canvases, runs and tokens are deleted too.`)) return;
+                if (!confirm(`Remove ${u.username}? Their workflows, runs and tokens are deleted too.`)) return;
                 await api(`/api/users/${u.id}`, { method: 'DELETE' });
                 load();
               }}

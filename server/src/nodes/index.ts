@@ -1,4 +1,4 @@
-import { AUTO_TIER_TEXT, AUTO_TIERS, JUDGE_SYSTEM, REVIEW_SYSTEM, type AutoTier, type CanvasNode, type DecisionEvent, type NodeConfig, type ModelRef, type NodeType, type OutputFile, type SearchSource } from '@hivemind/shared';
+import { AUTO_TIER_TEXT, AUTO_TIERS, JUDGE_SYSTEM, REVIEW_SYSTEM, type AutoTier, type CanvasNode, type DecisionEvent, type DecisionSpec, type NodeConfig, type ModelRef, type NodeType, type OutputFile, type SearchSource } from '@hivemind/shared';
 import type { DecisionRequest, DecisionResult } from '../providers/decisions.js';
 import type { ChatMessage } from '../providers/types.js';
 import { DECIDE_NODE, DEFAULT_THRESHOLD, toView } from './decide.js';
@@ -32,11 +32,23 @@ export interface NodeServices {
   training?: {
     addExamples(
       dataset: string,
-      items: { input?: string; output?: string; system?: string; ref?: string }[],
-      opts: { review?: boolean; source: 'generated' | 'block' },
-    ): { name: string; added: number; items: number; pending: number };
+      items: { input?: string; output?: string; system?: string; ref?: string; files?: string[] }[],
+      opts: { review?: boolean; source: 'generated' | 'block'; kind?: 'text' | 'decision' | 'image'; question?: DecisionSpec },
+    ): { name: string; added: number; items: number; pending: number; kind: string };
     sample(dataset: string, n: number): { input: string; output: string; system: string | null }[];
-    startTrain(opts: { dataset: string; base: string; name: string; target?: string; epochs?: number }): Promise<{ id: string; name: string; rows: number; state: string }>;
+    startTrain(opts: {
+      dataset: string;
+      base: string;
+      name: string;
+      target?: string;
+      epochs?: number;
+      steps?: number;
+      trigger?: string;
+      flavor?: string;
+      maxUsd?: number;
+    }): Promise<{ id: string; name: string; rows: number; state: string; kind?: string; backend?: string; estimateUsd?: number }>;
+    /** Waits until a job is done, failed or cancelled; progress notes go to onProgress. */
+    waitTrain(id: string, signal: AbortSignal, onProgress: (note: string) => void): Promise<{ state: string; error?: string; lora?: string }>;
     deploy(pattern: string, model: ModelRef): { canvases: number; blocks: number };
   };
   /** Reads a file from the files folder (images for box questions). */

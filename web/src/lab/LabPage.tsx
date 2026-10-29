@@ -58,11 +58,12 @@ interface Score {
 }
 
 const ERROR_LABEL: Record<string, string> = { json: 'invalid JSON', roll: 'missing roll', resource: 'resource', number: 'invented number', contradiction: 'contradiction' };
-const TABS = { sim: 'Simulator', data: 'Datasets', score: 'Scoreboard', train: 'New model' } as const;
+// Training is for any model; the simulator and scoreboard are the DungeonMind (D&D) part.
+const TABS = { train: 'New model', data: 'Datasets', sim: 'D&D simulator', score: 'D&D scoreboard' } as const;
 type LabTab = keyof typeof TABS;
 
 export function LabPage({ active }: { active: boolean }) {
-  const [tab, setTab] = useStored<LabTab>('lab.tab', 'sim');
+  const [tab, setTab] = useStored<LabTab>('lab.tab', 'train');
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
   useEffect(() => {
@@ -74,7 +75,7 @@ export function LabPage({ active }: { active: boolean }) {
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-3">
         <h2 className="text-lg font-semibold">
-          Training Lab <span className="text-sm font-normal text-slate-400">· DungeonMind</span>
+          Training Lab <span className="text-sm font-normal text-slate-400">· make your own AI models</span>
         </h2>
         <nav className="flex gap-1 rounded-lg bg-[#161b22] p-0.5">
           {(Object.keys(TABS) as LabTab[]).map((t) => (
@@ -89,7 +90,7 @@ export function LabPage({ active }: { active: boolean }) {
       </div>
       <div hidden={tab !== 'data'}>{tab === 'data' && <Datasets />}</div>
       <div hidden={tab !== 'score'}>{tab === 'score' && <Scoreboard />}</div>
-      <div hidden={tab !== 'train'}>{tab === 'train' && <NewModel active={active} providers={providers} />}</div>
+      <div hidden={tab !== 'train'}>{tab === 'train' && <NewModel active={active} providers={providers} onDatasets={() => setTab('data')} />}</div>
     </div>
   );
 }
@@ -300,8 +301,8 @@ function Datasets() {
       <DatasetsPanel />
       <div className="card flex flex-wrap items-center gap-3">
         <div>
-          <h3 className="font-semibold">Dataset</h3>
-          <p className="text-xs text-slate-400">JSONL in chat format (system, user, assistant) for fine-tuning: clean turns plus accepted corrections.</p>
+          <h3 className="font-semibold">DungeonMind turns (D&amp;D simulator)</h3>
+          <p className="text-xs text-slate-400">Only for the D&amp;D simulator: its clean turns plus accepted corrections, as JSONL. They also fill the &quot;DungeonMind DM&quot; dataset above.</p>
         </div>
         <a className="btn ml-auto" href="/api/lab/export.jsonl" download>
           Export JSONL
@@ -309,7 +310,7 @@ function Datasets() {
       </div>
       <div className="card space-y-3">
         <h3 className="font-semibold">
-          Review queue <span className="text-sm font-normal text-slate-400">· {queue.length} bad turn{queue.length === 1 ? '' : 's'}</span>
+          D&amp;D review queue <span className="text-sm font-normal text-slate-400">· {queue.length} bad turn{queue.length === 1 ? '' : 's'}</span>
         </h3>
         {queue.length === 0 && <p className="text-sm text-slate-400">Nothing to review.</p>}
         {queue.map((t) => (

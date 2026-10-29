@@ -8,19 +8,20 @@ const M = { providerId: 'p', model: 'teacher' };
 
 /** A fake of the run's training services, recording what the blocks asked for. */
 function fakeTraining() {
-  const added: { dataset: string; items: { input?: string; output?: string }[]; review?: boolean }[] = [];
+  const added: { dataset: string; items: { input?: string; output?: string; files?: string[] }[]; review?: boolean; kind?: string }[] = [];
   const started: unknown[] = [];
   const deployed: unknown[] = [];
   const training: NonNullable<NodeServices['training']> = {
     addExamples: (dataset, items, opts) => {
-      added.push({ dataset, items, review: opts.review });
-      return { name: dataset, added: items.length, items: items.length, pending: opts.review ? items.length : 0 };
+      added.push({ dataset, items, review: opts.review, kind: opts.kind });
+      return { name: dataset, added: items.length, items: items.length, pending: opts.review ? items.length : 0, kind: opts.kind ?? 'text' };
     },
     sample: () => [
       { input: 'Capital of France?', output: 'Paris', system: null },
       { input: '2+2?', output: '4', system: null },
     ],
     startTrain: async (opts) => (started.push(opts), { id: 'job1', name: opts.name, rows: 42, state: 'waiting' }),
+    waitTrain: async (_id, _signal, onProgress) => (onProgress('training · step 3/10'), { state: 'done' }),
     deploy: (pattern, model) => (deployed.push({ pattern, model }), { canvases: 2, blocks: 5 }),
   };
   return { training, added, started, deployed };
@@ -48,7 +49,28 @@ describe('training blocks', () => {
   it('Add to dataset: the question is the input, the answer wired in the output', async () => {
     const f = fakeTraining();
     await run(chain(node('i', 'input'), node('l', 'llm', { model: M }), node('d', 'dataset', { dataset: 'Good', review: true }), node('o', 'output')), fakeProvider(() => 'Hi there!'), f.training);
-    expect(f.added[0]).toEqual({ dataset: 'Good', items: [{ input: 'Hello?', output: 'Hi there!' }], review: true });
+    expect(f.added[0]).toEqual({ dataset: 'Good', items: [{ input: 'Hello?', output: 'Hi there!' }], review: true, kind: undefined });
+  });
+
+  it('Add to dataset: pictures from an Image block become a picture dataset, captioned with their prompt', async () => {
+    const f = fakeTraining();
+    const picture = ['![image](hm-file:outputs/a.png)', '![image](hm-file:outputs/b.png)', '', 'Prompt: grim man, portrait, studio light'].join('\n');
+    await run(chain(node('i', 'input'), node('l', 'llm', { model: M }), node('d', 'dataset', { dataset: 'Faces' }), node('o', 'output')), fakeProvider(() => picture), f.training);
+    expect(f.added[0]).toMatchObject({
+      kind: 'image',
+      items: [
+        { output: 'grim man, portrait, studio light', files: ['outputs/a.png'] },
+        { output: 'grim man, portrait, studio light', files: ['outputs/b.png'] },
+      ],
+    });
+  });
+
+  it('Train: with "wait" the run waits until the model is ready; picture and cloud settings are passed on', async () => {
+    const f = fakeTraining();
+    const cfg = { dataset: 'Faces', trainBase: 'sdxl/juggernaut.safetensors', trainName: 'face:v1', trainSteps: 800, trainTrigger: 'grim man', trainWait: true };
+    const { result } = await run(chain(node('i', 'input'), node('t', 'train', cfg), node('o', 'output')), fakeProvider(), f.training);
+    expect(f.started[0]).toMatchObject({ base: 'sdxl/juggernaut.safetensors', steps: 800, trigger: 'grim man' });
+    expect(result.final).toContain('face:v1 is ready');
   });
 
   it('Train: queues a job and the run goes on', async () => {

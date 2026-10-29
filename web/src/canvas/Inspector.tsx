@@ -72,7 +72,7 @@ export function Inspector(props: {
         ) : (
           <div className="space-y-2 text-slate-400">
             <p className="font-semibold text-slate-200">How it works</p>
-            <p>Drag blocks from the left onto the canvas, then pull a wire from the dot on the right of one block to the left of another.</p>
+            <p>Drag blocks from the left onto the workflow, then pull a wire from the dot on the right of one block to the left of another.</p>
             <p>Click a block to pick its model and settings. Select a block or wire and press Delete to remove it.</p>
             <p>Type a question at the top and press Run: you see every model work live.</p>
           </div>

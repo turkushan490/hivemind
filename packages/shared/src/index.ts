@@ -66,11 +66,24 @@ export interface NodeConfig {
   dataset?: string;
   /** Add to dataset: new examples wait in the review queue instead of being trained on right away. */
   review?: boolean;
-  /** Train: the base model (Hugging Face repo), the new model's name, the Ollama provider it goes to, rounds over the data. */
+  /** Add to dataset: the kind of dataset made when it doesn't exist yet (pictures wired in make an image dataset). */
+  datasetKind?: 'text' | 'decision' | 'image';
+  /**
+   * Train: the base model (a Hugging Face repo; for a picture dataset a ComfyUI checkpoint), the new model's name, the
+   * provider it goes to (Ollama; ComfyUI for pictures), rounds over the data.
+   */
   trainBase?: string;
   trainName?: string;
   trainTarget?: string;
   epochs?: number;
+  /** Train, image LoRAs: training steps and the trigger word. */
+  trainSteps?: number;
+  trainTrigger?: string;
+  /** Train on Hugging Face Jobs on this machine (e.g. "l4x1"), only when the estimate is at most trainMaxUsd dollars. */
+  trainFlavor?: string;
+  trainMaxUsd?: number;
+  /** Train: wait until the model is ready (so blocks after it can use it), instead of going on right away. */
+  trainWait?: boolean;
   /** Deploy: which of your canvases get the model in their AI model blocks ("dnd-*", or ids separated by commas). */
   canvasPattern?: string;
   /** Memory: what to remember under (may use {{vars.name}}, e.g. "dnd:{{vars.tableId}}"), recall or save, how many to recall. */

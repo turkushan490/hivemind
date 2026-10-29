@@ -52,7 +52,7 @@ export function Tokens() {
       </div>
       <label className="flex items-center gap-2 text-sm text-slate-300">
         <input type="checkbox" checked={limit} onChange={(e) => setLimit(e.target.checked)} />
-        Limit to some canvases and memory (e.g. for DungeonMind)
+        Limit to some workflows and memory (e.g. for DungeonMind)
       </label>
       {limit && (
         <div className="hm-pop grid gap-2 sm:grid-cols-2">
@@ -65,7 +65,7 @@ export function Tokens() {
             <input className="input text-xs" placeholder="dnd:* rules:*" value={memory} onChange={(e) => setMemory(e.target.value)} />
           </label>
           <p className="text-xs text-slate-500 sm:col-span-2">
-            Comma or space separated; a <code>*</code> at the end matches the start. The token can then only install, run and read those canvases and use those memory keys — nothing else in HiveMind.
+            Comma or space separated; a <code>*</code> at the end matches the start. The token can then only install, run and read those workflows and use those memory keys — nothing else in HiveMind.
           </p>
         </div>
       )}
@@ -79,7 +79,7 @@ export function Tokens() {
           <span className="font-medium">{t.name}</span>
           <code className="text-slate-500">{t.prefix}…</code>
           {t.scope && (
-            <span className="truncate rounded bg-indigo-950/60 px-1.5 py-0.5 text-xs text-indigo-200" title={`Canvases: ${t.scope.canvases.join(', ') || 'none'} · Memory: ${t.scope.memory.join(', ') || 'none'}`}>
+            <span className="truncate rounded bg-indigo-950/60 px-1.5 py-0.5 text-xs text-indigo-200" title={`Workflows: ${t.scope.canvases.join(', ') || 'none'} · Memory: ${t.scope.memory.join(', ') || 'none'}`}>
               limited: {t.scope.canvases.join(' ') || 'no canvases'} · {t.scope.memory.join(' ') || 'no memory'}
             </span>
           )}

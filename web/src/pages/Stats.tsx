@@ -135,7 +135,7 @@ function Report({ r }: { r: StatsReport }) {
         <h3 className="font-semibold">Leaderboard</h3>
         <p className="text-xs text-slate-400">How often a model’s answer was picked as the best by a Judge (it names the best answer) or won a Vote.</p>
         {r.leaderboard.length === 0 ? (
-          <p className="text-sm text-slate-500">No Judge or Vote picks yet — run a canvas with a Judge or Vote block and two or more answers.</p>
+          <p className="text-sm text-slate-500">No Judge or Vote picks yet — run a workflow with a Judge or Vote block and two or more answers.</p>
         ) : (
           <table className="w-full text-sm">
             <thead className="text-left text-xs text-slate-500">

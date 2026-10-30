@@ -447,11 +447,11 @@ function CanvasRouterCard({ active }: { active: boolean }) {
   const save = async (canvasRouter: ModelRef | null) => {
     const p = await api<{ canvasRouter?: ModelRef }>('/api/me/prefs', { method: 'PUT', body: { canvasRouter } });
     setPref(p.canvasRouter);
-    toast(p.canvasRouter ? 'Spoken questions now go to the canvas Jev picks' : 'Canvas router off', 'ok');
+    toast(p.canvasRouter ? 'Spoken questions now go to the workflow Jev picks' : 'Workflow router off', 'ok');
   };
   return (
     <div className="card max-w-2xl space-y-2">
-      <h2 className="font-semibold">Canvas router ⚡ (optional)</h2>
+      <h2 className="font-semibold">Workflow router ⚡ (optional)</h2>
       <p className="text-sm text-slate-400">
         A decision model reads each spoken question and picks the workflow it belongs to (by name and description), in about 0.1 s. Works for the mic in Use mode and for
         Home Assistant: use the model <code>auto</code> in the OpenAI-compatible API.

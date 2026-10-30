@@ -57,7 +57,7 @@ export function Tokens() {
       {limit && (
         <div className="hm-pop grid gap-2 sm:grid-cols-2">
           <label className="space-y-1">
-            <span className="text-xs text-slate-400">Canvas ids</span>
+            <span className="text-xs text-slate-400">Workflow ids</span>
             <input className="input text-xs" placeholder="dnd-*" value={canvases} onChange={(e) => setCanvases(e.target.value)} />
           </label>
           <label className="space-y-1">

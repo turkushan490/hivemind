@@ -310,7 +310,7 @@ export function NewModel({ active, providers, onDatasets }: { active: boolean; p
               <span className="text-amber-300">
                 {' '}
                 — at least {info.minRows} needed; a few hundred is better. Add them in Datasets: upload a file, 👍 good answers, or let a workflow write them (Train
-                templates in Canvas).
+                templates in Workflow).
               </span>
             )}
           </div>

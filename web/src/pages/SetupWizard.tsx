@@ -57,7 +57,7 @@ export function SetupWizard({ onDone, onOpen }: { onDone: () => void; onOpen: (t
               </p>
               <ul className="list-disc space-y-1 pl-5 text-sm text-slate-400">
                 <li>
-                  <b className="text-slate-200">Canvas</b>: wire AI blocks together, or let the <b className="text-slate-200">Builder</b> do it from a sentence.
+                  <b className="text-slate-200">Workflow</b>: wire AI blocks together, or let the <b className="text-slate-200">Builder</b> do it from a sentence.
                 </li>
                 <li>
                   <b className="text-slate-200">Use</b>: the simple screen — pick a canvas, ask, get the answer.

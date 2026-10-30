@@ -14,5 +14,7 @@ services:
       # - SECRET_KEY=change-me
       # Set to true when served over HTTPS (e.g. behind Nginx Proxy Manager).
       - SECURE_COOKIES=false
+      # Your time zone: workflow schedules and the training window (Settings → Training) use local time.
+      - TZ=Etc/UTC
     extra_hosts:
       - "host.docker.internal:host-gateway"

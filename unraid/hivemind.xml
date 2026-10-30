@@ -31,6 +31,13 @@ One container, everything in /data (SQLite). Open the WebUI and create the admin
   <Beta>true</Beta>
   <License>AGPL-3.0</License>
   <Changes>
+### Milestone 9
+- Training Lab made simple: New model in three steps (your data, a brain, start), the start button says what blocks it, delete jobs (and their models)
+- Training window (Settings → Training, default 03:00–08:00): nightly jobs wait for it and pause when it closes
+- Schedule workflows to run by themselves at a time of day (uses the container's TZ, which Unraid sets for you)
+- Live training progress (loss per step, log, a try-out answer); Train block can wait for enough new examples
+- API for DungeonMind: limited tokens that may train on their own datasets, per-run model override, the exact messages each block sent
+- The D&amp;D simulator and scoreboard moved to DungeonMind
 ### Milestone 7
 - Decision models: TypeSafe Jev, Ollama Nimble/Tev1/Clef, OpenAI Decisions; Decide block with live probability bars, Auto (Jev router) model, Router decides with Jev, Jev scoring in Judge/Vote
 - Training Lab for DungeonMind: simulator, rules-checker, review queue, JSONL export, scoreboard

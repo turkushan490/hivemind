@@ -36,6 +36,16 @@ describe('JSON mode', () => {
     expect(events.find((e) => e.type === 'error')?.error).toBe('Invalid JSON after repair');
   });
 
+  it('asks once without JSON mode when the model loops in it', async () => {
+    const p = fakeProvider((req) => {
+      if (req.json) throw new Error('Ollama: prediction aborted, token repeat limit reached');
+      return '{"a":3}';
+    });
+    const { result } = await run(chain(node('i', 'input'), node('l', 'llm', { model: M, json: true })), p);
+    expect(result.final).toBe('{"a":3}');
+    expect(p.calls.map((c) => !!c.json)).toEqual([true, false]);
+  });
+
   it('parses plain and fenced text', () => {
     expect(parseJson(' {"x":[1]} ')).toEqual({ x: [1] });
     expect(parseJson('Here:\n```\n{"y":true}\n```')).toEqual({ y: true });

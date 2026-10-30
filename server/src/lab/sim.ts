@@ -98,7 +98,7 @@ export function simGraph(personas: Persona[], players: ModelRef, dm: ModelRef): 
       maxTokens: 160,
     },
   }));
-  const dmNode = { id: 'dm', type: 'llm' as const, label: 'dm', position: { x: 680, y: 200 }, config: { model: dm, system: DM_SYSTEM, prompt: DM_PROMPT, json: true, jsonSchema: DM_SCHEMA, numCtx: 16384, maxTokens: 4096 } };
+  const dmNode = { id: 'dm', type: 'llm' as const, label: 'dm', position: { x: 680, y: 200 }, config: { model: dm, system: DM_SYSTEM, prompt: DM_PROMPT, json: true, jsonSchema: DM_SCHEMA, numCtx: 8192, maxTokens: 4096 } };
   const out = { id: 'out', type: 'output' as const, label: 'Final answer', position: { x: 1000, y: 200 }, config: {} };
   return {
     nodes: [q, ...ps, dmNode, out],

@@ -136,7 +136,12 @@ export async function jsonCall(ctx: NodeContext, messages: ChatMessage[], model?
   const sys = messages.findIndex((m) => m.role === 'system');
   const asked: ChatMessage[] =
     sys >= 0 ? messages.map((m, i) => (i === sys ? { ...m, content: `${m.content}\n\n${rule}` } : m)) : [{ role: 'system', content: rule }, ...messages];
-  const reply = await ctx.callModel(asked, model, { json: true });
+  // Some models loop on whitespace in Ollama's JSON mode until it stops them: then ask once without it.
+  const reply = await ctx.callModel(asked, model, { json: true }).catch((err: Error) => {
+    if (!/repeat limit/i.test(err.message)) throw err;
+    ctx.progress('The model looped in JSON mode — asking again without it');
+    return ctx.callModel(asked, model);
+  });
   try {
     return JSON.stringify(parseJson(reply));
   } catch (err) {

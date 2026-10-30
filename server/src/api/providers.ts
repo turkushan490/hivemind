@@ -112,11 +112,23 @@ const hostOf = (url: string) => {
     return url;
   }
 };
+const originOf = (url: string) => {
+  try {
+    return new URL(url).host;
+  } catch {
+    return url;
+  }
+};
 
 /** Gives back GPU memory on one machine: every enabled local AI server there except the one about to use it. */
 export function gpuFreerFor(user: User) {
   return async (hostKey: string, exceptProviderId?: string) => {
-    const rows = visibleRows(user).filter((r) => r.enabled && r.local && r.id !== exceptProviderId && hostOf(r.base_url) === hostKey);
+    // A provider on the same server (Ollama and its "decision models") shares that server's memory, which
+    // Ollama manages itself: unloading it would reload the model on every call.
+    const own = visibleRows(user).find((r) => r.id === exceptProviderId);
+    const rows = visibleRows(user).filter(
+      (r) => r.enabled && r.local && r.id !== exceptProviderId && hostOf(r.base_url) === hostKey && !(own && originOf(r.base_url) === originOf(own.base_url)),
+    );
     await Promise.allSettled(rows.map((r) => adapterFor(r).freeMemory?.()));
   };
 }

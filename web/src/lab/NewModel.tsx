@@ -51,6 +51,7 @@ export function NewModel({ active, providers, onDatasets }: { active: boolean; p
   const [checkpoint, setCheckpoint] = useStored<string>('lab.train.checkpoint', '');
   const [imageSteps, setImageSteps] = useState<number | ''>('');
   const [trigger, setTrigger] = useState('');
+  const [testRun, setTestRun] = useState(false);
   useEffect(() => {
     if (!active) return;
     api<{ models: ModelInfo[] }>('/api/models', { quiet: true })
@@ -132,7 +133,15 @@ export function NewModel({ active, providers, onDatasets }: { active: boolean; p
     setBusy(true);
     try {
       await api<TrainJob>('/api/lab/train', {
-        body: { base, name: shownName, providerId: targetId, epochs, ...(dataset && { datasetId: dataset.id }), ...(cloud && { flavor: cloud.name, confirmUsd }) },
+        body: {
+          base,
+          name: shownName,
+          providerId: targetId,
+          epochs,
+          ...(dataset && { datasetId: dataset.id }),
+          ...(cloud && { flavor: cloud.name, confirmUsd }),
+          ...(!enough && { allowSmall: true }),
+        },
       });
       toast(
         cloud ? `${shownName} is training on Hugging Face` : running ? `${shownName} is queued — it starts when the GPU is free` : `Making ${shownName} — local AI on this GPU pauses until it's done`,
@@ -172,6 +181,8 @@ export function NewModel({ active, providers, onDatasets }: { active: boolean; p
   const steps = Math.ceil(rows / 4) * epochs;
   const localEstimate = chosen ? steps * chosen.secPerStep + 600 : undefined;
   const enough = rows >= info.minRows;
+  // A test run with only a few examples: it checks that training works, the model learns next to nothing.
+  const canStart = enough || (testRun && rows >= 1 && !cloud);
   const image = dataset?.kind === 'image';
   const autoSteps = Math.max(300, Math.min(3000, rows * 100));
 
@@ -314,7 +325,13 @@ export function NewModel({ active, providers, onDatasets }: { active: boolean; p
               </span>
             )}
           </div>
-          {enough && !cloud && <div className="text-slate-400">About {dur(localEstimate)} on a Tesla T4 ({steps} steps), plus the download of the base model the first time.</div>}
+          {!enough && rows >= 1 && !cloud && (
+            <label className="mt-1 flex items-center gap-2 text-slate-300">
+              <input type="checkbox" checked={testRun} onChange={(e) => setTestRun(e.target.checked)} /> Test run anyway with {rows} example{rows === 1 ? '' : 's'} (to see that
+              training works; the model learns next to nothing)
+            </label>
+          )}
+          {canStart && !cloud && <div className="text-slate-400">About {dur(localEstimate)} on a Tesla T4 ({steps} steps), plus the download of the base model the first time.</div>}
           {enough && cloud && (
             <div className={estimate && 'error' in estimate ? 'text-red-300' : 'text-slate-300'}>
               {!estimate
@@ -339,7 +356,7 @@ export function NewModel({ active, providers, onDatasets }: { active: boolean; p
           {!info.hf.hasToken && <span className="text-[11px] text-slate-500">Connect Hugging Face (Settings → Hugging Face) to rent a bigger GPU for one job, or to publish models.</span>}
         </label>
 
-        <button className="btn w-full" disabled={busy || !enough || (!cloud && !info.trainer.ok) || (!!cloud && (!estimate || 'error' in estimate))} onClick={start}>
+        <button className="btn w-full" disabled={busy || !canStart || (!cloud && !info.trainer.ok) || (!!cloud && (!estimate || 'error' in estimate))} onClick={start}>
           {cloud ? `Train ${shownName} on Hugging Face` : running ? `Queue ${shownName}` : `Make ${shownName}`}
         </button>
         <p className="text-[11px] text-slate-500">While it trains, Ollama, ComfyUI and the Simulator on this GPU wait. Runs you start meanwhile are queued, not lost.</p>

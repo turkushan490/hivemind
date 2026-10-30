@@ -1,29 +1,34 @@
-import type { CanvasGraph, ModelRef } from '@hivemind/shared';
 import type { FastifyInstance } from 'fastify';
 import { db, setSetting } from '../db/index.js';
 import { logError } from '../errors.js';
-import { exportJsonl, scoreboard } from '../lab/data.js';
-import { migrateLabTurns, syncLabTurn } from '../lab/datasets.js';
-import { setCanvasModel } from '../lab/services.js';
-import { activeLab, recoverLab, startLab, type LabConfig } from '../lab/runner.js';
 import { hfHardware, hfSettings, saveHfSettings } from '../lab/hf.js';
-import { cancelTrain, cloudEstimate, installTrainerScripts, overview, pauseTrain, publishTrain, resumeTrain, resumeTrains, startBuiltinTrainer, startTrain, type TrainDeps } from '../lab/train.js';
-import { memoryFor } from '../services/memory.js';
+import {
+  cancelTrain,
+  cloudEstimate,
+  deleteTrain,
+  getTrain,
+  installTrainerScripts,
+  overview,
+  pauseTrain,
+  publishTrain,
+  resumeTrain,
+  resumeTrains,
+  startBuiltinTrainer,
+  startTrain,
+  trainFollower,
+  type TrainDeps,
+} from '../lab/train.js';
+import { saveWindow, trainingWindow } from '../lab/window.js';
 import { requireAdmin, requireUser, type User } from './auth.js';
-import { adapterFor, gpuFreerFor, resolverFor, trainDepsFor, visibleRows } from './providers.js';
+import { deleteLocalModel } from './library.js';
+import { trainDepsFor } from './providers.js';
 
-const isRef = (m: unknown): m is ModelRef => !!m && typeof (m as ModelRef).providerId === 'string' && typeof (m as ModelRef).model === 'string';
-
-/** The Lab (D&D only): simulated games, datasets, review queue, JSONL export and the scoreboard. */
+/**
+ * The Training Lab: make new models from datasets (local GPU, Hugging Face Jobs, ComfyUI LoRAs), follow them live,
+ * and the training window for nightly jobs. Simulating and scoring D&D games is DungeonMind's job, not HiveMind's.
+ */
 export function labRoutes(app: FastifyInstance) {
-  recoverLab();
-  try {
-    migrateLabTurns();
-  } catch (err) {
-    logError({ source: 'server', message: `Lab: moving Lab turns into the DungeonMind DM dataset failed: ${(err as Error).message}` });
-  }
-
-  // ---- New model (fine-tune on the Lab dataset; admin only, it takes the GPU for hours) ----
+  // ---- New model (fine-tune on a dataset; everyone but viewers, each controls their own jobs) ----
   const trainDeps = (user: User): TrainDeps => trainDepsFor(user);
   try {
     installTrainerScripts();
@@ -33,7 +38,15 @@ export function labRoutes(app: FastifyInstance) {
     logError({ source: 'server', message: `Lab: trainer setup failed: ${(err as Error).message}` });
   }
 
-  app.get('/api/lab/train', { preHandler: requireUser }, async (req) => overview(req.user!.id));
+  // A limited token sees only the jobs it started.
+  app.get('/api/lab/train', { preHandler: requireUser }, async (req) => overview(req.user!.id, req.user!.scope ? (req.user!.tokenId ?? '-') : undefined));
+
+  app.get('/api/lab/train/:id', { preHandler: requireUser }, async (req, reply) => getTrain((req.params as { id: string }).id, req.user!.id) ?? reply.code(404).send({ error: 'Job not found' }));
+
+  /** The training window: nightly jobs (and jobs started by a scheduled run) only train while it is open. */
+  app.get('/api/lab/window', { preHandler: requireUser }, async () => trainingWindow());
+
+  app.put('/api/settings/training', { preHandler: requireAdmin }, async (req) => saveWindow((req.body ?? {}) as { start?: unknown; end?: unknown }));
 
   app.put('/api/lab/train/settings', { preHandler: requireAdmin }, async (req, reply) => {
     const url = String((req.body as { url?: string } | undefined)?.url ?? '').trim();
@@ -54,6 +67,7 @@ export function labRoutes(app: FastifyInstance) {
       allowSmall?: boolean;
       flavor?: string;
       confirmUsd?: number;
+      nightly?: boolean;
     };
     return startTrain(
       req.user!.id,
@@ -67,6 +81,8 @@ export function labRoutes(app: FastifyInstance) {
         maxSteps: body.maxSteps,
         allowSmall: body.allowSmall,
         ...(body.flavor && { flavor: String(body.flavor), confirmUsd: body.confirmUsd === undefined ? undefined : Number(body.confirmUsd) }),
+        nightly: body.nightly === true,
+        tokenId: req.user!.tokenId,
       },
       trainDeps(req.user!),
     );
@@ -108,131 +124,40 @@ export function labRoutes(app: FastifyInstance) {
     resumeTrain((req.params as { id: string }).id, req.user!.id, trainDeps(req.user!)) ? { ok: true } : reply.code(409).send({ error: 'Only a paused job can be resumed' }),
   );
 
-  app.get('/api/lab', { preHandler: requireUser }, async (req) => {
-    const a = activeLab();
-    return {
-      active: a && a.ownerId === req.user!.id ? a.status : null,
-      runs: db
-        .prepare(
-          `SELECT r.id, r.name, r.status, r.error, r.started_at AS startedAt, r.stopped_at AS stoppedAt, r.config,
-             (SELECT COUNT(*) FROM lab_turns t WHERE t.run_id = r.id) AS turns,
-             (SELECT COUNT(*) FROM lab_turns t WHERE t.run_id = r.id AND t.review = 'pending') AS pending
-           FROM lab_runs r WHERE r.owner_id = ? ORDER BY r.started_at DESC LIMIT 50`,
-        )
-        .all(req.user!.id)
-        .map((r) => {
-          const { config, ...rest } = r as Record<string, unknown>;
-          return { ...rest, config: JSON.parse(String(config)) };
-        }),
-    };
+  /** Removes a finished, failed, cancelled or paused job (and its files); ?model=1 also deletes the model it made from its Ollama. */
+  app.delete('/api/lab/train/:id', { preHandler: requireUser }, async (req) => {
+    const q = req.query as { model?: string };
+    return deleteTrain((req.params as { id: string }).id, req.user!.id, {
+      deleteModel: q.model === '1' || q.model === 'true',
+      removeModel: (providerId, model) => deleteLocalModel(req.user!, providerId, model),
+    });
   });
 
-  app.post('/api/lab/start', { preHandler: requireUser }, async (req, reply) => {
-    const cfg = (req.body ?? {}) as LabConfig;
-    if (!Array.isArray(cfg.dm) || !cfg.dm.length || !cfg.dm.every(isRef)) return reply.code(400).send({ error: 'Pick at least one DM model' });
-    if (!isRef(cfg.players)) return reply.code(400).send({ error: 'Pick a model for the fake players' });
-    if (cfg.judge !== undefined && !isRef(cfg.judge)) return reply.code(400).send({ error: 'The judge must be a model' });
-    if (cfg.jev !== undefined && !isRef(cfg.jev)) return reply.code(400).send({ error: 'The fast checker must be a decision model' });
-    if (!cfg.judge && !cfg.jev) return reply.code(400).send({ error: 'Pick a rules-checker: a judge model, Jev, or both' });
-    try {
-      const run = startLab(req.user!.id, cfg, {
-        resolve: resolverFor(req.user!),
-        services: { memory: memoryFor(req.user!.id), freeGpu: gpuFreerFor(req.user!) },
-        record: {
-          usage: (u) =>
-            db
-              .prepare('INSERT INTO run_usage (run_id, owner_id, node_id, node_type, provider_id, model, input_tokens, output_tokens, cost, gen_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
-              .run(`lab:${run.id}`, req.user!.id, u.nodeId, u.nodeType, u.providerId, u.model, u.inputTokens, u.outputTokens, u.cost ?? null, u.genMs ?? null),
-          winner: () => {},
-        },
-      });
-      return run.status;
-    } catch (err) {
-      return reply.code(409).send({ error: (err as Error).message });
-    }
-  });
-
-  app.post('/api/lab/stop', { preHandler: requireUser }, async (req, reply) => {
-    const a = activeLab();
-    if (!a || !a.status.running || a.ownerId !== req.user!.id) return reply.code(404).send({ error: 'No simulation is running' });
-    a.stop();
-    await a.done;
-    return a.status;
-  });
-
-  /** Turns of a run, or the review queue (pending=1): the bad turns waiting for accept / edit / reject. */
-  app.get('/api/lab/turns', { preHandler: requireUser }, async (req) => {
-    const q = req.query as { runId?: string; pending?: string; limit?: string };
-    const where = ['r.owner_id = ?'];
-    const args: (string | number)[] = [req.user!.id];
-    if (q.runId) where.push('t.run_id = ?') && args.push(q.runId);
-    if (q.pending === '1') where.push("t.review = 'pending'");
-    args.push(Math.max(1, Math.min(500, Number(q.limit) || 100)));
-    return (
-      db
-        .prepare(`SELECT t.* FROM lab_turns t JOIN lab_runs r ON r.id = t.run_id WHERE ${where.join(' AND ')} ORDER BY t.id DESC LIMIT ?`)
-        .all(...args) as Record<string, any>[]
-    ).map((t) => ({
-      ...t,
-      json_valid: !!t.json_valid,
-      error_types: JSON.parse(t.error_types),
-      verdict: t.verdict ? JSON.parse(t.verdict) : null,
-      jev_verdict: t.jev_verdict ? JSON.parse(t.jev_verdict) : null,
-    }));
-  });
-
-  /** Review: accept (with the correction, edited or not) or reject a turn. */
-  app.patch('/api/lab/turns/:id', { preHandler: requireUser }, async (req, reply) => {
-    const id = Number((req.params as { id: string }).id);
-    const body = (req.body ?? {}) as { review?: string; corrected?: string };
-    const row = db.prepare('SELECT t.id, t.corrected FROM lab_turns t JOIN lab_runs r ON r.id = t.run_id WHERE t.id = ? AND r.owner_id = ?').get(id, req.user!.id) as
-      | { id: number; corrected: string | null }
-      | undefined;
-    if (!row) return reply.code(404).send({ error: 'Turn not found' });
-    if (body.review !== 'accepted' && body.review !== 'rejected') return reply.code(400).send({ error: 'review must be "accepted" or "rejected"' });
-    const corrected = body.corrected ?? row.corrected;
-    if (body.review === 'accepted') {
-      if (!corrected?.trim()) return reply.code(400).send({ error: 'Write the corrected turn before accepting it' });
-      try {
-        JSON.parse(corrected);
-      } catch (err) {
-        return reply.code(400).send({ error: `The corrected turn is not valid JSON: ${(err as Error).message}` });
+  /** Server-Sent Events: state, progress, loss per step, log lines and the sample answer, live; ends with "end". */
+  app.get('/api/lab/train/:id/events', { preHandler: requireUser }, (req, reply) => {
+    const follow = trainFollower((req.params as { id: string }).id, req.user!.id);
+    const first = follow();
+    if (!first) return reply.code(404).send({ error: 'Job not found' });
+    reply.hijack();
+    const res = reply.raw;
+    res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive', 'x-accel-buffering': 'no' });
+    let closed = false;
+    const send = (events: ReturnType<typeof follow>) => {
+      for (const ev of events ?? [{ event: 'end' as const, data: { state: 'cancelled' as const } }]) {
+        res.write(`event: ${ev.event}\ndata: ${JSON.stringify(ev.data)}\n\n`);
+        if (ev.event === 'end') return stop();
       }
+    };
+    const timer = setInterval(() => send(follow()), Math.min(1000, Number(process.env.TRAIN_POLL_MS) || 1000));
+    const ping = setInterval(() => res.write(': ping\n\n'), 15_000);
+    function stop() {
+      if (closed) return;
+      closed = true;
+      clearInterval(timer);
+      clearInterval(ping);
+      res.end();
     }
-    db.prepare('UPDATE lab_turns SET review = ?, corrected = ? WHERE id = ?').run(body.review, corrected ?? null, id);
-    syncLabTurn(req.user!.id, id);
-    return { ok: true };
-  });
-
-  app.get('/api/lab/export.jsonl', { preHandler: requireUser }, async (req, reply) => {
-    const runId = (req.query as { runId?: string }).runId;
-    reply.header('content-type', 'application/jsonl; charset=utf-8').header('content-disposition', `attachment; filename="dungeonmind-dm${runId ? `-${runId}` : ''}.jsonl"`);
-    return exportJsonl(req.user!.id, runId);
-  });
-
-  /** Per model and prompt version; VRAM from what the local AI servers report right now. */
-  app.get('/api/lab/scoreboard', { preHandler: requireUser }, async (req) => {
-    const rows = scoreboard(req.user!.id, (req.query as { runId?: string }).runId);
-    const loaded = new Map<string, number>();
-    await Promise.allSettled(
-      visibleRows(req.user!)
-        .filter((r) => r.enabled && r.local)
-        .map(async (r) => {
-          for (const m of (await adapterFor(r).loaded?.()) ?? []) loaded.set(`${r.id}|${m.model}`, m.vramBytes);
-        }),
-    );
-    return rows.map((r) => ({ ...r, ...(loaded.has(r.model) && { vramBytes: loaded.get(r.model) }) }));
-  });
-
-  /** "Set as DungeonMind default": the winning model goes into the AI model blocks of your dnd-* canvases. */
-  app.post('/api/lab/default', { preHandler: requireUser }, async (req, reply) => {
-    const model = (req.body as { model?: unknown } | undefined)?.model;
-    if (!isRef(model)) return reply.code(400).send({ error: 'Send the model' });
-    const { canvases, blocks } = setCanvasModel(req.user!.id, 'dnd-*', model);
-    if (!canvases) {
-      logError({ source: 'server', message: 'Lab: no dnd-* canvases to set the default model on (install them from DungeonMind first)', userId: req.user!.id });
-      return reply.code(404).send({ error: 'No DungeonMind canvases (dnd-*) yet: DungeonMind installs them on its first start' });
-    }
-    return { canvases, blocks };
+    req.raw.on('close', stop);
+    send(first);
   });
 }

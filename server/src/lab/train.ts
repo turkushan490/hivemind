@@ -1,7 +1,7 @@
 import type { TrainBase, TrainJob, TrainOverview, TrainState } from '@hivemind/shared';
 import { createHash } from 'node:crypto';
 import { spawn, type ChildProcess } from 'node:child_process';
-import { copyFileSync, createReadStream, existsSync, mkdirSync, openSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { appendFileSync, copyFileSync, createReadStream, existsSync, mkdirSync, openSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { Readable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
@@ -10,16 +10,15 @@ import { newId, randomToken } from '../crypto.js';
 import { db, getSetting } from '../db/index.js';
 import { withHostLock, type ResolvedProvider } from '../engine/run.js';
 import { logError } from '../errors.js';
-import { SFT_SYSTEM } from './data.js';
-import { DM_DATASET, ensureDataset, exportDataset, getDataset, migrateLabTurns, trainableCount } from './datasets.js';
+import { DM_DATASET, exportDataset, findDataset, getDataset, trainableCount } from './datasets.js';
 import { checkComfyDir, comfyDir, IMAGE_SEC_PER_STEP, runComfyJob, validCheckpoint, type ImageJobSettings } from './imageLora.js';
 import { estimateCloud, hfHardware, hfRun, hfSettings, modelCard, requireHfToken, spentToday } from './hf.js';
-import { activeLab } from './runner.js';
+import { trainingWindow } from './window.js';
 
 /**
  * "Make a new model": a LoRA fine-tune of a base model on the Lab dataset, done by the trainer (Unsloth) on the
- * same GPU, then imported into Ollama as a new model. HiveMind holds that GPU's lock for the whole job, so Ollama,
- * ComfyUI and the simulator wait ("Training — local AI paused").
+ * same GPU, then imported into Ollama as a new model. HiveMind holds that GPU's lock for the whole job, so Ollama
+ * and ComfyUI wait ("Training — local AI paused"). Nightly jobs wait for the training window (window.ts).
  *
  * The trainer is built into the HiveMind image: HiveMind copies its scripts into the Lab folder (/data/lab/trainer)
  * and runs it as a child process on localhost. TRAINER_URL can point at a trainer elsewhere instead; the token
@@ -37,11 +36,11 @@ const gpuFreeMb = () => Number(process.env.TRAIN_GPU_FREE_MB) || 1536;
 
 // Speeds are for a Tesla T4, which has no bfloat16: Qwen3.5 trains in float32 there (slow), Qwen3 in float16.
 export const BASES: TrainBase[] = [
-  { id: 'unsloth/Qwen3-8B', name: 'Qwen3 8B', note: 'Smartest that fits a 16 GB T4 (4-bit, text-only). Slow: hours for a few hundred examples.', secPerStep: 40 },
-  { id: 'unsloth/Qwen3.5-4B', name: 'Qwen3.5 4B', note: 'Newer and multilingual; fits a T4 in 4-bit, in float32 there, so slow.', secPerStep: 60 },
-  { id: 'unsloth/Qwen3.5-2B', name: 'Qwen3.5 2B', note: 'Fits a T4 comfortably; good balance for small tasks.', secPerStep: 15 },
-  { id: 'unsloth/Qwen3.5-0.8B', name: 'Qwen3.5 0.8B', note: 'Tiny: fast, for testing that training works end to end.', secPerStep: 6 },
-  { id: 'unsloth/Qwen3.5-9B', name: 'Qwen3.5 9B', note: "Doesn't fit a 16 GB T4 in float32: train it on Hugging Face (an L4 or A10G) instead.", secPerStep: 120 },
+  { id: 'unsloth/Qwen3-8B', name: 'Qwen3 8B', note: 'Smartest that fits a 16 GB T4 (4-bit, text-only). Slow: hours for a few hundred examples.', secPerStep: 40, vramGb: 14 },
+  { id: 'unsloth/Qwen3.5-4B', name: 'Qwen3.5 4B', note: 'Newer and multilingual; fits a T4 in 4-bit, in float32 there, so slow.', secPerStep: 60, vramGb: 12 },
+  { id: 'unsloth/Qwen3.5-2B', name: 'Qwen3.5 2B', note: 'Fits a T4 comfortably; good balance for small tasks.', secPerStep: 15, vramGb: 8 },
+  { id: 'unsloth/Qwen3.5-0.8B', name: 'Qwen3.5 0.8B', note: 'Tiny: fast, for testing that training works end to end.', secPerStep: 6, vramGb: 4 },
+  { id: 'unsloth/Qwen3.5-9B', name: 'Qwen3.5 9B', note: "Doesn't fit a 16 GB T4 in float32: train it on Hugging Face (an L4 or A10G) instead.", secPerStep: 120, vramGb: 22 },
 ];
 
 /** The trainer built into this HiveMind (started by startBuiltinTrainer), when there is one. */
@@ -136,10 +135,12 @@ interface TrainRow {
   finished_at: string | null;
   kind?: string;
   backend?: string;
+  dataset_id?: string | null;
+  token_id?: string | null;
 }
 
 const toJob = (r: TrainRow): TrainJob => {
-  const set = JSON.parse(r.settings || '{}') as { flavor?: string; estimateUsd?: number; jobUrl?: string; publishedUrl?: string; lora?: string };
+  const set = JSON.parse(r.settings || '{}') as { flavor?: string; estimateUsd?: number; jobUrl?: string; publishedUrl?: string; lora?: string; nightly?: boolean };
   return {
     ...baseJob(r),
     ...((r.kind === 'decision' || r.kind === 'image') && { kind: r.kind }),
@@ -149,6 +150,7 @@ const toJob = (r: TrainRow): TrainJob => {
     ...(set.estimateUsd !== undefined && { estimateUsd: set.estimateUsd }),
     ...(set.jobUrl && { jobUrl: set.jobUrl }),
     ...(set.publishedUrl && { publishedUrl: set.publishedUrl }),
+    ...(set.nightly && { nightly: true }),
   };
 };
 
@@ -171,10 +173,34 @@ const baseJob = (r: TrainRow): TrainJob => ({
   ...(r.finished_at && { finishedAt: r.finished_at }),
 });
 
-const update = (id: string, state: TrainState, progress?: Record<string, unknown>, error?: string) =>
-  db
-    .prepare(`UPDATE lab_trains SET state = ?, progress = COALESCE(?, progress), error = ?, finished_at = CASE WHEN ? THEN datetime('now') ELSE finished_at END WHERE id = ?`)
-    .run(state, progress ? JSON.stringify(progress) : null, error ?? null, ['done', 'error', 'cancelled', 'interrupted'].includes(state) ? 1 : 0, id);
+/** States a job never leaves. */
+export const FINAL_STATES: readonly TrainState[] = ['done', 'error', 'cancelled', 'interrupted'];
+
+const update = (id: string, state: TrainState, progress?: Record<string, unknown>, error?: string) => {
+  db.prepare(`UPDATE lab_trains SET state = ?, progress = COALESCE(?, progress), error = ?, finished_at = CASE WHEN ? THEN datetime('now') ELSE finished_at END WHERE id = ?`).run(
+    state,
+    progress ? JSON.stringify(progress) : null,
+    error ?? null,
+    FINAL_STATES.includes(state) ? 1 : 0,
+    id,
+  );
+  const note = typeof progress?.note === 'string' ? progress.note : undefined;
+  if (error) jobLog(id, `${state}: ${error}`);
+  else if (note && note !== lastNote.get(id)) jobLog(id, note);
+  if (note) lastNote.set(id, note);
+  if (FINAL_STATES.includes(state)) lastNote.delete(id);
+};
+
+/** HiveMind's own log lines of a job (waiting, GPU, Ollama import), next to the trainer's train.log. */
+const lastNote = new Map<string, string>();
+export const jobLogFile = (id: string) => join(TRAIN_DIR, id, 'hivemind.log');
+export const trainerLogFile = (id: string) => join(TRAIN_DIR, id, 'train.log');
+function jobLog(id: string, line: string) {
+  try {
+    mkdirSync(join(TRAIN_DIR, id), { recursive: true });
+    appendFileSync(jobLogFile(id), `${new Date().toISOString().slice(11, 19)} ${line.replace(/\s+/g, ' ').slice(0, 2000)}\n`);
+  } catch {}
+}
 
 /** "dungeonmind-dm:v1": lowercase, no spaces; the tag is optional. */
 export const validName = (name: string) => /^[a-z0-9][a-z0-9._-]{0,60}(:[a-z0-9][a-z0-9._-]{0,40})?$/.test(name);
@@ -192,22 +218,26 @@ const running = new Map<string, AbortController>();
 /** Jobs asked to pause; the run loop sends the pause to the trainer. */
 const pausing = new Set<string>();
 
-/** The dataset a job trains on: the one asked for, else the Lab's "DungeonMind DM" dataset. */
+/** The dataset a job trains on: the one asked for, else (older clients) the "DungeonMind DM" dataset when there is one. */
 function datasetFor(ownerId: string, datasetId?: string) {
-  if (datasetId) {
-    const ds = getDataset(ownerId, datasetId);
-    if (!ds) throw Object.assign(new Error('Dataset not found'), { statusCode: 404 });
-    return ds;
-  }
-  migrateLabTurns();
-  return ensureDataset(ownerId, DM_DATASET, 'text', SFT_SYSTEM);
+  const ds = datasetId ? getDataset(ownerId, datasetId) : findDataset(ownerId, DM_DATASET);
+  if (!ds) throw Object.assign(new Error(datasetId ? 'Dataset not found' : 'Pick the dataset to train on (datasetId)'), { statusCode: datasetId ? 404 : 400 });
+  return ds;
 }
 
+/** Examples ready in the "DungeonMind DM" dataset (0 without it); the page shows each dataset's own count. */
 export function overviewRows(ownerId: string): number {
-  return trainableCount(datasetFor(ownerId).id);
+  const ds = findDataset(ownerId, DM_DATASET);
+  return ds ? trainableCount(ds.id) : 0;
 }
 
-export async function overview(ownerId: string): Promise<TrainOverview> {
+/** One job of this owner (a limited token: only the ones it started). */
+export function getTrain(id: string, ownerId: string): TrainJob | undefined {
+  const r = db.prepare('SELECT * FROM lab_trains WHERE id = ? AND owner_id = ?').get(id, ownerId) as unknown as TrainRow | undefined;
+  return r && toJob(r);
+}
+
+export async function overview(ownerId: string, tokenId?: string): Promise<TrainOverview> {
   let t: TrainOverview['trainer'] = { url: trainerUrl(), ok: false };
   if (t.url) {
     try {
@@ -219,8 +249,12 @@ export async function overview(ownerId: string): Promise<TrainOverview> {
       t.error = builtin && !process.env.TRAINER_URL ? `The built-in trainer is starting or stopped (see lab/trainer/server.log): ${(err as Error).message}` : (err as Error).message;
     }
   } else t.error = 'Training needs the HiveMind image with the training stack and an NVIDIA GPU';
-  const jobs = (db.prepare('SELECT * FROM lab_trains WHERE owner_id = ? ORDER BY started_at DESC LIMIT 20').all(ownerId) as unknown as TrainRow[]).map(toJob);
-  return { trainer: t, rows: overviewRows(ownerId), minRows: MIN_ROWS, bases: BASES, jobs, hf: hfSettings(), images: { ready: !!comfyDir(), secPerStep: IMAGE_SEC_PER_STEP } };
+  const jobs = (
+    (tokenId
+      ? db.prepare('SELECT * FROM lab_trains WHERE owner_id = ? AND token_id = ? ORDER BY started_at DESC, rowid DESC LIMIT 20').all(ownerId, tokenId)
+      : db.prepare('SELECT * FROM lab_trains WHERE owner_id = ? ORDER BY started_at DESC, rowid DESC LIMIT 20').all(ownerId)) as unknown as TrainRow[]
+  ).map(toJob);
+  return { trainer: t, rows: overviewRows(ownerId), minRows: MIN_ROWS, bases: BASES, jobs, hf: hfSettings(), images: { ready: !!comfyDir(), secPerStep: IMAGE_SEC_PER_STEP }, window: trainingWindow() };
 }
 
 /** Time and price of training this dataset on a Hugging Face machine (shown before a cloud job starts). */
@@ -256,6 +290,10 @@ export async function startTrain(
     /** Image LoRAs: training steps and the trigger word put before every caption. */
     steps?: number;
     trigger?: string;
+    /** Wait as "queued" until the training window opens, and pause when it closes. */
+    nightly?: boolean;
+    /** The API token that started it (a limited token sees only its own jobs). */
+    tokenId?: string;
   },
   deps: TrainDeps,
 ): Promise<TrainJob> {
@@ -307,8 +345,11 @@ export async function startTrain(
     ...(opts.maxSteps && { maxSteps: Math.max(1, Math.min(100_000, opts.maxSteps)) }),
     quant: 'q4_k_m',
     ...(cloud && { flavor: cloud.flavor, estimateUsd: cloud.estimateUsd, hours: cloud.hours }),
+    ...(opts.nightly && { nightly: true }),
+    // The newest example in it: "new examples since the last training" counts from here (Train block, minNewExamples).
+    maxItemId: maxItemId(ds.id),
   };
-  db.prepare("INSERT INTO lab_trains (id, owner_id, base, name, provider_id, settings, rows, state, dataset_id, kind, backend) VALUES (?, ?, ?, ?, ?, ?, ?, 'waiting', ?, ?, ?)").run(
+  db.prepare("INSERT INTO lab_trains (id, owner_id, base, name, provider_id, settings, rows, state, dataset_id, kind, backend, token_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(
     id,
     ownerId,
     opts.base,
@@ -316,16 +357,23 @@ export async function startTrain(
     opts.providerId,
     JSON.stringify(settings),
     rows,
+    opts.nightly && !trainingWindow().open ? 'queued' : 'waiting',
     ds.id,
     ds.kind,
     cloud ? 'hf-jobs' : 'local',
+    opts.tokenId ?? null,
   );
+  jobLog(id, `Job for ${opts.name}: ${rows} examples from "${ds.name}", base ${opts.base}${cloud ? `, on Hugging Face ${cloud.flavor}` : ''}${opts.nightly ? ', in the training window' : ''}`);
   void run(id, ownerId, deps, 'new');
   return toJob(db.prepare('SELECT * FROM lab_trains WHERE id = ?').get(id) as unknown as TrainRow);
 }
 
 /** An image LoRA: base = a ComfyUI checkpoint, providerId = the ComfyUI that trains it (see imageLora.ts). */
-function startImageTrain(ownerId: string, opts: { base: string; name: string; providerId: string; datasetId: string; steps?: number; trigger?: string; allowSmall?: boolean }, deps: TrainDeps): TrainJob {
+function startImageTrain(
+  ownerId: string,
+  opts: { base: string; name: string; providerId: string; datasetId: string; steps?: number; trigger?: string; allowSmall?: boolean; nightly?: boolean; tokenId?: string },
+  deps: TrainDeps,
+): TrainJob {
   checkComfyDir();
   if (!validCheckpoint(opts.base)) throw Object.assign(new Error('Pick the ComfyUI checkpoint to train on (an SDXL one works best on a 16 GB GPU)'), { statusCode: 400 });
   if (!validName(opts.name)) throw Object.assign(new Error('Name the LoRA like my-style:v1 (lowercase letters, digits, . _ -)'), { statusCode: 400 });
@@ -344,15 +392,17 @@ function startImageTrain(ownerId: string, opts: { base: string; name: string; pr
     ...(opts.trigger?.trim() && { trigger: opts.trigger.trim().slice(0, 60) }),
   };
   const id = newId().replace(/[^A-Za-z0-9_-]/g, '');
-  db.prepare("INSERT INTO lab_trains (id, owner_id, base, name, provider_id, settings, rows, state, dataset_id, kind, backend) VALUES (?, ?, ?, ?, ?, ?, ?, 'waiting', ?, 'image', 'comfyui')").run(
+  db.prepare("INSERT INTO lab_trains (id, owner_id, base, name, provider_id, settings, rows, state, dataset_id, kind, backend, token_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'image', 'comfyui', ?)").run(
     id,
     ownerId,
     opts.base,
     opts.name,
     opts.providerId,
-    JSON.stringify(settings),
+    JSON.stringify({ ...settings, ...(opts.nightly && { nightly: true }), maxItemId: maxItemId(ds.id) }),
     rows,
+    opts.nightly && !trainingWindow().open ? 'queued' : 'waiting',
     ds.id,
+    opts.tokenId ?? null,
   );
   void run(id, ownerId, deps, 'new');
   return toJob(db.prepare('SELECT * FROM lab_trains WHERE id = ?').get(id) as unknown as TrainRow);
@@ -365,88 +415,36 @@ async function run(id: string, ownerId: string, deps: TrainDeps, mode: RunMode) 
   const row = db.prepare('SELECT * FROM lab_trains WHERE id = ?').get(id) as unknown as TrainRow;
   const abort = new AbortController();
   running.set(id, abort);
+  const nightly = !!(JSON.parse(row.settings || '{}') as { nightly?: boolean }).nightly;
   try {
-    if (row.backend === 'hf-jobs') return await runCloud(row, deps, mode, abort.signal);
-    if (row.backend === 'comfyui') {
-      const comfyUrl = deps.comfyUrl?.(row.provider_id);
-      if (!comfyUrl) throw new Error('The ComfyUI that trains this LoRA is gone (Settings → Providers)');
-      const target = await deps.resolve(row.provider_id);
-      return await runComfyJob(
-        {
-          id,
-          name: row.name,
-          settings: row.settings,
-          datasetId: (db.prepare('SELECT dataset_id FROM lab_trains WHERE id = ?').get(id) as { dataset_id: string }).dataset_id,
-          comfyUrl,
-          hostKey: target.hostKey,
-          freeGpu: () => deps.freeGpu(target.hostKey, row.provider_id),
-          save: (patch) => saveSettings(id, patch),
-        },
-        mode,
-        abort.signal,
-        update,
-      );
-    }
-    const target = await deps.resolve(row.provider_id);
-    // A simulation would only wait behind the lock for hours: stop it.
-    const lab = activeLab();
-    if (lab?.status.running) {
-      lab.stop();
-      await lab.done.catch(() => {});
-    }
-    update(id, 'waiting', { note: 'Waiting for the GPU' });
-    await withHostLock(target.hostKey, async () => {
-      if (abort.signal.aborted) return;
-      update(id, 'starting', { note: 'Freeing the GPU (Ollama, ComfyUI)' });
-      await deps.freeGpu(target.hostKey).catch(() => {});
-      if (mode !== 'follow') {
-        // Something outside HiveMind (an image still being made in ComfyUI) can keep the memory: wait until it's free.
-        for (;;) {
-          if (abort.signal.aborted) return update(id, 'cancelled', { note: 'Cancelled while waiting for the GPU' });
-          const gpu = (await trainer('/health').catch(() => undefined))?.gpu as { usedMb?: number; totalMb?: number } | undefined;
-          if (!gpu?.usedMb || gpu.usedMb <= gpuFreeMb()) break;
-          update(id, 'waiting', { note: `The GPU is busy (${(gpu.usedMb / 1024).toFixed(1)} GB in use, e.g. an image in ComfyUI) — training starts when it's free` });
-          await new Promise((r) => setTimeout(r, pollMs() * 6));
-          await deps.freeGpu(target.hostKey).catch(() => {});
-        }
-        await trainer('/jobs', { method: 'POST', body: JSON.stringify({ id, ...JSON.parse(row.settings), ...(mode === 'resume' && { resume: true }) }) });
+    for (;;) {
+      if (nightly && !(await waitForWindow(id, abort.signal))) return update(id, 'cancelled', { note: 'Cancelled while waiting for the training window' });
+      if (row.backend === 'hf-jobs') return await runCloud(row, deps, mode, abort.signal);
+      if (row.backend === 'comfyui') {
+        const comfyUrl = deps.comfyUrl?.(row.provider_id);
+        if (!comfyUrl) throw new Error('The ComfyUI that trains this LoRA is gone (Settings → Providers)');
+        const target = await deps.resolve(row.provider_id);
+        return await runComfyJob(
+          {
+            id,
+            name: row.name,
+            settings: row.settings,
+            datasetId: (db.prepare('SELECT dataset_id FROM lab_trains WHERE id = ?').get(id) as { dataset_id: string }).dataset_id,
+            comfyUrl,
+            hostKey: target.hostKey,
+            freeGpu: () => deps.freeGpu(target.hostKey, row.provider_id),
+            save: (patch) => saveSettings(id, patch),
+          },
+          mode,
+          abort.signal,
+          update,
+        );
       }
-      let pauseSent = false;
-      // Poll until the trainer is done; the lock stays held, so local AI on this GPU waits.
-      for (;;) {
-        if (abort.signal.aborted) {
-          await trainer(`/jobs/${id}/cancel`, { method: 'POST' }, 30_000).catch(() => {});
-          update(id, 'cancelled', { note: 'Cancelled' });
-          return;
-        }
-        if (pausing.has(id) && !pauseSent) {
-          pauseSent = true;
-          update(id, row.state, { note: 'Pausing after the current step (saving a checkpoint)…' });
-          await trainer(`/jobs/${id}/pause`, { method: 'POST' }).catch(() => {});
-        }
-        let s: Record<string, any>;
-        try {
-          s = await trainer(`/jobs/${id}`);
-        } catch (err) {
-          // A short hiccup (trainer busy writing a checkpoint) is not the end of the job.
-          update(id, row.state, { note: (err as Error).message });
-          await new Promise((r) => setTimeout(r, pollMs() * 3));
-          continue;
-        }
-        const progress = { step: s.step, totalSteps: s.totalSteps, loss: s.loss, etaS: s.etaS, note: s.note, log: s.log };
-        if (s.state === 'error') throw new Error(s.error || 'The trainer failed (see the log)');
-        if (s.state === 'cancelled') return update(id, 'cancelled', progress);
-        // Paused: the checkpoint is saved and the GPU lock is given back when this returns.
-        if (s.state === 'paused') return update(id, 'paused', progress);
-        if (s.state === 'done') {
-          update(id, 'importing', { ...progress, note: `Importing ${s.gguf} into Ollama` });
-          await importGguf(join(TRAIN_DIR, id, s.gguf), row.name, deps.ollamaUrl(row.provider_id)!, abort.signal);
-          return update(id, 'done', { ...progress, etaS: 0, note: `Ready: ${row.name}` });
-        }
-        update(id, (['loading', 'training', 'exporting'].includes(s.state) ? s.state : 'starting') as TrainState, progress);
-        await new Promise((r) => setTimeout(r, pollMs()));
-      }
-    });
+      const r = await runLocal(row, deps, mode, abort.signal, nightly);
+      if (!r) return;
+      // The window closed: wait for the next one, then go on from the checkpoint (or start, if it never began).
+      if (r === 'paused') mode = 'resume';
+    }
   } catch (err) {
     const message = (err as Error).message;
     update(id, 'error', undefined, message);
@@ -457,11 +455,113 @@ async function run(id: string, ownerId: string, deps: TrainDeps, mode: RunMode) 
   }
 }
 
+/** A nightly job: "queued" until the training window opens. False when it was cancelled meanwhile. */
+async function waitForWindow(id: string, signal: AbortSignal): Promise<boolean> {
+  for (let first = true; ; first = false) {
+    if (signal.aborted) return false;
+    const w = trainingWindow();
+    if (w.open) {
+      if (!first) update(id, 'waiting', { note: `The training window opened (${w.start}–${w.end})` });
+      return true;
+    }
+    const cur = db.prepare('SELECT state, progress FROM lab_trains WHERE id = ?').get(id) as { state: TrainState; progress: string | null };
+    if (first) update(id, 'queued', { ...(cur.progress ? JSON.parse(cur.progress) : {}), note: `Waits for the training window (${w.start}–${w.end})`, etaS: undefined });
+    // Cancel wakes it right away.
+    await new Promise<void>((r) => {
+      const t = setTimeout(done, pollMs() * 6);
+      function done() {
+        clearTimeout(t);
+        signal.removeEventListener('abort', done);
+        r();
+      }
+      signal.addEventListener('abort', done, { once: true });
+    });
+  }
+}
+
+/**
+ * This server's GPU: waits for the lock, starts (or continues) the job on the trainer and follows it. Returns
+ * "paused" or "not-started" when a nightly job's window closed, so run() waits for the next window.
+ */
+async function runLocal(row: TrainRow, deps: TrainDeps, mode: RunMode, signal: AbortSignal, nightly: boolean): Promise<'paused' | 'not-started' | void> {
+  const id = row.id;
+  const target = await deps.resolve(row.provider_id);
+  update(id, 'waiting', { note: 'Waiting for the GPU' });
+  return withHostLock(target.hostKey, async (): Promise<'paused' | 'not-started' | void> => {
+    if (signal.aborted) return update(id, 'cancelled', { note: 'Cancelled while waiting for the GPU' });
+    if (nightly && !trainingWindow().open) return 'not-started';
+    update(id, 'starting', { note: 'Freeing the GPU (Ollama, ComfyUI)' });
+    await deps.freeGpu(target.hostKey).catch(() => {});
+    if (mode !== 'follow') {
+      // Something outside HiveMind (an image still being made in ComfyUI) can keep the memory: wait until it's free.
+      for (;;) {
+        if (signal.aborted) return update(id, 'cancelled', { note: 'Cancelled while waiting for the GPU' });
+        const gpu = (await trainer('/health').catch(() => undefined))?.gpu as { usedMb?: number; totalMb?: number } | undefined;
+        if (!gpu?.usedMb || gpu.usedMb <= gpuFreeMb()) break;
+        update(id, 'waiting', { note: `The GPU is busy (${(gpu.usedMb / 1024).toFixed(1)} GB in use, e.g. an image in ComfyUI) — training starts when it's free` });
+        await new Promise((r) => setTimeout(r, pollMs() * 6));
+        await deps.freeGpu(target.hostKey).catch(() => {});
+      }
+      jobLog(id, mode === 'resume' ? 'Continuing on the trainer from the last checkpoint' : 'Starting on the trainer');
+      await trainer('/jobs', { method: 'POST', body: JSON.stringify({ id, ...JSON.parse(row.settings), ...(mode === 'resume' && { resume: true }) }) });
+    }
+    let pauseSent = false;
+    let byWindow = false;
+    let state = row.state;
+    // Poll until the trainer is done; the lock stays held, so local AI on this GPU waits.
+    for (;;) {
+      if (signal.aborted) {
+        await trainer(`/jobs/${id}/cancel`, { method: 'POST' }, 30_000).catch(() => {});
+        update(id, 'cancelled', { note: 'Cancelled' });
+        return;
+      }
+      // The training window closed: same as Pause (a checkpoint, the GPU is free), and it continues in the next window.
+      if (nightly && !pauseSent && !trainingWindow().open) {
+        byWindow = true;
+        pausing.add(id);
+      }
+      if (pausing.has(id) && !pauseSent) {
+        pauseSent = true;
+        update(id, state, { note: byWindow ? 'The training window closed: pausing after the current step (saving a checkpoint)…' : 'Pausing after the current step (saving a checkpoint)…' });
+        await trainer(`/jobs/${id}/pause`, { method: 'POST' }).catch(() => {});
+      }
+      let s: Record<string, any>;
+      try {
+        s = await trainer(`/jobs/${id}`);
+      } catch (err) {
+        // A short hiccup (trainer busy writing a checkpoint) is not the end of the job.
+        update(id, state, { note: (err as Error).message });
+        await new Promise((r) => setTimeout(r, pollMs() * 3));
+        continue;
+      }
+      const progress = { step: s.step, totalSteps: s.totalSteps, loss: s.loss, etaS: s.etaS, note: s.note, log: s.log, ...(s.losses && { losses: s.losses }), ...(s.sample && { sample: s.sample }) };
+      if (s.state === 'error') throw new Error(s.error || 'The trainer failed (see the log)');
+      if (s.state === 'cancelled') return update(id, 'cancelled', progress);
+      // Paused: the checkpoint is saved and the GPU lock is given back when this returns.
+      if (s.state === 'paused') {
+        pausing.delete(id);
+        if (!byWindow) return update(id, 'paused', progress);
+        saveSettings(id, { windowPaused: true });
+        update(id, 'queued', { ...progress, etaS: undefined, note: 'Paused at the end of the training window; it continues when the window opens again' });
+        return 'paused';
+      }
+      if (s.state === 'done') {
+        update(id, 'importing', { ...progress, note: `Importing ${s.gguf} into Ollama` });
+        await importGguf(join(TRAIN_DIR, id, s.gguf), row.name, deps.ollamaUrl(row.provider_id)!, signal);
+        return update(id, 'done', { ...progress, etaS: 0, note: `Ready: ${row.name}` });
+      }
+      state = (['loading', 'training', 'exporting'].includes(s.state) ? s.state : 'starting') as TrainState;
+      update(id, state, progress);
+      await new Promise((r) => setTimeout(r, pollMs()));
+    }
+  });
+}
+
 /** Pause: the trainer saves a checkpoint after the current step and the GPU is free until Resume. */
 export function pauseTrain(id: string, ownerId: string): boolean {
-  const row = db.prepare('SELECT backend FROM lab_trains WHERE id = ? AND owner_id = ?').get(id, ownerId) as { backend: string } | undefined;
-  // A cloud machine is paid while it runs: there is no pause, only cancel.
-  if (!row || row.backend === 'hf-jobs' || row.backend === 'comfyui' || !running.has(id)) return false;
+  const row = db.prepare('SELECT backend, state FROM lab_trains WHERE id = ? AND owner_id = ?').get(id, ownerId) as { backend: string; state: TrainState } | undefined;
+  // A cloud machine is paid while it runs: there is no pause, only cancel. A job still waiting has nothing to pause.
+  if (!row || row.backend === 'hf-jobs' || row.backend === 'comfyui' || !running.has(id) || row.state === 'queued') return false;
   pausing.add(id);
   return true;
 }
@@ -485,8 +585,18 @@ export function cancelTrain(id: string, ownerId: string): boolean {
 
 /** After a restart: jobs that were running keep going on the trainer, so HiveMind follows them again. */
 export function resumeTrains(depsFor: (ownerId: string) => TrainDeps) {
-  const rows = db.prepare("SELECT id, owner_id, state FROM lab_trains WHERE state NOT IN ('done', 'error', 'cancelled', 'interrupted', 'paused')").all() as { id: string; owner_id: string; state: TrainState }[];
+  const rows = db.prepare("SELECT id, owner_id, state, settings FROM lab_trains WHERE state NOT IN ('done', 'error', 'cancelled', 'interrupted', 'paused')").all() as {
+    id: string;
+    owner_id: string;
+    state: TrainState;
+    settings: string;
+  }[];
   for (const r of rows) {
+    // Nightly jobs waiting for their window wait again (a window-paused one continues from its checkpoint).
+    if (r.state === 'queued') {
+      void run(r.id, r.owner_id, depsFor(r.owner_id), (JSON.parse(r.settings || '{}') as { windowPaused?: boolean }).windowPaused ? 'resume' : 'new');
+      continue;
+    }
     if (r.state === 'waiting' || r.state === 'importing') {
       update(r.id, 'interrupted', undefined, 'HiveMind restarted before this step finished; start it again');
       continue;
@@ -596,3 +706,124 @@ export const jobFiles = (id: string) => {
   const dir = join(TRAIN_DIR, id, 'gguf');
   return existsSync(dir) ? readdirSync(dir).filter((f) => f.endsWith('.gguf')) : [];
 };
+
+/** The newest example id of a dataset (0 when empty). */
+const maxItemId = (datasetId: string) => (db.prepare('SELECT MAX(id) AS n FROM dataset_items WHERE dataset_id = ?').get(datasetId) as { n: number | null }).n ?? 0;
+
+/**
+ * Trainable examples in a dataset that the last finished training of this model name (the part before ":", so
+ * "my-model:20261030" and "my-model:20261031" count as one model) did not have yet. Without such a training: all.
+ */
+export function newExamples(ownerId: string, datasetId: string, name: string): number {
+  const family = name.split(':')[0];
+  const rows = db
+    .prepare("SELECT name, dataset_id, settings, started_at FROM lab_trains WHERE owner_id = ? AND state = 'done' ORDER BY finished_at DESC, rowid DESC")
+    .all(ownerId) as { name: string; dataset_id: string | null; settings: string; started_at: string }[];
+  const prev = rows.find((r) => r.name.split(':')[0] === family);
+  const ok = "(review IS NULL OR review = 'accepted')";
+  if (!prev || prev.dataset_id !== datasetId) return trainableCount(datasetId);
+  const since = (JSON.parse(prev.settings || '{}') as { maxItemId?: number }).maxItemId;
+  if (since !== undefined) return (db.prepare(`SELECT COUNT(*) AS n FROM dataset_items WHERE dataset_id = ? AND id > ? AND ${ok}`).get(datasetId, since) as { n: number }).n;
+  return (db.prepare(`SELECT COUNT(*) AS n FROM dataset_items WHERE dataset_id = ? AND at > ? AND ${ok}`).get(datasetId, prev.started_at) as { n: number }).n;
+}
+
+/**
+ * Deletes a job's record and its folder (dataset copy, checkpoints, GGUF). A job that is still running or waiting
+ * must be cancelled first. With deleteModel the model it made is removed from its Ollama too (removeModel).
+ */
+export async function deleteTrain(
+  id: string,
+  ownerId: string,
+  opts: { deleteModel?: boolean; removeModel?: (providerId: string, model: string) => Promise<void> } = {},
+): Promise<{ ok: true; modelDeleted: boolean }> {
+  const row = db.prepare('SELECT * FROM lab_trains WHERE id = ? AND owner_id = ?').get(id, ownerId) as unknown as TrainRow | undefined;
+  if (!row) throw Object.assign(new Error('Job not found'), { statusCode: 404 });
+  if (running.has(id) || !(FINAL_STATES.includes(row.state) || row.state === 'paused'))
+    throw Object.assign(new Error('This job is still running or waiting: cancel it first'), { statusCode: 409 });
+  let modelDeleted = false;
+  if (opts.deleteModel && row.state === 'done' && row.backend !== 'comfyui' && opts.removeModel) {
+    await opts.removeModel(row.provider_id, row.name);
+    modelDeleted = true;
+  }
+  db.prepare('DELETE FROM lab_trains WHERE id = ?').run(id);
+  rmSync(join(TRAIN_DIR, id), { recursive: true, force: true });
+  return { ok: true, modelDeleted };
+}
+
+/** One message of GET /api/lab/train/:id/events. */
+export type TrainEvent =
+  | { event: 'state'; data: { state: TrainState; note?: string; error?: string } }
+  | { event: 'progress'; data: { step?: number; totalSteps?: number; loss?: number; etaS?: number } }
+  | { event: 'loss'; data: { step: number; loss: number } }
+  | { event: 'log'; data: { source: 'trainer' | 'hivemind'; line: string } }
+  | { event: 'sample'; data: { prompt: string; answer: string; expected?: string } }
+  | { event: 'end'; data: { state: TrainState } };
+
+/** New lines of a log file since the byte offset; returns them and the new offset (a cut-off last line waits). */
+function readLines(file: string, from: number): { lines: string[]; next: number } {
+  if (!existsSync(file)) return { lines: [], next: from };
+  const size = statSync(file).size;
+  if (size < from) from = 0;
+  if (size === from) return { lines: [], next: from };
+  const buf = readFileSync(file).subarray(from);
+  const end = buf.lastIndexOf(10);
+  if (end < 0) return { lines: [], next: from };
+  // Progress bars (downloads) redraw with \r: every redraw is its own line.
+  const lines = buf
+    .subarray(0, end)
+    .toString('utf8')
+    .split(/\r\n|\r|\n/)
+    .map((l) => l.trimEnd())
+    .filter(Boolean);
+  return { lines, next: from + end + 1 };
+}
+
+/**
+ * The live view of a job: what changed since the last call. Call follow() again and again (the SSE route does it
+ * every second); the first call replays everything so far.
+ */
+export function trainFollower(id: string, ownerId: string) {
+  let last = { state: '', note: '', error: '', progress: '', sample: '' };
+  let lossStep = -1;
+  const offsets = { trainer: 0, hivemind: 0 };
+  let logTail = '';
+  return (): TrainEvent[] | undefined => {
+    const r = db.prepare('SELECT * FROM lab_trains WHERE id = ? AND owner_id = ?').get(id, ownerId) as unknown as TrainRow | undefined;
+    if (!r) return;
+    const p = (r.progress ? JSON.parse(r.progress) : {}) as Record<string, any>;
+    const out: TrainEvent[] = [];
+    for (const source of ['hivemind', 'trainer'] as const) {
+      const file = source === 'trainer' ? trainerLogFile(id) : jobLogFile(id);
+      const got = readLines(file, offsets[source]);
+      offsets[source] = got.next;
+      for (const line of got.lines.slice(-500)) out.push({ event: 'log', data: { source, line } });
+    }
+    // Cloud jobs: the trainer's log only comes in the progress (its last lines).
+    if (!existsSync(trainerLogFile(id)) && typeof p.log === 'string' && p.log !== logTail) {
+      const lines = p.log.split(/\r\n|\r|\n/).filter((l: string) => l.trim());
+      const known = new Set(logTail.split(/\r\n|\r|\n/));
+      for (const line of lines.filter((l: string) => !known.has(l)).slice(-500)) out.push({ event: 'log', data: { source: 'trainer', line: line.trimEnd() } });
+      logTail = p.log;
+    }
+    if (r.state !== last.state || (p.note ?? '') !== last.note || (r.error ?? '') !== last.error) {
+      out.push({ event: 'state', data: { state: r.state, ...(p.note && { note: p.note }), ...(r.error && { error: r.error }) } });
+      last = { ...last, state: r.state, note: p.note ?? '', error: r.error ?? '' };
+    }
+    const prog = { ...(p.step !== undefined && { step: p.step }), ...(p.totalSteps !== undefined && { totalSteps: p.totalSteps }), ...(typeof p.loss === 'number' && { loss: p.loss }), ...(p.etaS !== undefined && p.etaS !== null && { etaS: p.etaS }) };
+    if (Object.keys(prog).length && JSON.stringify(prog) !== last.progress) {
+      out.push({ event: 'progress', data: prog });
+      last.progress = JSON.stringify(prog);
+    }
+    for (const l of (Array.isArray(p.losses) ? p.losses : []) as { step: number; loss: number }[]) {
+      if (typeof l?.step !== 'number' || typeof l.loss !== 'number' || l.step <= lossStep) continue;
+      out.push({ event: 'loss', data: { step: l.step, loss: l.loss } });
+      lossStep = l.step;
+    }
+    if (p.sample?.answer !== undefined && JSON.stringify(p.sample) !== last.sample) {
+      out.push({ event: 'sample', data: { prompt: String(p.sample.prompt ?? ''), answer: String(p.sample.answer), ...(p.sample.expected !== undefined && { expected: String(p.sample.expected) }) } });
+      last.sample = JSON.stringify(p.sample);
+    }
+    if (FINAL_STATES.includes(r.state)) out.push({ event: 'end', data: { state: r.state } });
+    return out;
+  };
+}

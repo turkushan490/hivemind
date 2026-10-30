@@ -2,11 +2,10 @@ import type { Dataset, DatasetItem, DatasetKind, DatasetSource, DecisionSpec } f
 import { DATASET_KINDS, decisionKeys, parseDecisionSpec } from '@hivemind/shared';
 import { newId } from '../crypto.js';
 import { db } from '../db/index.js';
-import { SFT_SYSTEM } from './data.js';
 
 /**
  * Datasets: training examples for any kind of model (text, image, decision, voice). Every source feeds them:
- * the Lab simulator, 👍 on answers, uploads, examples a teacher model wrote, and the Add-to-dataset block.
+ * 👍 on answers, uploads, examples a teacher model wrote, and the Add-to-dataset block.
  * Items with review "pending" or "rejected" are never trained on.
  */
 
@@ -306,34 +305,4 @@ function parseCsv(text: string): string[][] {
   }
   if (cell || row.length) rows.push([...row, cell.replace(/\r$/, '')]);
   return rows.filter((r) => r.some((x) => x.trim()));
-}
-
-/**
- * The Lab writes its turns here too: a clean turn (or an accepted correction) is an example in the owner's
- * "DungeonMind DM" dataset; a rejected or still-pending turn is not.
- */
-export function syncLabTurn(ownerId: string, turnId: number) {
-  const t = db.prepare('SELECT input, output, json_valid, error_types, corrected, review FROM lab_turns WHERE id = ?').get(turnId) as
-    | { input: string; output: string; json_valid: number; error_types: string; corrected: string | null; review: string | null }
-    | undefined;
-  if (!t) return;
-  const ds = ensureDataset(ownerId, DM_DATASET, 'text', SFT_SYSTEM);
-  const ref = `lab_turn:${turnId}`;
-  const good = (t.review === 'accepted' && t.corrected) || (t.review === null && t.json_valid === 1 && t.error_types === '[]');
-  if (!good) {
-    db.prepare('DELETE FROM dataset_items WHERE dataset_id = ? AND ref = ?').run(ds.id, ref);
-    return;
-  }
-  addItems(ds.id, 'lab', [{ input: t.input, output: t.review === 'accepted' && t.corrected ? t.corrected : t.output, ref }]);
-}
-
-/** Once at start: Lab turns from before datasets existed go into the DM dataset. */
-export function migrateLabTurns() {
-  const rows = db
-    .prepare(
-      `SELECT t.id, r.owner_id FROM lab_turns t JOIN lab_runs r ON r.id = t.run_id
-       WHERE NOT EXISTS (SELECT 1 FROM dataset_items i WHERE i.ref = 'lab_turn:' || t.id)`,
-    )
-    .all() as { id: number; owner_id: string }[];
-  for (const r of rows) syncLabTurn(r.owner_id, r.id);
 }

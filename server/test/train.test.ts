@@ -16,9 +16,10 @@ beforeAll(async () => {
     ['v1', 'viewer'],
   ]));
   train = await import('../src/lab/train.js');
-  db.prepare("INSERT INTO lab_runs (id, owner_id, name, config, status) VALUES ('r1', 'u1', 'sim', '{}', 'stopped')").run();
-  for (let i = 0; i < 3; i++)
-    db.prepare("INSERT INTO lab_turns (run_id, game, turn, seed, model, input, output, json_valid, error_types) VALUES ('r1', 0, ?, 1, 'p|dm', 'the players act', '{\"narration\":\"ok\"}', 1, '[]')").run(i);
+  // The "DungeonMind DM" dataset is what jobs without a datasetId train on (older clients).
+  const ds = await import('../src/lab/datasets.js');
+  const dm = ds.createDataset('u1', { name: ds.DM_DATASET });
+  ds.addItems(dm.id, 'lab', Array.from({ length: 3 }, () => ({ input: 'the players act', output: '{"narration":"ok"}' })));
 });
 afterAll(() => app?.close());
 afterEach(() => {

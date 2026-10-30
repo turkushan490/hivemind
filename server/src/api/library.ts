@@ -19,6 +19,23 @@ function localRow(user: User, providerId: string) {
   return row;
 }
 
+/** Removes a model from a local AI server (Ollama); also used when a training job is deleted with its model. */
+export async function deleteLocalModel(user: User, providerId: string, model: string): Promise<void> {
+  const row = localRow(user, providerId);
+  if (!canEdit(user, row)) throw Object.assign(new Error('Only an admin can delete models from a shared provider'), { statusCode: 403 });
+  if (!MODEL_NAME.test(model)) throw Object.assign(new Error('Not a valid model name'), { statusCode: 400 });
+  const adapter = adapterFor(row);
+  try {
+    await adapter.unload?.(model).catch(() => {});
+    await adapter.remove!(model);
+  } catch (err) {
+    const { message } = describe(err);
+    logError({ source: 'provider', message: `Delete ${model} failed: ${message}`, userId: user.id });
+    throw Object.assign(new Error(message), { statusCode: 502 });
+  }
+  forgetModels(row.id);
+}
+
 function startPull(user: User, providerId: string, model: string): PullJob {
   const row = localRow(user, providerId);
   if (!canEdit(user, row)) throw Object.assign(new Error('Only an admin can download models to a shared provider'), { statusCode: 403 });
@@ -137,20 +154,11 @@ export function libraryRoutes(app: FastifyInstance) {
   });
 
   app.delete('/api/ollama/:providerId/models', { preHandler: requireUser }, async (req, reply) => {
-    const row = localRow(req.user!, (req.params as { providerId: string }).providerId);
-    if (!canEdit(req.user!, row)) return reply.code(403).send({ error: 'Only an admin can delete models from a shared provider' });
-    const model = String((req.query as { model?: string }).model ?? '');
-    if (!MODEL_NAME.test(model)) return reply.code(400).send({ error: 'Not a valid model name' });
-    const adapter = adapterFor(row);
     try {
-      await adapter.unload?.(model).catch(() => {});
-      await adapter.remove!(model);
+      await deleteLocalModel(req.user!, (req.params as { providerId: string }).providerId, String((req.query as { model?: string }).model ?? ''));
     } catch (err) {
-      const { message } = describe(err);
-      logError({ source: 'provider', message: `Delete ${model} failed: ${message}`, userId: req.user!.id });
-      return reply.code(502).send({ error: message });
+      return reply.code((err as { statusCode?: number }).statusCode ?? 500).send({ error: (err as Error).message });
     }
-    forgetModels(row.id);
     return { ok: true };
   });
 

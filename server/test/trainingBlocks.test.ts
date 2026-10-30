@@ -7,7 +7,7 @@ import { chain, edge, fakeProvider, node } from './helpers.js';
 const M = { providerId: 'p', model: 'teacher' };
 
 /** A fake of the run's training services, recording what the blocks asked for. */
-function fakeTraining() {
+function fakeTraining(fresh = 0) {
   const added: { dataset: string; items: { input?: string; output?: string; files?: string[] }[]; review?: boolean; kind?: string }[] = [];
   const started: unknown[] = [];
   const deployed: unknown[] = [];
@@ -22,6 +22,7 @@ function fakeTraining() {
     ],
     startTrain: async (opts) => (started.push(opts), { id: 'job1', name: opts.name, rows: 42, state: 'waiting' }),
     waitTrain: async (_id, _signal, onProgress) => (onProgress('training · step 3/10'), { state: 'done' }),
+    newExamples: () => fresh,
     deploy: (pattern, model) => (deployed.push({ pattern, model }), { canvases: 2, blocks: 5 }),
   };
   return { training, added, started, deployed };
@@ -70,14 +71,27 @@ describe('training blocks', () => {
     const cfg = { dataset: 'Faces', trainBase: 'sdxl/juggernaut.safetensors', trainName: 'face:v1', trainSteps: 800, trainTrigger: 'grim man', trainWait: true };
     const { result } = await run(chain(node('i', 'input'), node('t', 'train', cfg), node('o', 'output')), fakeProvider(), f.training);
     expect(f.started[0]).toMatchObject({ base: 'sdxl/juggernaut.safetensors', steps: 800, trigger: 'grim man' });
-    expect(result.final).toContain('face:v1 is ready');
+    expect(JSON.parse(result.final!)).toEqual({ status: 'done', model: 'face:v1', jobId: 'job1', examples: 42 });
   });
 
   it('Train: queues a job and the run goes on', async () => {
     const f = fakeTraining();
     const { result } = await run(chain(node('i', 'input'), node('t', 'train', { dataset: 'Good', trainBase: 'unsloth/Qwen3.5-2B', trainName: 'My-Model:v1', epochs: 3 }), node('o', 'output')), fakeProvider(), f.training);
     expect(f.started[0]).toMatchObject({ dataset: 'Good', base: 'unsloth/Qwen3.5-2B', name: 'my-model:v1', epochs: 3 });
-    expect(result.final).toContain('Job job1');
+    expect(JSON.parse(result.final!)).toEqual({ status: 'started', model: 'my-model:v1', jobId: 'job1', examples: 42 });
+  });
+
+  it('Train: minNewExamples skips until enough new examples came in; nightly is passed on', async () => {
+    const cfg = { dataset: 'Good', trainBase: 'unsloth/Qwen3.5-2B', trainName: 'dm:v2', minNewExamples: 50, nightly: true };
+    const few = fakeTraining(49);
+    const skipped = await run(chain(node('i', 'input'), node('t', 'train', cfg), node('o', 'output')), fakeProvider(), few.training);
+    expect(JSON.parse(skipped.result.final!)).toEqual({ status: 'skipped', model: 'dm:v2', jobId: null, examples: 49 });
+    expect(skipped.result.status).toBe('done');
+    expect(few.started).toHaveLength(0);
+    const enough = fakeTraining(50);
+    const started = await run(chain(node('i', 'input'), node('t', 'train', cfg), node('o', 'output')), fakeProvider(), enough.training);
+    expect(JSON.parse(started.result.final!)).toMatchObject({ status: 'started', jobId: 'job1' });
+    expect(enough.started[0]).toMatchObject({ nightly: true });
   });
 
   it('Evaluate: every model answers, the judge grades against the reference, best first', async () => {

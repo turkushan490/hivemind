@@ -27,9 +27,15 @@ PAUSE = {"asked": False}
 signal.signal(signal.SIGUSR1, lambda *_: PAUSE.update(asked=True))
 
 
+# Loss per logged step (the last 500) and a sample answer after training: every later status carries them, so
+# HiveMind's live view (GET /api/lab/train/:id/events) can draw the loss curve and show the sample.
+LOSSES: list[dict] = []
+SAMPLE: dict = {}
+
+
 def status(state: str, **extra) -> None:
-    """status.json is what HiveMind shows: state, steps, loss, time left."""
-    data = {"state": state, "startedAt": STARTED, "updatedAt": time.time(), **extra}
+    """status.json is what HiveMind shows: state, steps, loss, time left, the loss curve and the sample."""
+    data = {"state": state, "startedAt": STARTED, "updatedAt": time.time(), "losses": LOSSES[-500:], **({"sample": SAMPLE} if SAMPLE else {}), **extra}
     tmp = DIR / "status.json.tmp"
     tmp.write_text(json.dumps(data))
     tmp.replace(DIR / "status.json")
@@ -78,6 +84,34 @@ def decision_prompt(row: dict, flip: bool) -> str:
 
 def answer_index(row: dict, flip: bool) -> int:
     return [o["key"] for o in decision_options(row, flip)].index(row["answer"])
+
+
+def make_sample(model, tok, rows: list[dict], decision: bool) -> dict:  # noqa: ANN001
+    """The trained model answers the first example of its dataset (greedy), to show what it learned."""
+    from unsloth import FastLanguageModel
+
+    FastLanguageModel.for_inference(model)
+    row = rows[0]
+    if decision:
+        prompt_text = decision_prompt(row, False)
+        shown, expected, max_new = str(row["state"]), str(row["answer"]), 1
+    else:
+        msgs = [m for m in row["messages"] if m.get("role") != "assistant"]
+        try:
+            prompt_text = tok.apply_chat_template(msgs, tokenize=False, add_generation_prompt=True, enable_thinking=False)
+        except TypeError:
+            prompt_text = tok.apply_chat_template(msgs, tokenize=False, add_generation_prompt=True)
+        shown = next((m["content"] for m in reversed(msgs) if m.get("role") == "user"), "")
+        expected = next((m["content"] for m in reversed(row["messages"]) if m.get("role") == "assistant"), "")
+        max_new = 256
+    inputs = tok(text=[prompt_text], return_tensors="pt", add_special_tokens=False).to(model.device)
+    out = model.generate(**inputs, max_new_tokens=max_new, do_sample=False)
+    answer = tok.decode(out[0][inputs["input_ids"].shape[1]:], skip_special_tokens=True).strip()
+    if decision:
+        letter = answer[:1].upper()
+        opts = decision_options(row, False)
+        answer = opts[LETTERS.index(letter)]["key"] if letter and letter in LETTERS[: len(opts)] else answer
+    return {"prompt": shown[:2000], "answer": answer[:2000], "expected": expected[:2000]}
 
 
 def mark_decision_model(path: Path) -> None:
@@ -137,6 +171,7 @@ def main() -> None:
         size = re.search(r"(\d+(?:\.\d+)?)b\b", base.lower())
         load4 = bool(size) and float(size.group(1)) >= 4
     status("loading", note=f"Loading {base} ({'4-bit' if load4 else '16-bit'}{', float32 compute' if not bf16 else ''})")
+    print(f"[download] {base} (from Hugging Face the first time, then from the cache)", flush=True)
     model, processor = FastLanguageModel.from_pretrained(model_name=base, max_seq_length=max_len, load_in_4bit=bool(load4), dtype=None)
     # Multimodal bases (Qwen3.5) can come with a processor; text training uses its tokenizer.
     tok = getattr(processor, "tokenizer", processor)
@@ -185,6 +220,10 @@ def main() -> None:
     class Progress(TrainerCallback):
         def on_log(self, args, state, control, logs=None, **kw):  # noqa: ANN001
             done = state.global_step
+            loss = (logs or {}).get("loss")
+            if loss is not None:
+                LOSSES.append({"step": done, "loss": round(float(loss), 4)})
+                print(f"[train] step {done}/{state.max_steps or total} loss {float(loss):.4f}", flush=True)
             took = time.time() - STARTED
             per = took / done if done else None
             status(
@@ -241,7 +280,15 @@ def main() -> None:
         status("paused", step=trainer.state.global_step, totalSteps=trainer.state.max_steps or total, note="Paused — the GPU is free; resume continues here")
         return
 
+    print(f"[train] finished: {trainer.state.global_step} steps, loss {getattr(result, 'training_loss', None)}", flush=True)
+    try:
+        status("exporting", note="Trying the new model on one example")
+        SAMPLE.update(make_sample(model, tok, rows, decision))
+        print(f"[sample] {json.dumps(SAMPLE)[:500]}", flush=True)
+    except Exception as err:  # noqa: BLE001 - a failed sample must not cost the model
+        print(f"[sample] skipped: {err}", flush=True)
     status("exporting", note=f"Making the GGUF ({JOB.get('quant', 'q4_k_m')})", loss=getattr(result, "training_loss", None))
+    print(f"[gguf] exporting {JOB.get('quant', 'q4_k_m')}", flush=True)
     out = DIR / "gguf"
     out.mkdir(exist_ok=True)
     quant = JOB.get("quant", "q4_k_m")
@@ -258,6 +305,7 @@ def main() -> None:
         if p.is_file() and p != ggufs[0] and p.suffix in (".safetensors", ".gguf", ".bin"):
             p.unlink()
     shutil.rmtree(DIR / f"{out.name}_gguf", ignore_errors=True)
+    print(f"[gguf] made {ggufs[0].name} ({ggufs[0].stat().st_size // 1_000_000} MB)", flush=True)
     if decision:
         status("exporting", note="Marking the GGUF as a decision model")
         mark_decision_model(ggufs[0])

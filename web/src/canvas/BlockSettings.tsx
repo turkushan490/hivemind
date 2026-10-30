@@ -1095,7 +1095,26 @@ function TrainSettings(p: Props) {
             <input type="checkbox" checked={!!c.trainWait} onChange={(e) => p.onChange({ trainWait: e.target.checked || undefined })} /> Wait until it&apos;s ready (so the next blocks can use the
             new model)
           </label>
-          <p className="text-xs text-slate-500">Training waits for the GPU and runs in the background; follow, pause or cancel it in Lab → New model.</p>
+          <label className="flex items-center gap-2 text-xs text-slate-300">
+            <input type="checkbox" checked={!!c.nightly} onChange={(e) => p.onChange({ nightly: e.target.checked || undefined })} /> Only in the training window (Settings → Training): it
+            waits until then and pauses when the window closes
+          </label>
+          <label className="flex items-center gap-2 text-xs text-slate-300">
+            Only train when there are at least
+            <input
+              className="input w-20 py-1 text-xs"
+              type="number"
+              min={0}
+              placeholder="0"
+              value={c.minNewExamples ?? ''}
+              onChange={(e) => p.onChange({ minNewExamples: Number(e.target.value) > 0 ? Math.floor(Number(e.target.value)) : undefined })}
+            />
+            new examples since this model was last trained
+          </label>
+          <p className="text-xs text-slate-500">
+            Training waits for the GPU and runs in the background; follow, pause or cancel it in Lab → New model. The block passes on JSON:{' '}
+            <code>{'{status: "started" | "done" | "skipped", model, jobId, examples}'}</code>. A scheduled run trains in the training window anyway.
+          </p>
         </div>
       );
     case 'evaluate':

@@ -46,7 +46,11 @@ export interface NodeServices {
       trigger?: string;
       flavor?: string;
       maxUsd?: number;
+      /** Wait for the training window (Settings → Training). */
+      nightly?: boolean;
     }): Promise<{ id: string; name: string; rows: number; state: string; kind?: string; backend?: string; estimateUsd?: number }>;
+    /** Examples in the dataset that the last finished training of this model name did not have yet. */
+    newExamples(dataset: string, name: string): number;
     /** Waits until a job is done, failed or cancelled; progress notes go to onProgress. */
     waitTrain(id: string, signal: AbortSignal, onProgress: (note: string) => void): Promise<{ state: string; error?: string; lora?: string }>;
     deploy(pattern: string, model: ModelRef): { canvases: number; blocks: number };

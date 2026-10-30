@@ -84,6 +84,13 @@ export interface NodeConfig {
   trainMaxUsd?: number;
   /** Train: wait until the model is ready (so blocks after it can use it), instead of going on right away. */
   trainWait?: boolean;
+  /**
+   * Train: only train when the dataset has at least this many examples that the last finished training of this
+   * model name did not have; otherwise the block passes with status "skipped".
+   */
+  minNewExamples?: number;
+  /** Train: the job waits for the training window (Settings → Training) and pauses when it closes. */
+  nightly?: boolean;
   /** Deploy: which of your canvases get the model in their AI model blocks ("dnd-*", or ids separated by commas). */
   canvasPattern?: string;
   /** Memory: what to remember under (may use {{vars.name}}, e.g. "dnd:{{vars.tableId}}"), recall or save, how many to recall. */
@@ -492,6 +499,18 @@ export interface RunEvent {
   /** node_done / run_done: files the block (or the whole run) wrote. */
   files?: OutputFile[];
   status?: RunStatus;
+  /**
+   * node_done of a block that called a chat model: exactly what its last call sent. Stored with the run, left out
+   * of the events the API returns; GET /api/runs/:id?inputs=1 shows it per block (NodeOutput.messages).
+   */
+  sent?: SentCall;
+}
+
+/** One chat model call as it was sent. */
+export interface SentCall {
+  providerId: string;
+  model: string;
+  messages: { role: 'system' | 'user' | 'assistant'; content: string; images?: string[] }[];
 }
 
 export type RunStatus = 'running' | 'done' | 'error' | 'cancelled';
@@ -501,6 +520,10 @@ export interface NodeOutput {
   nodeId: string;
   type: NodeType;
   text: string;
+  /** Only with GET /api/runs/:id?inputs=1, for blocks that called a chat model: the model and the exact messages of its last call. */
+  providerId?: string;
+  model?: string;
+  messages?: SentCall['messages'];
 }
 
 /** POST /api/runs body. */
@@ -512,6 +535,8 @@ export interface RunRequest {
   graph?: CanvasGraph;
   /** Named values for {{vars.name}} in prompts, memory keys, file names and webhooks: at most 64 keys ([a-zA-Z0-9_]{1,40}), 1 MB in total. */
   vars?: Record<string, string>;
+  /** This run only: the model of a block (by node id), or of every AI model block ("*"); a node id wins over "*". */
+  models?: Record<string, ModelRef>;
 }
 
 export interface RunSummary {
@@ -625,7 +650,8 @@ export interface DatasetItem {
 
 // ---- Lab: make a new model (GET /api/lab/train) ----
 
-export type TrainState = 'starting' | 'waiting' | 'loading' | 'training' | 'exporting' | 'importing' | 'paused' | 'done' | 'error' | 'cancelled' | 'interrupted';
+/** queued: a nightly job waiting for the training window (or paused at its end until the next one). */
+export type TrainState = 'queued' | 'starting' | 'waiting' | 'loading' | 'training' | 'exporting' | 'importing' | 'paused' | 'done' | 'error' | 'cancelled' | 'interrupted';
 
 export interface TrainJob {
   id: string;
@@ -643,6 +669,11 @@ export interface TrainJob {
   error?: string;
   /** The last lines the trainer printed. */
   log?: string;
+  /** Loss per logged step (the last 500), and the trained model's answer to one example of its dataset. */
+  losses?: { step: number; loss: number }[];
+  sample?: { prompt: string; answer: string; expected?: string };
+  /** Trains only in the training window (Settings → Training): queued until it opens, paused when it closes. */
+  nightly?: boolean;
   /** What it learns from: text/chat, a decision dataset, or pictures (an image LoRA). */
   kind?: 'text' | 'decision' | 'image';
   /** Where it trains: this server's GPU, a rented one on Hugging Face Jobs, or ComfyUI (image LoRAs). */
@@ -686,11 +717,13 @@ export interface TrainBase {
   note: string;
   /** Rough seconds per training step on a Tesla T4 (for the estimate). */
   secPerStep: number;
+  /** About how much GPU memory training it takes (GB), to say whether it fits this server's GPU. */
+  vramGb?: number;
 }
 
 export interface TrainOverview {
   trainer: { url?: string; ok: boolean; error?: string; gpu?: { name: string; usedMb: number; totalMb: number }; busy?: string | null };
-  /** Training examples ready: clean turns plus accepted corrections. */
+  /** Training examples ready in the "DungeonMind DM" dataset (0 without it); each dataset has its own count. */
   rows: number;
   minRows: number;
   bases: TrainBase[];
@@ -699,7 +732,32 @@ export interface TrainOverview {
   hf: HfSettings;
   /** Image LoRAs (trained by ComfyUI): whether ComfyUI's folder is mounted, and seconds per step for the estimate. */
   images: { ready: boolean; secPerStep: number };
+  /** The training window for nightly jobs (local time) and whether it is open now. */
+  window: TrainWindow;
 }
+
+/** GET /api/lab/window. */
+export interface TrainWindow {
+  start: string;
+  end: string;
+  open: boolean;
+}
+
+/** GET /api/workflows/:id/schedule: run a workflow by itself at a time of day (local time, TZ). */
+export interface WorkflowSchedule {
+  canvasId: string;
+  /** "HH:MM", 24-hour clock. */
+  time: string;
+  /** Days it runs on; all seven = every day. */
+  days: ScheduleDay[];
+  enabled: boolean;
+  lastRunAt?: string;
+  /** When it runs next (ISO), while enabled. */
+  nextRunAt?: string;
+}
+
+export const SCHEDULE_DAYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'] as const;
+export type ScheduleDay = (typeof SCHEDULE_DAYS)[number];
 
 // ---- Stats (GET /api/stats) ----
 

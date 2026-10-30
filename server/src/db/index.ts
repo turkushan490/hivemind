@@ -227,6 +227,18 @@ const MIGRATIONS = [
   ALTER TABLE lab_trains ADD COLUMN kind TEXT NOT NULL DEFAULT 'text';
   ALTER TABLE lab_trains ADD COLUMN backend TEXT NOT NULL DEFAULT 'local';
   `,
+  `
+  CREATE TABLE workflow_schedules (
+    canvas_id TEXT NOT NULL,
+    owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    time TEXT NOT NULL,
+    days TEXT NOT NULL,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    last_run_at TEXT,
+    PRIMARY KEY (canvas_id, owner_id)
+  );
+  ALTER TABLE lab_trains ADD COLUMN token_id TEXT;
+  `,
 ];
 
 export const db = new DatabaseSync(join(config.dataDir, 'hivemind.db'));

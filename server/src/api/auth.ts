@@ -13,12 +13,18 @@ export interface User {
   role: Role;
   /** Set when an API token is limited to some canvases and memory keys (see scope.ts). */
   scope?: TokenScope;
+  /** The API token this request came with (training jobs remember which token started them). */
+  tokenId?: string;
 }
 
 /** What a limited API token may use: canvas ids and memory keys, exact or ending in "*" ("dnd-*", "rules:*"). */
 export interface TokenScope {
   canvases: string[];
   memory: string[];
+  /** May start training jobs (and see, cancel and delete the ones it started). */
+  training?: boolean;
+  /** Datasets it may list, make and fill, by name: exact or ending in "*" ("DungeonMind*"). */
+  datasets?: string[];
 }
 
 declare module 'fastify' {
@@ -44,7 +50,7 @@ function findUserByApiToken(token: string): User | undefined {
     .get(sha256(token)) as (User & { tid: string; scope: string | null }) | undefined;
   if (!row) return;
   db.prepare("UPDATE api_tokens SET last_used_at = datetime('now') WHERE id = ?").run(row.tid);
-  return { id: row.id, username: row.username, role: row.role, ...(row.scope && { scope: JSON.parse(row.scope) as TokenScope }) };
+  return { id: row.id, username: row.username, role: row.role, tokenId: row.tid, ...(row.scope && { scope: JSON.parse(row.scope) as TokenScope }) };
 }
 
 /** Session cookie for the web UI, `Authorization: Bearer hm_…` for apps (phone, Home Assistant). */
@@ -170,7 +176,10 @@ export function authRoutes(app: FastifyInstance) {
     return { ok: true };
   });
 
-  app.get('/api/auth/me', { preHandler: requireUser }, async (req) => req.user);
+  app.get('/api/auth/me', { preHandler: requireUser }, async (req) => {
+    const { tokenId: _token, ...me } = req.user!;
+    return me;
+  });
 
   // ---- Users (admin) ----
   app.get('/api/users', { preHandler: requireAdmin }, async () =>
@@ -225,7 +234,7 @@ export function authRoutes(app: FastifyInstance) {
   );
 
   app.post('/api/tokens', { preHandler: requireUser }, async (req, reply) => {
-    const body = (req.body ?? {}) as { name?: string; canvases?: unknown; memory?: unknown };
+    const body = (req.body ?? {}) as { name?: string; canvases?: unknown; memory?: unknown; training?: unknown; datasets?: unknown };
     const name = String(body.name ?? '').trim();
     if (!name) return reply.code(400).send({ error: 'Give the token a name' });
     // A limited token can't make tokens with more rights than itself.
@@ -239,7 +248,11 @@ export function authRoutes(app: FastifyInstance) {
     try {
       const canvases = list(body.canvases, 'canvases');
       const memory = list(body.memory, 'memory');
-      if (canvases || memory) scope = { canvases: canvases ?? [], memory: memory ?? [] };
+      const datasets = list(body.datasets, 'datasets');
+      if (body.training !== undefined && typeof body.training !== 'boolean') throw new Error('training must be true or false');
+      const training = body.training === true;
+      if (canvases || memory || datasets || training)
+        scope = { canvases: canvases ?? [], memory: memory ?? [], ...(training && { training }), ...(datasets && { datasets }) };
     } catch (err) {
       return reply.code(400).send({ error: (err as Error).message });
     }

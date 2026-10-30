@@ -1,11 +1,11 @@
-import type { CanvasGraph, RunEvent, RunRequest, RunSummary } from '@hivemind/shared';
+import type { CanvasGraph, ModelRef, RunEvent, RunRequest, RunSummary } from '@hivemind/shared';
 import type { FastifyInstance } from 'fastify';
 import { newId } from '../crypto.js';
 import { db } from '../db/index.js';
 import { validateGraph } from '../engine/graph.js';
 import { checkVars } from '../engine/vars.js';
 import { cancelRun, startRun, subscribe } from '../events/runs.js';
-import { nodeOutputs } from '../services/runOutputs.js';
+import { nodeOutputs, publicEvents } from '../services/runOutputs.js';
 import { requireUser, type User } from './auth.js';
 import { canvasAllowed } from './scope.js';
 import { gpuFreerFor, resolverFor, trainingFor } from './providers.js';
@@ -62,6 +62,68 @@ export function runSetup(user: User, row: CanvasRow | undefined, bodyGraph: Canv
   return { graph: stored, providerUser: mine ? user : (userById(row.owner_id) ?? user) };
 }
 
+const bad = (message: string, statusCode = 400) => Object.assign(new Error(message), { statusCode });
+const isRef = (m: unknown): m is ModelRef => !!m && typeof (m as ModelRef).providerId === 'string' && !!(m as ModelRef).providerId && typeof (m as ModelRef).model === 'string' && !!(m as ModelRef).model;
+
+/**
+ * POST /api/runs → models: this run's model per block id, or "*" for every AI model block (an id wins over "*").
+ * Auto-model blocks given a model use it instead of choosing.
+ */
+export function applyModels(graph: CanvasGraph, models: unknown): CanvasGraph {
+  if (models === undefined || models === null) return graph;
+  if (typeof models !== 'object' || Array.isArray(models)) throw bad('models must be an object: {"<block id>" or "*": {"providerId", "model"}}');
+  const map = models as Record<string, unknown>;
+  for (const [k, v] of Object.entries(map)) {
+    if (!isRef(v)) throw bad(`models["${k}"] must be {"providerId": "…", "model": "…"}`);
+    if (k !== '*' && !graph.nodes.some((n) => n.id === k)) throw bad(`models: this workflow has no block "${k}"`);
+  }
+  return {
+    ...graph,
+    nodes: graph.nodes.map((n) => {
+      const ref = (map[n.id] ?? (n.type === 'llm' ? map['*'] : undefined)) as ModelRef | undefined;
+      if (!ref) return n;
+      const { auto: _auto, ...config } = n.config;
+      return { ...n, config: { ...config, model: { providerId: ref.providerId, model: ref.model } } };
+    }),
+  };
+}
+
+/**
+ * Starts a run the way POST /api/runs does (also used by the scheduler, as the schedule's owner). Throws an
+ * error with a statusCode for a bad request.
+ */
+export function startCanvasRun(user: User, body: RunRequest, opts: { scheduled?: boolean } = {}): string {
+  const question = body.question?.trim();
+  if (!question) throw bad('Ask a question');
+  const as400 = <T>(fn: () => T): T => {
+    try {
+      return fn();
+    } catch (err) {
+      throw bad((err as Error).message);
+    }
+  };
+  const vars = as400(() => checkVars(body.vars));
+  // A graph in the body wins for your own canvas (the editor runs what is on screen, saved or not); canvasId links the run to it.
+  // Shared canvases of others, and everything a viewer runs, run exactly as saved.
+  const row = body.canvasId ? canvasFor(user, body.canvasId) : undefined;
+  if (body.canvasId && !row) throw bad('Canvas not found', 404);
+  const { graph: chosen, providerUser } = runSetup(user, row, body.graph);
+  if (!chosen) throw bad(user.role === 'viewer' ? 'Viewers can only run saved canvases' : 'Send a canvasId or a graph');
+  const graph = applyModels(chosen, body.models);
+  as400(() => validateGraph(graph));
+  return startRun({
+    ownerId: user.id,
+    user,
+    canvasId: body.canvasId,
+    graph,
+    question,
+    vars,
+    resolve: resolverFor(providerUser),
+    freeGpu: gpuFreerFor(providerUser),
+    training: trainingFor(user, opts),
+  });
+}
+
 export function runRoutes(app: FastifyInstance) {
   // ---- Canvases ----
   app.get('/api/canvases', { preHandler: requireUser }, async (req) => canvasesFor(req.user!).map((r) => toCanvas(r, req.user!)));
@@ -92,30 +154,15 @@ export function runRoutes(app: FastifyInstance) {
   });
 
   // ---- Runs ----
-  /** Body: { question, canvasId } to run a saved canvas, or { question, graph } for an ad-hoc one; optional vars for {{vars.name}}. */
+  /** Body: { question, canvasId } to run a saved canvas, or { question, graph } for an ad-hoc one; optional vars for {{vars.name}} and models per block. */
   app.post('/api/runs', { preHandler: requireUser }, async (req, reply) => {
-    const body = (req.body ?? {}) as RunRequest;
-    const question = body.question?.trim();
-    if (!question) return reply.code(400).send({ error: 'Ask a question' });
-    let vars: Record<string, string>;
     try {
-      vars = checkVars(body.vars);
+      return { runId: startCanvasRun(req.user!, (req.body ?? {}) as RunRequest) };
     } catch (err) {
-      return reply.code(400).send({ error: (err as Error).message });
+      const code = (err as { statusCode?: number }).statusCode;
+      if (!code) throw err;
+      return reply.code(code).send({ error: (err as Error).message });
     }
-    // A graph in the body wins for your own canvas (the editor runs what is on screen, saved or not); canvasId links the run to it.
-    // Shared canvases of others, and everything a viewer runs, run exactly as saved.
-    const row = body.canvasId ? canvasFor(req.user!, body.canvasId) : undefined;
-    if (body.canvasId && !row) return reply.code(404).send({ error: 'Canvas not found' });
-    const { graph, providerUser } = runSetup(req.user!, row, body.graph);
-    if (!graph) return reply.code(400).send({ error: req.user!.role === 'viewer' ? 'Viewers can only run saved canvases' : 'Send a canvasId or a graph' });
-    try {
-      validateGraph(graph);
-    } catch (err) {
-      return reply.code(400).send({ error: (err as Error).message });
-    }
-    const runId = startRun({ ownerId: req.user!.id, user: req.user!, canvasId: body.canvasId, graph, question, vars, resolve: resolverFor(providerUser), freeGpu: gpuFreerFor(providerUser), training: trainingFor(req.user!) });
-    return { runId };
   });
 
   // ---- Run repeatedly (batch) ----
@@ -181,13 +228,14 @@ export function runRoutes(app: FastifyInstance) {
 
   /** One stored run with all its events, for replaying it as an animation. */
   app.get('/api/runs/:id', { preHandler: requireUser }, async (req, reply) => {
+    const inputs = ['1', 'true'].includes(String((req.query as { inputs?: string }).inputs ?? ''));
     const row = db
       .prepare('SELECT id, question, status, started_at, finished_at, final, cost, events FROM runs WHERE id = ? AND owner_id = ?')
       .get((req.params as { id: string }).id, req.user!.id) as Record<string, any> | undefined;
     if (!row) return reply.code(404).send({ error: 'Run not found' });
     if (row.status === 'running') return reply.code(409).send({ error: 'This run is still going' });
     const events = JSON.parse(row.events ?? '[]') as RunEvent[];
-    return { id: row.id, question: row.question, status: row.status, final: row.final ?? undefined, cost: row.cost ?? undefined, outputs: nodeOutputs(events), events };
+    return { id: row.id, question: row.question, status: row.status, final: row.final ?? undefined, cost: row.cost ?? undefined, outputs: nodeOutputs(events, { inputs }), events: publicEvents(events) };
   });
 
   app.delete('/api/runs/:id', { preHandler: requireUser }, async (req) => {
@@ -212,7 +260,7 @@ export function runRoutes(app: FastifyInstance) {
       res.write('event: end\ndata: {}\n\n');
       res.end();
     };
-    const unsubscribe = subscribe(id, req.user!.id, (ev) => res.write(`data: ${JSON.stringify(ev)}\n\n`), end);
+    const unsubscribe = subscribe(id, req.user!.id, (ev) => res.write(`data: ${JSON.stringify(ev.sent ? publicEvents([ev])[0] : ev)}\n\n`), end);
     if (!unsubscribe) {
       res.write(`event: error\ndata: ${JSON.stringify({ error: 'Run not found' })}\n\n`);
       clearInterval(ping);

@@ -1,4 +1,4 @@
-import type { CanvasGraph, CanvasNode, ModelInfo, ModelRef, OutputFile, RunEvent, RunStatus } from '@hivemind/shared';
+import type { CanvasGraph, CanvasNode, ModelInfo, ModelRef, OutputFile, RunEvent, RunStatus, SentCall } from '@hivemind/shared';
 import { NODES, type ChatContext, type NodeInput, type NodeServices } from '../nodes/index.js';
 import type { DecisionRequest, DecisionResult } from '../providers/decisions.js';
 import type { ChatMessage, ProviderAdapter } from '../providers/types.js';
@@ -162,6 +162,8 @@ export async function runGraph(
       let ready = false;
       let loadMs: number | undefined;
       let sizeBytes: number | undefined;
+      // What the last chat call sent (GET /api/runs/:id?inputs=1).
+      let sent: SentCall | undefined;
       const files: OutputFile[] = [];
       deps.emit({ ...base, type: 'node_start', ...(provider?.local && { local: true }) });
       const markReady = () => {
@@ -172,6 +174,7 @@ export async function runGraph(
 
       const call = async (messages: ChatMessage[], ref: ModelRef, think?: boolean, json?: boolean): Promise<string> => {
         const p = await deps.resolve(ref.providerId);
+        sent = { providerId: ref.providerId, model: ref.model, messages: messages.map((m) => ({ ...m })) };
         let out = '';
         let thought = false;
         let callLoad: number | undefined;
@@ -356,6 +359,7 @@ export async function runGraph(
         elapsedMs: Date.now() - t0,
         loadMs,
         sizeBytes,
+        ...(sent && { sent }),
       });
     };
 

@@ -18,10 +18,12 @@ import {
 import { captionPictures, picturesFromFolder } from '../lab/imageLora.js';
 import { requireUser } from './auth.js';
 import { trainDepsFor } from './providers.js';
+import { datasetAllowed } from './scope.js';
 
 /** Training data for every kind of model. Viewers can't change anything (the viewer guard blocks writes). */
 export function datasetRoutes(app: FastifyInstance) {
-  app.get('/api/datasets', { preHandler: requireUser }, async (req) => listDatasets(req.user!.id));
+  // A limited token sees only the datasets its scope names.
+  app.get('/api/datasets', { preHandler: requireUser }, async (req) => listDatasets(req.user!.id).filter((d) => datasetAllowed(req.user!, d.name)));
 
   app.post('/api/datasets', { preHandler: requireUser }, async (req) => {
     const b = (req.body ?? {}) as { name?: string; kind?: DatasetKind; description?: string; system?: string };

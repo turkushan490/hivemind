@@ -8,6 +8,7 @@ import { trainingServices } from '../lab/services.js';
 import { isOllamaDecisionModel, SPAM_TEST, SPAM_TEST_STATE } from '../providers/decisions.js';
 import { logError } from '../errors.js';
 import { requireUser, type User } from './auth.js';
+import { canvasAllowed, datasetAllowed, trainingAllowed } from './scope.js';
 
 interface ProviderRow {
   id: string;
@@ -146,10 +147,18 @@ export function trainDepsFor(user: User) {
   };
 }
 
-/** The training blocks' services for a run, or undefined for viewers and limited API tokens. */
-export function trainingFor(user: User | undefined) {
-  if (!user || user.role === 'viewer' || user.scope) return undefined;
-  return trainingServices(user.id, trainDepsFor(user));
+/**
+ * The training blocks' services for a run, or undefined for viewers and limited API tokens without training rights.
+ * A limited token with training: true reaches only its datasets and canvases. A scheduled run trains in the
+ * training window (nightly).
+ */
+export function trainingFor(user: User | undefined, opts: { scheduled?: boolean } = {}) {
+  if (!user || user.role === 'viewer' || !trainingAllowed(user)) return undefined;
+  return trainingServices(user.id, trainDepsFor(user), {
+    nightly: !!opts.scheduled,
+    tokenId: user.tokenId,
+    ...(user.scope && { allowDataset: (name: string) => datasetAllowed(user, name), allowCanvas: (id: string) => canvasAllowed(user, id) }),
+  });
 }
 
 /** Fresh install: add Ollama so local models work right away. */

@@ -4,12 +4,12 @@ import { fill, jsonCall, labelled, type NodeContext, type NodeDefinition } from 
 /**
  * Training blocks: build datasets inside workflows (Generate examples, Add to dataset), train on them (Train),
  * compare models (Evaluate) and put the winner to work (Deploy). They use the run's training services, which are
- * only there for users who may train (not viewers or limited API tokens).
+ * only there for users who may train (not viewers, nor limited API tokens without training: true).
  */
 
 const services = (ctx: NodeContext) => {
   const t = ctx.services.training;
-  if (!t) throw new Error('Training blocks need a user who may train (viewers and limited API tokens may not)');
+  if (!t) throw new Error('Training blocks need a user who may train (viewers may not, nor limited API tokens without training rights)');
   return t;
 };
 
@@ -121,8 +121,19 @@ export const TRAINING_NODES: Record<'generate' | 'dataset' | 'train' | 'evaluate
       const c = ctx.node.config;
       const name = fill(c.trainName ?? '', ctx).trim().toLowerCase();
       const t = services(ctx);
+      const dataset = datasetName(ctx);
+      // The output is JSON, so the blocks after it (or DungeonMind) can read what happened.
+      const result = (status: 'started' | 'done' | 'skipped', model: string, jobId: string | null, examples: number) => JSON.stringify({ status, model, jobId, examples });
+      const min = Math.max(0, Math.floor(c.minNewExamples ?? 0));
+      if (min > 0) {
+        const fresh = t.newExamples(dataset, name);
+        if (fresh < min) {
+          ctx.progress(`Skipped: ${fresh} new example${fresh === 1 ? '' : 's'} in "${dataset}" since the last ${name.split(':')[0]}, ${min} needed`);
+          return result('skipped', name, null, fresh);
+        }
+      }
       const job = await t.startTrain({
-        dataset: datasetName(ctx),
+        dataset,
         base: c.trainBase!.trim(),
         name,
         target: c.trainTarget,
@@ -131,15 +142,16 @@ export const TRAINING_NODES: Record<'generate' | 'dataset' | 'train' | 'evaluate
         trigger: c.trainTrigger,
         flavor: c.trainFlavor,
         maxUsd: c.trainMaxUsd,
+        nightly: c.nightly,
       });
       const where = job.backend === 'hf-jobs' ? ` on Hugging Face (about $${job.estimateUsd?.toFixed(2)})` : job.backend === 'comfyui' ? ' in ComfyUI' : '';
-      ctx.progress(`Queued ${job.name}${where} · ${job.rows} examples`);
-      if (!c.trainWait)
-        // Training takes hours: the run goes on; the job shows in Lab → New model.
-        return `Training ${job.name}${where} on ${job.rows} examples from "${datasetName(ctx)}" (base ${c.trainBase}). Job ${job.id} — follow it in Lab → New model; it waits for the GPU when it's busy.`;
+      ctx.progress(`${job.state === 'queued' ? 'Waiting for the training window:' : 'Queued'} ${job.name}${where} · ${job.rows} examples`);
+      // Training takes hours: without "wait" the run goes on; the job shows in Lab → New model.
+      if (!c.trainWait) return result('started', job.name, job.id, job.rows);
       const end = await t.waitTrain(job.id, ctx.signal ?? new AbortController().signal, (note) => ctx.progress(`${job.name}: ${note}`));
       if (end.state !== 'done') throw new Error(`Training ${job.name} ended: ${end.state}${end.error ? ` — ${end.error}` : ''}`);
-      return end.lora ? `The LoRA ${end.lora} is ready: pick it in an Image block.` : `${job.name} is ready in Ollama.`;
+      ctx.progress(end.lora ? `The LoRA ${end.lora} is ready: pick it in an Image block` : `${job.name} is ready in Ollama`);
+      return result('done', end.lora ?? job.name, job.id, job.rows);
     },
   },
 

@@ -1,105 +1,101 @@
-# Training Lab (DungeonMind)
+# Training Lab
 
-The **Lab** tab simulates D&D games with fake players, checks every DM turn, builds a fine-tuning dataset and
-compares models. It covers L1 (simulator and datasets) and L2 (scoreboard) of
-[HIVEMIND_CHANGES.md](HIVEMIND_CHANGES.md); the code lives in `server/src/lab/` and `web/src/lab/`.
+The **Lab** tab makes your own AI models: collect examples in **datasets**, then train a base model on them with
+**New model**. The result goes into Ollama (or ComfyUI, for picture LoRAs) under its own name; your other models
+are not changed. The code lives in `server/src/lab/` and `web/src/lab/`.
 
-## Simulator
-
-- **Setup:**
-  - **DM model(s):** pick more than one to compare them. Games take turns between the models, and game *n* of
-    every model uses the same seed: same scenario, same party, same dice.
-  - **Fake players:** one model plays every persona:
-    - a reckless fighter;
-    - a rules-lawyer wizard who tries to cheat spell slots;
-    - a sneaky rogue;
-    - a healer cleric;
-    - a typo-heavy casual bard ("ik cast fierbolt op die gast").
-  - **Rules-checker:** Jev for the fast pass, an LLM judge, or both.
-  - **Size and seed:** party size 2–5, turns per game, and the seed.
-- **Each turn:**
-  1. The server rolls the dice.
-  2. The players act.
-  3. The DM answers in JSON mode with narration, the rolls it needs, the resources spent, HP changes,
-     conditions and XP.
-- **Mini bookkeeper** (`server/src/lab/state.ts`): tracks HP, spell slots, counters (current / max / recharge),
-  conditions and XP. It applies the DM's bookkeeping, so spending a resource at 0 (e.g. "Channel Divinity used
-  while at 0/1") is caught for certain.
-- **Rules-checker:**
-  - The **Jev fast pass** asks four yes/no questions per turn (missing roll, untracked resource, invented
-    number, contradiction) plus a story score.
-  - The **LLM judge** only checks turns that Jev flags (p ≥ 0.5), that the bookkeeper caught, or that fall in a
-    random 10% sample. Without Jev it checks every turn.
-  - The judge also reads matching rules from `rules:srd51` memory when that has been imported.
-  - Both verdicts are stored.
-- **Start / Stop:**
-  - The sim runs until you press Stop.
-  - The status panel shows games, turns, errors per 100 turns and turns per minute.
-  - A failed turn shows the error and is logged to **Problems**. Five failures in a row stop the run.
-- **Real runs first:** every simulated model call takes the GPU host lock and gives it back right after, so a
-  HiveMind or DungeonMind run that is waiting goes next.
+The D&D simulator, review queue and scoreboard that used to be here moved to **DungeonMind** (milestone 9).
+DungeonMind fills its own datasets and starts training over the API with a limited token; see
+[HIVEMIND_CHANGES.md → M9](HIVEMIND_CHANGES.md#m9--hivemind-as-dungeonminds-training-engine) for the exact API.
 
 ## Datasets
 
-- `lab_turns` keeps per turn:
-  - the input (exactly what the DM saw) and the output;
-  - both verdicts and the error types;
-  - the story scores;
-  - tokens/s and time;
-  - the correction.
-- Bad turns go to the **review queue**: accept the judge's correction (or edit it first) or reject the turn.
-- **Export JSONL** gives chat format (`{"messages":[system, user, assistant]}`) for SFT: clean turns as they
-  were, bad turns only with their accepted correction.
+- Kinds: **text / chat**, **decisions** (for decision models), **pictures** (image LoRAs) and voice.
+- Fill them by uploading a file (JSONL, CSV or plain text), typing examples, 👍 on good answers, or from a workflow
+  (Generate examples, Add to dataset).
+- Examples can wait for **review**; pending and rejected ones are never trained on.
+- **Export JSONL** gives what the trainer gets: chat format (`{"messages":[system, user, assistant]}`) for text.
+- The "DungeonMind DM" dataset (from the old simulator) stays, with its examples.
 
-## Scoreboard
+## New model
 
-Per model and prompt version, best first:
-- JSON valid %;
-- rule and number errors per 100 turns;
-- missed resources per 100 turns;
-- story score (LLM judge and Jev);
-- tokens/s and time per turn;
-- VRAM (from what Ollama has loaded right now).
+One screen in three steps:
 
-**Set as DungeonMind default** puts the model into the AI model blocks of your `dnd-*` canvases.
+1. **Your data:** pick a dataset; the list shows how many examples are ready. With too few (fewer than 20), the
+   page says so and links to the fix: add examples in Datasets, review the waiting ones, or let a workflow write
+   them. **Test run anyway** trains on a handful, just to check that training works.
+2. **Pick a brain:**
+   - **Small & fast** — Qwen3.5 2B;
+   - **Balanced** — Qwen3.5 4B;
+   - **Smart, slow** — Qwen3 8B.
+
+   Each card says whether it fits the GPU HiveMind found and about how long training takes (rough speeds of a 16 GB GPU, plus
+   the first download of the base). **Advanced** holds every base model, any Hugging Face id Unsloth can train, the
+   new model's name and its Ollama server, the rounds over the data (epochs), training on a rented Hugging Face
+   machine instead, and the trainer's address.
+3. **Start.** When the button is grey, its label says why (no dataset, too few examples, no Ollama server, the
+   trainer isn't ready, the cloud price is still being worked out). Tick **Only in the training window** to let it
+   wait for the night.
+
+The job list shows every job: its state, steps, loss (with a small loss curve), time left, the trainer log and,
+after training, a **try-out**: what the new model answered to one example. **Delete** removes a finished, failed or
+cancelled job and its files (cancel a running one first); **Delete with model** also removes the model from Ollama.
+
+### How it trains
+
+- **Trainer:** built into HiveMind. The image is based on `unsloth/unsloth:core` (PyTorch, CUDA, Unsloth, TRL,
+  llama.cpp) and HiveMind starts the trainer (`server/trainer/server.py`) itself, on localhost only, restarting it if
+  it stops. Give the HiveMind container the GPU (Unraid Extra Parameters: `--gpus=all`); without a GPU everything
+  else works and training says so. Base models are cached in `/data/trainer-cache`. `TRAINER_URL` (or Advanced)
+  can point at a trainer on another machine instead.
+- **How:** LoRA (rank 16; 4-bit loading from 4B up). GPUs without bfloat16 (T4) train in float32, as Unsloth's own
+  T4 notebooks do. Then a `q4_k_m` GGUF, which HiveMind uploads to Ollama (`/api/blobs` + `/api/create`).
+- **GPU:** HiveMind takes the GPU lock for the whole job and frees Ollama and ComfyUI first. Runs started meanwhile
+  wait in line. **Pause** saves a checkpoint and frees the GPU; **Resume** continues from it.
+- After a HiveMind restart, a job that is still training is followed again.
+- Errors (out of GPU memory, a base that can't load, a failed GGUF export) show on the job and in **Problems**,
+  with the trainer log.
+- **Hugging Face:** connect it under Settings → Hugging Face to rent a bigger GPU for one job (the price is shown
+  first and must be confirmed, within a daily limit) and to publish finished models.
+
+## Training window
+
+**Settings → Training** sets the window, 03:00–08:00 by default (server time, `TZ`; it may cross midnight).
+
+- Jobs started with "Only in the training window" (`nightly`), and every job a **scheduled workflow** starts, wait
+  as **queued** until the window opens.
+- When the window closes while such a job trains, it pauses with a checkpoint (the GPU is free for the day) and
+  continues when the window opens again.
+
+## Training from workflows and on a schedule
+
+- The **Train** block starts a job from a workflow. Its output is JSON:
+  `{"status": "started" | "done" | "skipped", "model", "jobId", "examples"}`.
+  - **Only train when there are at least N new examples** (`minNewExamples`): it counts the examples the last
+    finished training of this model name didn't have, and passes with `skipped` when there are fewer.
+  - **Only in the training window** (`nightly`).
+- **Schedule** (Workflow editor toolbar): the saved workflow runs by itself at a time of day, on the days you pick,
+  as you. A workflow that adds examples and ends in a Train block with `minNewExamples` makes a nightly
+  "train when there is enough new data" loop.
+
+## Live view over the API
+
+`GET /api/lab/train/:id/events` streams a job as Server-Sent Events: state changes, step/total, loss per step, time
+left, the trainer's log lines (download, training, GGUF export, Ollama import) and the try-out answer. Exact shapes
+are in [HIVEMIND_CHANGES.md → M9](HIVEMIND_CHANGES.md#live-training-events-trainevents).
 
 ## API
 
 | Method + path | What |
 |---|---|
-| `GET /api/lab` | The running sim's status and the past runs |
-| `POST /api/lab/start` | `{dm: [ModelRef], players, judge?, jev?, partySize?, turnsPerGame?, seed?, maxGames?, maxTurns?, sample?, rulesKey?}` |
-| `POST /api/lab/stop` | Stops it after the current call |
-| `GET /api/lab/turns?runId=&pending=1` | Turns, or the review queue |
-| `PATCH /api/lab/turns/:id` | `{review: "accepted" \| "rejected", corrected?}` |
-| `GET /api/lab/export.jsonl?runId=` | The dataset |
-| `GET /api/lab/scoreboard?runId=` | The scoreboard |
-| `POST /api/lab/default` | `{model}`: set as the DungeonMind default |
-
-## New model (L3)
-
-**Lab → New model** trains a base model on the dataset (clean turns plus accepted corrections) and puts the result
-into Ollama under its own name, e.g. `dungeonmind-dm:20261028`. Your existing models are not changed.
-
-- **Trainer:** built into HiveMind. The image is based on `unsloth/unsloth:core` (PyTorch, CUDA, Unsloth, TRL,
-  llama.cpp) and HiveMind starts the trainer (`server/trainer/server.py`) itself, on localhost only, restarting it if
-  it stops. Give the HiveMind container the GPU (Unraid Extra Parameters: `--gpus=all`); without a GPU everything
-  else works and training says so. Base models are cached in `/data/trainer-cache`. `TRAINER_URL` (or Advanced in
-  the tab) can point at a trainer on another machine instead.
-- **Base models** (Apache-2.0), with what fits a 16 GB Tesla T4: Qwen3 8B (4-bit), Qwen3.5 4B (4-bit), Qwen3.5 2B,
-  Qwen3.5 0.8B (quick test). Qwen3.5 9B needs a bigger GPU. Any Hugging Face model Unsloth can train works.
-  A GGUF-only model (such as most `hf.co/...` Ollama models) can't be trained; pick its base instead.
-- **How:** LoRA (rank 16; 4-bit loading from 4B up). GPUs without bfloat16 (T4) train in float32, as Unsloth's own
-  T4 notebooks do, because Qwen3.5 gives NaNs in float16. Then a text-only `q4_k_m` GGUF. HiveMind uploads it to Ollama
-  (`/api/blobs` + `/api/create`), which reads the chat template from the GGUF.
-- **GPU:** HiveMind takes the GPU lock for the whole job and frees Ollama and ComfyUI first; a running simulation
-  is stopped. Runs started meanwhile wait in line. Cancel stops the trainer.
-- **Data:** at least 20 examples; a few hundred or more is what makes a difference.
-- After a HiveMind restart, a job that is still training is followed again.
-- Errors (out of GPU memory, a base that can't load, a failed GGUF export) show on the job and in **Problems**,
-  with the trainer log.
-
-## Not built yet (L4)
-
-Training on Hugging Face and publishing the GGUF there: see the TODO at the end of
-[HIVEMIND_CHANGES.md](HIVEMIND_CHANGES.md).
+| `GET /api/lab/train` | The trainer, the base models, your jobs, Hugging Face and the training window |
+| `POST /api/lab/train` | Start a job: `{datasetId, base, name, providerId, epochs?, maxSteps?, allowSmall?, nightly?, flavor?, confirmUsd?}` |
+| `GET /api/lab/train/:id` | One job |
+| `GET /api/lab/train/:id/events` | Live events (SSE) |
+| `POST /api/lab/train/:id/cancel` · `/pause` · `/resume` | Control a job |
+| `DELETE /api/lab/train/:id[?model=1]` | Delete a finished job (and its model) |
+| `POST /api/lab/train/estimate` · `POST /api/lab/train/:id/publish` | Hugging Face price and publishing |
+| `PUT /api/lab/train/settings` | The trainer's address (admin) |
+| `GET /api/lab/window` · `PUT /api/settings/training` | The training window (setting it: admin) |
+| `GET/PUT/DELETE /api/workflows/:id/schedule` | A workflow's schedule |
+| `/api/datasets…` | Datasets and their examples |

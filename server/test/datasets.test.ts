@@ -92,23 +92,4 @@ describe('datasets', () => {
     expect((await call('POST', '/api/datasets', { name: 'x' }, 'v1')).statusCode).toBe(403);
   });
 
-  it('Lab turns become DungeonMind DM examples: clean ones now, corrections once accepted', () => {
-    db.prepare("INSERT INTO lab_runs (id, owner_id, name, config, status) VALUES ('lr', 'u1', 'sim', '{}', 'stopped')").run();
-    const add = (output: string, errors: string, review: string | null, corrected: string | null = null) =>
-      Number(
-        db
-          .prepare("INSERT INTO lab_turns (run_id, game, turn, seed, model, input, output, json_valid, error_types, review, corrected) VALUES ('lr', 0, 0, 1, 'm', 'act', ?, 1, ?, ?, ?)")
-          .run(output, errors, review, corrected).lastInsertRowid,
-      );
-    const clean = add('{"ok":1}', '[]', null);
-    const bad = add('{"bad":1}', '["roll"]', 'pending', '{"fixed":1}');
-    ds.migrateLabTurns();
-    const dm = ds.findDataset('u1', ds.DM_DATASET)!;
-    expect(dm.items).toBe(1);
-    db.prepare("UPDATE lab_turns SET review = 'accepted' WHERE id = ?").run(bad);
-    ds.syncLabTurn('u1', bad);
-    expect(ds.exportDataset(dm.id)).toContain('fixed');
-    expect(ds.trainableCount(dm.id)).toBe(2);
-    expect(clean).toBeGreaterThan(0);
-  });
 });

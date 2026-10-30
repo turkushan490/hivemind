@@ -1,4 +1,4 @@
-import { SEARCH_SOURCES, type HfSettings, type HomeAssistantSettings, type ModelInfo, type VoiceSettings, type ModelRef, type ProviderInfo, type SearchSettings, type SearchSource } from '@hivemind/shared';
+import { SEARCH_SOURCES, type HfSettings, type HomeAssistantSettings, type ModelInfo, type VoiceSettings, type ModelRef, type ProviderInfo, type SearchSettings, type SearchSource, type TrainWindow } from '@hivemind/shared';
 import { useEffect, useState } from 'react';
 import { api } from '../api';
 import { BuilderModelChooser } from '../canvas/BuilderModelChooser';
@@ -611,6 +611,60 @@ function VoiceSettingsPanel({ isAdmin, active }: { isAdmin: boolean; active: boo
         <SpeakButton text="Hello! This is how HiveMind sounds when it reads an answer aloud." />
         {heard && <span className="w-full text-sm text-emerald-300">Heard: “{heard}”</span>}
       </div>
+    </div>
+  );
+}
+
+/** Settings → Training: the training window. Nightly jobs, and jobs a scheduled run starts, only train inside it. */
+export function TrainingPanel({ isAdmin, active }: { isAdmin: boolean; active: boolean }) {
+  const [w, setW] = useState<TrainWindow | null>(null);
+  const [start, setStart] = useState('03:00');
+  const [end, setEnd] = useState('08:00');
+  useEffect(() => {
+    if (!active) return;
+    api<TrainWindow>('/api/lab/window', { quiet: true })
+      .then((x) => {
+        setW(x);
+        setStart(x.start);
+        setEnd(x.end);
+      })
+      .catch(() => {});
+  }, [active]);
+  if (!w) return null;
+  const save = async () => {
+    try {
+      const next = await api<TrainWindow>('/api/settings/training', { method: 'PUT', body: { start, end } });
+      setW(next);
+      toast(`Training window: ${next.start}–${next.end}`, 'ok');
+    } catch {}
+  };
+  return (
+    <div className="card max-w-2xl space-y-3">
+      <h2 className="font-semibold">Training</h2>
+      <p className="text-sm text-slate-400">
+        The training window: jobs marked &quot;only in the training window&quot; (and every job a scheduled workflow starts) wait as <em>queued</em> until it opens, and
+        pause with a checkpoint when it closes — they go on in the next window. Training takes the GPU, so pick hours nobody uses it. Server time; a window may
+        cross midnight (22:00–06:00).
+      </p>
+      <div className="text-sm">
+        {w.open ? <span className="text-emerald-300">Open now</span> : <span className="text-slate-400">Closed now</span>}
+        <span className="ml-2 text-xs text-slate-500">
+          {w.start}–{w.end}
+        </span>
+      </div>
+      {isAdmin ? (
+        <div className="flex flex-wrap items-center gap-2 text-sm">
+          <span className="text-slate-400">From</span>
+          <input className="input w-28 py-1" type="time" value={start} onChange={(e) => setStart(e.target.value)} />
+          <span className="text-slate-400">to</span>
+          <input className="input w-28 py-1" type="time" value={end} onChange={(e) => setEnd(e.target.value)} />
+          <button className="btn" disabled={start === w.start && end === w.end} onClick={save}>
+            Save
+          </button>
+        </div>
+      ) : (
+        <p className="text-xs text-slate-500">Only an admin can change it.</p>
+      )}
     </div>
   );
 }

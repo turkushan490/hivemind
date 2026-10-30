@@ -1,7 +1,6 @@
 # HiveMind changes for DungeonMind
 
-**Status:** Part 1 (M0 §1–§10) and Lab **L1–L2** are built (HiveMind milestone 7). **L3 is built** (Lab → New model, see [lab.md](lab.md)); **L4 is not built yet**: see the TODO at the end. Notes on how it was built are marked *Built:*. User guides: [lab.md](lab.md), [decisions.md](decisions.md).
-
+**Status:** Part 1 (M0 §1–§10) is built (HiveMind milestone 7), and so is **M9** (milestone 9: HiveMind as DungeonMind's training engine — schedules, the training window, training with limited tokens, per-run models, block inputs, live training events; see [M9](#m9--hivemind-as-dungeonminds-training-engine)). Part 2 (the D&D Lab) was built as L1–L4 and has **moved to DungeonMind** in M9: HiveMind keeps only the generic datasets and training. Notes on how it was built are marked *Built:*. User guides: [lab.md](lab.md), [decisions.md](decisions.md).
 ## Why
 
 **DungeonMind** (`github.com/turkushan490/dungeonmind`, separate repo, AGPL-3.0) is a self-hostable website where groups play D&D 5e together with an **AI Dungeon Master**. DungeonMind owns the game: sheets, dice, rules math, saves. It uses **HiveMind for all AI**: LLMs, ComfyUI images and memory.
@@ -255,6 +254,214 @@ curl -s -X POST $H/api/memory/keys/rules:test/import -H "$T" -H 'content-type: a
 curl -s -X POST $H/api/memory/keys/rules:test/search -H "$T" -H 'content-type: application/json' -d '{"query":"grapple","limit":3}'
 ```
 
+## M9 — HiveMind as DungeonMind's training engine
+
+*Built (milestone 9).* DungeonMind now owns everything D&D: simulating games, reviewing turns, the scoreboard,
+reports and the nightly promotion of a new DM model. HiveMind is the generic engine underneath: datasets,
+training, the training window, schedules and models. The Lab's D&D simulator, review queue and scoreboard are
+gone from HiveMind (see Part 2). All bodies are JSON; errors are `{ error }` with the status shown.
+
+### Health flags
+
+`GET /api/health` → `features` also lists `schedules`, `trainingWindow`, `scopedTraining`, `modelOverride`,
+`nodeInputs` and `trainEvents`.
+
+### Removed
+
+`GET /api/lab`, `POST /api/lab/start`, `POST /api/lab/stop`, `GET /api/lab/turns`, `PATCH /api/lab/turns/:id`,
+`GET /api/lab/export.jsonl`, `GET /api/lab/scoreboard`, `POST /api/lab/default` → 404. The tables `lab_runs` and
+`lab_turns` stay (unused), and so does the "DungeonMind DM" dataset with its examples.
+
+### Limited tokens that may train (`scopedTraining`)
+
+`POST /api/tokens` takes two more scope fields:
+
+```json
+{ "name": "DungeonMind", "canvases": ["dnd-*"], "memory": ["dnd:*", "rules:*"], "training": true, "datasets": ["DungeonMind*"] }
+```
+
+| Field | Type | Meaning |
+|---|---|---|
+| `training` | boolean, default `false` | May start training jobs and use the jobs it started. |
+| `datasets` | string[] | Dataset **names**, exact or ending in `*`. Without it the token reaches no dataset. |
+
+The answer (and `GET /api/tokens`) echoes `scope` with these fields. Any of `canvases`, `memory`, `datasets` or
+`training: true` makes the token limited. On top of the canvas, run, memory, files and `/v1` routes, a limited
+token may use:
+
+| Route | Needs | Rule |
+|---|---|---|
+| `GET /api/datasets` | `datasets` | Lists only matching datasets. |
+| `POST /api/datasets` | `datasets` | `name` must match, else 403. |
+| `GET /api/datasets/:id/items`, `POST /api/datasets/:id/items` | `datasets` | Dataset must match, else 403. |
+| `DELETE /api/datasets/items/:itemId` | `datasets` | The item's dataset must match, else 403. |
+| `POST /api/lab/train` | `training` | `datasetId` is required and must be a matching dataset; no `flavor` (no Hugging Face machines). |
+| `GET /api/lab/train` | `training` | `jobs` holds only the jobs this token started. |
+| `GET /api/lab/train/:id`, `POST /api/lab/train/:id/cancel`, `DELETE /api/lab/train/:id`, `GET /api/lab/train/:id/events` | `training` | Only jobs this token started, else 403. |
+| `GET /api/lab/window` | `training` | |
+| `GET/PUT/DELETE /api/workflows/:id/schedule` | — | Only canvases in `canvases`, else 403. |
+
+Everything else (pause/resume, publish, PATCH or DELETE a dataset, the Lab settings) answers 403
+`This API token is limited and may not …`. In runs, the training blocks (Generate examples, Add to dataset, Train,
+Evaluate, Deploy) work for a token with `training: true`, but only with matching datasets (a block naming another
+dataset fails with `This API token may not use dataset "<name>"`) and Deploy only touches canvases in its scope.
+Without `training: true` they fail as before.
+
+### Per-run model override (`modelOverride`)
+
+`POST /api/runs` takes `models`, also from limited tokens:
+
+```json
+{ "canvasId": "dnd-narrate", "question": "…", "vars": {}, "models": { "*": { "providerId": "ollama", "model": "dungeonmind-dm:20261030" }, "state": { "providerId": "ollama", "model": "qwen3:8b" } } }
+```
+
+- A key is a block (node) id or `"*"`. `"*"` sets the model of every AI model block (`type: "llm"`); a node id sets
+  that block's `model` whatever its type and wins over `"*"`. Auto-model blocks given a model use it.
+- Only this run changes; the saved canvas does not. The models come from the providers the run uses (the canvas
+  owner's, as before).
+- 400 when `models` is not an object, a value is not `{providerId, model}` (both non-empty strings), or a key is
+  neither `"*"` nor a block id of the workflow (`models: this workflow has no block "<id>"`).
+
+### The messages each block sent (`nodeInputs`)
+
+`GET /api/runs/:id?inputs=1` adds three fields to every entry of `outputs` whose block called a chat model:
+
+```json
+"outputs": { "narration": { "nodeId": "n2", "type": "llm", "text": "…", "providerId": "ollama", "model": "qwen3:8b",
+  "messages": [{ "role": "system", "content": "…" }, { "role": "user", "content": "…" }] } }
+```
+
+`messages` is exactly what the block's **last** model call sent (blocks that call more than once, like Generate
+examples, show the last call). They are stored with the run (`node_done.sent` in the stored events); without
+`?inputs=1` they are left out of `outputs`, and `events` (here and in `GET /api/runs/:id/events`) never carry them.
+Runs from before M9 have no `messages`.
+
+### Workflow schedules (`schedules`)
+
+A workflow runs by itself at a time of day, on chosen days, in the server's **local time** (`TZ`). One schedule
+per workflow and user. Table `workflow_schedules(canvas_id, owner_id, time, days, enabled, last_run_at)`.
+
+| Method + path | Body | Answer |
+|---|---|---|
+| `GET /api/workflows/:id/schedule` | — | `WorkflowSchedule`; 404 `This workflow has no schedule` (or `Workflow not found`). |
+| `PUT /api/workflows/:id/schedule` | `{ time: "HH:MM", days?: ["mon",…,"sun"], enabled?: boolean }` | `WorkflowSchedule`. Creates or updates; omitted fields keep their value (new: every day, enabled). 400 on a bad time/day list, 404 when the workflow isn't yours or shared with you. |
+| `DELETE /api/workflows/:id/schedule` | — | `{ ok: true }`; 404 when there is none. |
+
+```json
+{ "canvasId": "dnd-nightly", "time": "03:15", "days": ["mon", "tue", "wed", "thu", "fri", "sat", "sun"], "enabled": true,
+  "lastRunAt": "2026-10-30T02:15:02.000Z", "nextRunAt": "2026-10-31T02:15:00.000Z" }
+```
+
+- `time` is 24-hour `HH:MM`; `days` is any of `mon tue wed thu fri sat sun` (case-insensitive in, lowercase and in
+  week order out). `lastRunAt` / `nextRunAt` are ISO UTC; `nextRunAt` only while enabled.
+- A minute ticker (`server/src/main.ts`) starts each due workflow like `POST /api/runs {canvasId, question:
+  "Scheduled run (HH:MM)"}`, **as the user who set the schedule**, with the saved canvas. It runs once per day it is
+  due; a time missed by less than an hour (a restart) still runs, an older one waits for its next time. A run
+  that can't start is logged in Problems.
+- Every training job a scheduled run starts (Train block) is a nightly job: it waits for the training window.
+- Viewers can't set schedules (403).
+
+### Training window (`trainingWindow`)
+
+| Method + path | Body | Answer |
+|---|---|---|
+| `GET /api/lab/window` | — | `{ start: "03:00", end: "08:00", open: boolean }` (local time, `open` = now) |
+| `PUT /api/settings/training` (admin) | `{ start?: "HH:MM", end?: "HH:MM" }` | the same shape; 400 on a bad time or start = end |
+
+Default 03:00–08:00 (Settings → Training). A window may cross midnight (22:00–06:00). `GET /api/lab/train` also
+returns it as `window`.
+
+**Nightly jobs** are jobs started with `nightly: true` (`POST /api/lab/train` or the Train block) and every job a
+scheduled run starts:
+- Outside the window they wait in the new state **`queued`** (note `Waits for the training window (03:00–08:00)`).
+- When it opens they queue for the GPU and train as usual.
+- When it closes while they train, they pause the way Pause does (a checkpoint after the current step, the GPU is
+  free) and go back to `queued`; at the next window start they continue from the checkpoint. Cloud (Hugging Face)
+  and ComfyUI jobs wait for the window but don't pause.
+- Cancel works while `queued`. After a restart a `queued` job waits again.
+
+### Training jobs
+
+`TrainJob` (`GET /api/lab/train` → `jobs`, `GET /api/lab/train/:id`, `POST /api/lab/train`) gains:
+`state: "queued"`, `nightly?: true`, `losses?: [{step, loss}]` (the last 500 logged steps) and
+`sample?: {prompt, answer, expected?}` (the trained model's answer to the first example of its dataset, made
+after training, before the GGUF export). `TrainBase` gains `vramGb` (about how much GPU memory training needs).
+
+**`POST /api/lab/train`** (changed) — body as before plus `nightly?: boolean`:
+
+```json
+{ "datasetId": "…", "base": "unsloth/Qwen3.5-2B", "name": "dungeonmind-dm:20261030", "providerId": "ollama", "epochs": 2, "nightly": true }
+```
+
+Without `datasetId` it trains on the "DungeonMind DM" dataset when there is one, else 400 `Pick the dataset to
+train on (datasetId)`. Answer: the `TrainJob` (`state` is `queued` for a nightly job outside the window, else
+`waiting`).
+
+**`GET /api/lab/train/:id`** (new) → the `TrainJob`; 404 when it isn't yours.
+
+**`DELETE /api/lab/train/:id[?model=1]`** (new) → `{ ok: true, modelDeleted: boolean }`.
+- Removes the job record and its folder (dataset copy, checkpoints, GGUF).
+- Only finished jobs (`done`, `error`, `cancelled`, `interrupted`) and `paused` ones: anything still running or
+  waiting (also `queued`) answers **409** `This job is still running or waiting: cancel it first`.
+- `?model=1` (or `true`) also deletes the model the job made from its Ollama, with the same rules as
+  `DELETE /api/ollama/:providerId/models` (a shared provider needs an admin, 403). Only for `done` jobs that are
+  not image LoRAs; otherwise `modelDeleted` is `false`. When Ollama refuses, the answer is its error (502) and the
+  job is kept.
+- 404 when it isn't yours.
+
+### Live training events (`trainEvents`)
+
+`GET /api/lab/train/:id/events` — Server-Sent Events (`text/event-stream`), 404 JSON when the job isn't yours. The
+first messages replay everything so far, then changes follow about once a second; the stream closes after `end`.
+Every message has a named event and one JSON `data` line:
+
+| `event` | `data` | When |
+|---|---|---|
+| `state` | `{ state, note?, error? }` | The state or its note changed (`state` is a `TrainState`). |
+| `progress` | `{ step?, totalSteps?, loss?, etaS? }` | Step, loss or time left changed. |
+| `loss` | `{ step, loss }` | Once per logged training step, in order. |
+| `log` | `{ source: "trainer" \| "hivemind", line }` | A new log line: the trainer's own (`[download]`, `[train] step …`, `[sample]`, `[gguf] …`, library output) or HiveMind's (waiting for the window or the GPU, starting, pausing, `Importing … into Ollama`, `Ready: …`). |
+| `sample` | `{ prompt, answer, expected? }` | The trained model's answer to one example, after training. |
+| `end` | `{ state }` | The job reached `done`, `error`, `cancelled` or `interrupted`. |
+
+```
+event: state
+data: {"state":"training","note":"Training started"}
+
+event: loss
+data: {"step":12,"loss":1.4831}
+
+event: log
+data: {"source":"trainer","line":"[train] step 12/80 loss 1.4831"}
+
+event: end
+data: {"state":"done"}
+```
+
+Comment lines (`: ping`) keep the connection open. A paused or queued job keeps the stream open until it ends.
+
+### Train block (`server/src/nodes/training.ts`)
+
+New options (also in the block's settings): `minNewExamples?: number` and `nightly?: boolean`.
+- `minNewExamples`: train only when the dataset has at least this many trainable examples that the last **finished**
+  (`done`) training of this model name did not have. The model name counts without its tag, so `dm:20261030` and
+  `dm:20261031` are the same model. Without such a training, every trainable example counts.
+- `nightly`: the job waits for the training window.
+
+The block's output (what the next blocks and `outputs` get) is now JSON:
+
+```json
+{ "status": "started", "model": "dungeonmind-dm:20261030", "jobId": "…", "examples": 412 }
+```
+
+| `status` | When | `jobId` | `examples` |
+|---|---|---|---|
+| `started` | The job was queued (the block doesn't wait). | the job | examples in the training set |
+| `done` | "Wait until it's ready" was on and the job finished. | the job | examples in the training set |
+| `skipped` | Fewer new examples than `minNewExamples`; the run goes on. | `null` | the new examples counted |
+
+For an image LoRA, `model` is the LoRA file once `done`.
+
 ---
 
 ## The DungeonMind canvases (installed by DungeonMind, documented here)
@@ -277,6 +484,12 @@ Every prompt gets `{{vars.campaign}}`, `{{vars.party}}`, `{{vars.recent}}` and `
 ---
 
 # Part 2 — Training Lab (D&D only)
+
+> **Moved to DungeonMind (M9).** The simulator, mini bookkeeper, judge, review queue, scoreboard and "Set as
+> DungeonMind default" were removed from HiveMind; DungeonMind does them itself and uses HiveMind's datasets,
+> training jobs, schedules and the training window over the API ([M9](#m9--hivemind-as-dungeonminds-training-engine)).
+> The tables `lab_runs` / `lab_turns` and the "DungeonMind DM" dataset stay. L3 and L4 were built in HiveMind as
+> generic training (Lab → New model, Hugging Face Jobs). What follows is the original plan, kept for the record.
 
 **Goal:** a **fast** DM model that tells good dark-fantasy stories and **never misses bookkeeping**: resources used, rolls requested, JSON valid. HiveMind finds it by simulating many games, scoring models, fine-tuning one, and serving it back through Ollama.
 

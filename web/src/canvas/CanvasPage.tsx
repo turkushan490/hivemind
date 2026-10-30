@@ -27,6 +27,7 @@ import { HiveNode, InputMic, RunViews, type HiveFlowNode } from './HiveNode';
 import { BuilderPanel } from './BuilderPanel';
 import { Inspector } from './Inspector';
 import { RepeatRun } from './RepeatRun';
+import { ScheduleButton } from './ScheduleButton';
 import { COMING_SOON, NODE_META, PALETTE } from './meta';
 import { newNodeId, TEMPLATE_GROUPS, TEMPLATES, type TemplateGroup } from './templates';
 
@@ -525,6 +526,7 @@ function Editor({ active, onProblem }: { active: boolean; onProblem: () => void 
             {sharedNow ? 'Shared' : 'Share'}
           </button>
         )}
+        {doc.id && !replaying && <ScheduleButton canvasId={doc.id} />}
         {doc.id && (
           <button className="btn-ghost text-red-400" onClick={() => remove().catch(() => {})}>
             Delete

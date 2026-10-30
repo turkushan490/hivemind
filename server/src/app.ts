@@ -13,6 +13,7 @@ import { memoryRoutes } from './api/memory.js';
 import { problemRoutes } from './api/problems.js';
 import { providerRoutes } from './api/providers.js';
 import { runRoutes } from './api/runs.js';
+import { scheduleRoutes } from './api/schedules.js';
 import { scopeGuard } from './api/scope.js';
 import { settingsRoutes } from './api/settings.js';
 import { statsRoutes } from './api/stats.js';
@@ -93,6 +94,7 @@ export async function buildApp(opts: { logger?: boolean; web?: boolean; onRoute?
   statsRoutes(app);
   labRoutes(app);
   datasetRoutes(app);
+  scheduleRoutes(app);
 
   if (opts.web !== false && existsSync(config.webDir)) {
     await app.register(staticFiles, {

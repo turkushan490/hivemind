@@ -7,7 +7,7 @@ interface Token {
   prefix: string;
   createdAt: string;
   lastUsedAt?: string;
-  scope?: { canvases: string[]; memory: string[] };
+  scope?: { canvases: string[]; memory: string[]; training?: boolean; datasets?: string[] };
 }
 
 const list = (s: string) =>
@@ -23,6 +23,8 @@ export function Tokens() {
   const [limit, setLimit] = useState(false);
   const [canvases, setCanvases] = useState('');
   const [memory, setMemory] = useState('');
+  const [training, setTraining] = useState(false);
+  const [datasets, setDatasets] = useState('');
 
   const load = async () => setTokens(await api('/api/tokens'));
   useEffect(() => {
@@ -40,7 +42,9 @@ export function Tokens() {
         <button
           className="btn"
           onClick={async () => {
-            const t = await api<{ token: string }>('/api/tokens', { body: { name, ...(limit && { canvases: list(canvases), memory: list(memory) }) } });
+            const t = await api<{ token: string }>('/api/tokens', {
+              body: { name, ...(limit && { canvases: list(canvases), memory: list(memory), training, ...(list(datasets).length && { datasets: list(datasets) }) }) },
+            });
             setFresh(t.token);
             setName('');
             setLimit(false);
@@ -64,8 +68,17 @@ export function Tokens() {
             <span className="text-xs text-slate-400">Memory keys</span>
             <input className="input text-xs" placeholder="dnd:* rules:*" value={memory} onChange={(e) => setMemory(e.target.value)} />
           </label>
+          <label className="space-y-1">
+            <span className="text-xs text-slate-400">Datasets (by name)</span>
+            <input className="input text-xs" placeholder="DungeonMind*" value={datasets} onChange={(e) => setDatasets(e.target.value)} />
+          </label>
+          <label className="flex items-center gap-2 self-end pb-1.5 text-xs text-slate-300">
+            <input type="checkbox" checked={training} onChange={(e) => setTraining(e.target.checked)} />
+            May train models on those datasets
+          </label>
           <p className="text-xs text-slate-500 sm:col-span-2">
-            Comma or space separated; a <code>*</code> at the end matches the start. The token can then only install, run and read those workflows and use those memory keys — nothing else in HiveMind.
+            Comma or space separated; a <code>*</code> at the end matches the start. The token can then only install, run and read those workflows, use those memory keys,
+            fill those datasets and (when allowed) train on them and follow its own training jobs — nothing else in HiveMind.
           </p>
         </div>
       )}
@@ -79,8 +92,13 @@ export function Tokens() {
           <span className="font-medium">{t.name}</span>
           <code className="text-slate-500">{t.prefix}…</code>
           {t.scope && (
-            <span className="truncate rounded bg-indigo-950/60 px-1.5 py-0.5 text-xs text-indigo-200" title={`Workflows: ${t.scope.canvases.join(', ') || 'none'} · Memory: ${t.scope.memory.join(', ') || 'none'}`}>
+            <span
+              className="truncate rounded bg-indigo-950/60 px-1.5 py-0.5 text-xs text-indigo-200"
+              title={`Workflows: ${t.scope.canvases.join(', ') || 'none'} · Memory: ${t.scope.memory.join(', ') || 'none'} · Datasets: ${t.scope.datasets?.join(', ') || 'none'}${t.scope.training ? ' · may train' : ''}`}
+            >
               limited: {t.scope.canvases.join(' ') || 'no canvases'} · {t.scope.memory.join(' ') || 'no memory'}
+              {t.scope.datasets?.length ? ` · ${t.scope.datasets.join(' ')}` : ''}
+              {t.scope.training ? ' · trains' : ''}
             </span>
           )}
           <span className="text-xs text-slate-500">last used: {t.lastUsedAt ?? 'never'}</span>

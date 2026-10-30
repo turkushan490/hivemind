@@ -178,4 +178,24 @@ describe('Lab simulator', () => {
     const logged = db.prepare("SELECT message FROM error_log WHERE message LIKE 'Lab:%' ORDER BY id DESC").get() as { message: string };
     expect(logged.message).toMatch(/model offline/);
   });
+
+  it('a DM that loops until Ollama stops it gives a bad JSON turn, not a failed run', async () => {
+    const p = sim();
+    const looping: ResolvedProvider = {
+      ...p,
+      adapter: {
+        ...p.adapter,
+        async *stream(req, signal) {
+          if (req.model === 'dm') throw new Error('Ollama: prediction aborted, token repeat limit reached');
+          yield* p.adapter.stream(req, signal);
+        },
+      },
+    };
+    const run = lab.startLab('u1', cfg({ maxTurns: 6 }), { resolve: async () => looping });
+    await run.done;
+    expect(run.status.state).toBe('done');
+    const turns = db.prepare('SELECT json_valid, error_types, review FROM lab_turns WHERE run_id = ?').all(run.id) as Record<string, any>[];
+    expect(turns).toHaveLength(6);
+    expect(turns.every((t) => t.json_valid === 0 && t.error_types.includes('json') && t.review === 'pending')).toBe(true);
+  });
 });

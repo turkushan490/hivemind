@@ -174,7 +174,8 @@ export class LabRun {
     const input = fill(DM_PROMPT, { question, vars }, labelled(players));
     const dmDone = done('dm');
     const dmError = events.find((e) => e.type === 'error' && e.nodeId === 'dm')?.error;
-    if (!dmDone && dmError && !/Invalid JSON/i.test(dmError)) throw new Error(`DM ${t.dm.model}: ${dmError}`);
+    // A DM that writes no valid JSON (or loops until Ollama stops it) is a bad turn to count, not a broken run.
+    if (!dmDone && dmError && !/Invalid JSON|repeat limit/i.test(dmError)) throw new Error(`DM ${t.dm.model}: ${dmError}`);
 
     const errors = new Set<ErrorType>();
     let turn: DmTurn | undefined;

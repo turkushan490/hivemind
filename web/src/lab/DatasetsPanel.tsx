@@ -3,11 +3,12 @@ import { parseDecisionSpec } from '@hivemind/shared';
 import { useEffect, useRef, useState } from 'react';
 import { api } from '../api';
 import { toast } from '../notify';
+import { HfImport } from './HfImport';
 
-/** All your datasets: make one, upload examples (JSONL, CSV, text), add by hand, review and export. */
+/** All your datasets: make one, upload examples (JSONL, CSV, text), import from Hugging Face, add by hand, review and export. */
 
 const KIND_LABEL: Record<DatasetKind, string> = { text: 'Text / chat', image: 'Images', decision: 'Decisions', voice: 'Voice' };
-const SOURCE_LABEL: Record<string, string> = { lab: 'Lab', thumbs: '👍', upload: 'upload', generated: 'AI-made', block: 'workflow', manual: 'by hand' };
+const SOURCE_LABEL: Record<string, string> = { lab: 'Lab', thumbs: '👍', upload: 'upload', generated: 'AI-made', block: 'workflow', manual: 'by hand', huggingface: 'Hugging Face' };
 
 export function DatasetsPanel() {
   const [list, setList] = useState<Dataset[]>([]);
@@ -17,6 +18,7 @@ export function DatasetsPanel() {
   const [kind, setKind] = useState<DatasetKind>('text');
   const [input, setInput] = useState('');
   const [output, setOutput] = useState('');
+  const [hf, setHf] = useState(false);
   const file = useRef<HTMLInputElement>(null);
 
   const load = () => api<Dataset[]>('/api/datasets', { quiet: true }).then(setList).catch(() => {});
@@ -80,7 +82,7 @@ export function DatasetsPanel() {
     <div className="card space-y-3">
       <div className="flex flex-wrap items-baseline gap-2">
         <h3 className="font-semibold">Datasets</h3>
-        <span className="text-xs text-slate-400">Training examples for any model: from the Lab, 👍 on answers, uploads, and workflow blocks.</span>
+        <span className="text-xs text-slate-400">Training examples for any model: from the Lab, 👍 on answers, uploads, Hugging Face, and workflow blocks.</span>
       </div>
       <div className="flex flex-wrap gap-2">
         {list.map((d) => (
@@ -120,6 +122,11 @@ export function DatasetsPanel() {
               <button className="text-indigo-300 hover:text-indigo-200" onClick={() => file.current?.click()}>
                 ⬆ Upload JSONL / CSV / text
               </button>
+              {current.kind === 'text' && (
+                <button className="text-indigo-300 hover:text-indigo-200" onClick={() => setHf(!hf)}>
+                  ⬇ Import from Hugging Face
+                </button>
+              )}
               <a className="text-indigo-300 hover:text-indigo-200" href={`/api/datasets/${current.id}/export.jsonl`}>
                 ⬇ Export JSONL
               </a>
@@ -128,6 +135,7 @@ export function DatasetsPanel() {
               </button>
             </span>
           </div>
+          {current.kind === 'text' && hf && <HfImport key={current.id} dataset={current} onChanged={() => (load(), loadItems(current.id))} />}
           {current.kind === 'text' && (
             <div className="grid gap-2 md:grid-cols-[1fr_1fr_auto]">
               <textarea className="input min-h-14 text-xs" placeholder="Question / input (optional)" value={input} onChange={(e) => setInput(e.target.value)} />

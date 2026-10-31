@@ -24,4 +24,6 @@ export const FEATURES: readonly string[] = [
   'modelOverride',
   'nodeInputs',
   'trainEvents',
+  // Lab → Datasets: import a Hugging Face dataset (POST /api/datasets/:id/import).
+  'datasetImport',
 ];

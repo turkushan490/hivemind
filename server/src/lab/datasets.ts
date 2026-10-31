@@ -278,7 +278,7 @@ export function parseUpload(text: string, format?: 'jsonl' | 'csv' | 'txt'): New
 }
 
 /** CSV with quotes, commas or semicolons. */
-function parseCsv(text: string): string[][] {
+export function parseCsv(text: string): string[][] {
   const sep = (text.split('\n')[0].match(/;/g)?.length ?? 0) > (text.split('\n')[0].match(/,/g)?.length ?? 0) ? ';' : ',';
   const rows: string[][] = [];
   let row: string[] = [];

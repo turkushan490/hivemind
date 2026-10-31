@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { config } from '../config.js';
 import { decrypt, encrypt } from '../crypto.js';
 import { db, getSetting, setSetting } from '../db/index.js';
+import { FIREBALL, FIREBALL_PAPER } from './hfImport.js';
 
 /**
  * Hugging Face: cloud training on HF Jobs (paid per minute, for bigger GPUs than this server has), and publishing a
@@ -30,7 +31,8 @@ function load(): Stored {
   }
 }
 
-const token = () => {
+/** The stored token, or undefined (reading public datasets needs none). */
+export const token = () => {
   const s = load();
   return s.tokenEnc ? decrypt(s.tokenEnc) : undefined;
 };
@@ -139,11 +141,33 @@ export function estimateCloud(steps: number, secPerStepT4: number, hw: HfHardwar
   return { hours: Math.round(hours * 100) / 100, usd: Math.round(hours * hw.usdPerHour * 100) / 100 };
 }
 
-/** A model card for a published model. */
-export function modelCard(o: { name: string; repo: string; base: string; dataset: string; rows: number; kind: string; file: string }): string {
+/** A model card for a published model; sources are the Hugging Face datasets its dataset imported (they need credit). */
+export function modelCard(o: {
+  name: string;
+  repo: string;
+  base: string;
+  dataset: string;
+  rows: number;
+  kind: string;
+  file: string;
+  sources?: { repo: string; license: string | null; url: string }[];
+}): string {
   const decision = o.kind === 'decision';
+  const sources = o.sources ?? [];
+  const training = sources.length
+    ? `
+## Training data
+
+${sources
+  .map(
+    (s) =>
+      `- [${s.repo}](${s.url}), license: ${s.license ?? 'none listed'}${s.repo.toLowerCase() === FIREBALL.toLowerCase() ? ` (paper: [FIREBALL](${FIREBALL_PAPER}))` : ''}`,
+  )
+  .join('\n')}
+`
+    : '';
   return `---
-base_model: ${o.base}
+base_model: ${o.base}${sources.length ? `\ndatasets:\n${sources.map((s) => `  - ${s.repo}`).join('\n')}` : ''}
 tags:
   - gguf
   - hivemind
@@ -160,5 +184,5 @@ ${decision ? 'A decision model' : 'A fine-tuned model'} made with [HiveMind](htt
 \`\`\`
 ollama pull hf.co/${o.repo}
 \`\`\`
-${decision ? '\nIt answers typed questions through Ollama\'s `/v1/systemone` API (llama.cpp decision type `openjev`).\n' : ''}`;
+${decision ? '\nIt answers typed questions through Ollama\'s `/v1/systemone` API (llama.cpp decision type `openjev`).\n' : ''}${training}`;
 }

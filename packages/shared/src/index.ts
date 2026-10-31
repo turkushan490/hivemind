@@ -592,7 +592,7 @@ export const DATASET_KINDS = ['text', 'image', 'decision', 'voice'] as const;
 export type DatasetKind = (typeof DATASET_KINDS)[number];
 
 /** Where an example came from. */
-export type DatasetSource = 'lab' | 'thumbs' | 'upload' | 'generated' | 'block' | 'manual';
+export type DatasetSource = 'lab' | 'thumbs' | 'upload' | 'generated' | 'block' | 'manual' | 'huggingface';
 
 export interface Dataset {
   id: string;
@@ -646,6 +646,58 @@ export interface DatasetItem {
   /** null = ok; pending examples wait for review; rejected ones are never trained on. */
   review?: 'pending' | 'accepted' | 'rejected';
   at: string;
+}
+
+// ---- Datasets: import from Hugging Face (POST /api/datasets/:id/import…) ----
+
+/** Presets that turn a known dataset shape into examples. */
+export type HfImportPreset = 'fireball' | 'chat';
+
+/** Which columns go into which field; several columns in one field are joined with a blank line. */
+export interface HfImportMap {
+  input: string[];
+  output: string[];
+  system?: string[];
+}
+
+/** POST /api/datasets/:id/import/preview. */
+export interface HfImportPreview {
+  /** Always owner/name, also when a full link was sent. */
+  repo: string;
+  /** null: the dataset lists no license. */
+  license: string | null;
+  gated: boolean;
+  /** The dataset is gated and HiveMind has no Hugging Face token: nothing could be read. */
+  needsToken: boolean;
+  /** rows: Hugging Face's rows API; files: the repo's own JSONL / JSON / CSV files; null when nothing was read. */
+  route: 'rows' | 'files' | null;
+  files: number | null;
+  rows: number | null;
+  columns: string[];
+  sample: Record<string, unknown>[];
+  preset: HfImportPreset | null;
+  /** Examples from this repo already in the dataset (the next import continues after them). */
+  imported: number;
+  /** An import into this dataset that is still running. */
+  running: string | null;
+}
+
+/** GET /api/datasets/import/:jobId. */
+export interface HfImportJob {
+  id: string;
+  datasetId: string;
+  repo: string;
+  state: 'running' | 'done' | 'stopped' | 'failed';
+  /** New examples written by this import. */
+  done: number;
+  /** null when it isn't known up front (the repo's own files). */
+  total: number | null;
+  skipped: number;
+  file: number | null;
+  files: number | null;
+  /** The import ended because the dataset reached its cap. */
+  capped: boolean;
+  error: string | null;
 }
 
 // ---- Lab: make a new model (GET /api/lab/train) ----

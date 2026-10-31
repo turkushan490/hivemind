@@ -239,6 +239,10 @@ const MIGRATIONS = [
   );
   ALTER TABLE lab_trains ADD COLUMN token_id TEXT;
   `,
+  `
+  -- Hugging Face imports: [{repo, license, url, position}] per dataset; position is where the next import of that repo starts.
+  ALTER TABLE datasets ADD COLUMN sources TEXT;
+  `,
 ];
 
 export const db = new DatabaseSync(join(config.dataDir, 'hivemind.db'));

@@ -15,6 +15,7 @@ import {
   updateDataset,
   updateItem,
 } from '../lab/datasets.js';
+import { importJob, previewImport, startImport, stopImport } from '../lab/hfImport.js';
 import { captionPictures, picturesFromFolder } from '../lab/imageLora.js';
 import { requireUser } from './auth.js';
 import { trainDepsFor } from './providers.js';
@@ -76,6 +77,28 @@ export function datasetRoutes(app: FastifyInstance) {
     if (!ollamaUrl || !b.model) return reply.code(400).send({ error: 'Pick an Ollama model that can see pictures' });
     return captionPictures(ds.id, { ollamaUrl, model: String(b.model) });
   });
+
+  /**
+   * Import from Hugging Face: a preview (columns, license, first rows), then a job in the background. Not for limited
+   * tokens (these routes are not in scope.ts's DATASET_ROUTES); viewers are refused writes by the viewer guard.
+   */
+  app.post('/api/datasets/:id/import/preview', { preHandler: requireUser }, async (req) =>
+    previewImport(req.user!.id, (req.params as { id: string }).id, (req.body ?? {}) as { repo?: unknown }),
+  );
+
+  app.post('/api/datasets/:id/import', { preHandler: requireUser }, async (req, reply) =>
+    reply.code(202).send({ jobId: await startImport(req.user!.id, (req.params as { id: string }).id, (req.body ?? {}) as Record<string, unknown>) }),
+  );
+
+  // No dataset in the path: the job's owner must be the caller (someone else's job is not found).
+  app.get('/api/datasets/import/:jobId', { preHandler: requireUser }, async (req, reply) => {
+    const job = importJob(req.user!.id, (req.params as { jobId: string }).jobId);
+    return job ?? reply.code(404).send({ error: 'Import not found' });
+  });
+
+  app.delete('/api/datasets/import/:jobId', { preHandler: requireUser }, async (req, reply) =>
+    stopImport(req.user!.id, (req.params as { jobId: string }).jobId) ? { ok: true } : reply.code(404).send({ error: 'Import not found' }),
+  );
 
   app.patch('/api/datasets/items/:itemId', { preHandler: requireUser }, async (req) => {
     const b = (req.body ?? {}) as { input?: string; output?: string; review?: 'pending' | 'accepted' | 'rejected' | null };

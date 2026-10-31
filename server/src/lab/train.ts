@@ -12,6 +12,7 @@ import { withHostLock, type ResolvedProvider } from '../engine/run.js';
 import { logError } from '../errors.js';
 import { DM_DATASET, exportDataset, findDataset, getDataset, trainableCount } from './datasets.js';
 import { checkComfyDir, comfyDir, IMAGE_SEC_PER_STEP, runComfyJob, validCheckpoint, type ImageJobSettings } from './imageLora.js';
+import { datasetSources } from './hfImport.js';
 import { estimateCloud, hfHardware, hfRun, hfSettings, modelCard, requireHfToken, spentToday } from './hf.js';
 import { trainingWindow } from './window.js';
 
@@ -667,7 +668,8 @@ export async function publishTrain(id: string, ownerId: string, opts: { repo?: s
   if (!gguf) throw Object.assign(new Error("This job's GGUF is no longer in the Lab folder"), { statusCode: 410 });
   const ds = row.dataset_id ? (db.prepare('SELECT name FROM datasets WHERE id = ?').get(row.dataset_id) as { name: string } | undefined) : undefined;
   const card = join(TRAIN_DIR, id, 'README.md');
-  writeFileSync(card, modelCard({ name: row.name, repo, base: row.base, dataset: ds?.name ?? 'Lab', rows: row.rows, kind: row.kind ?? 'text', file: basename(gguf) }));
+  const sources = row.dataset_id ? datasetSources(row.dataset_id).map(({ repo, license, url }) => ({ repo, license, url })) : [];
+  writeFileSync(card, modelCard({ name: row.name, repo, base: row.base, dataset: ds?.name ?? 'Lab', rows: row.rows, kind: row.kind ?? 'text', file: basename(gguf), sources }));
   const r = await hfRun('publish', [gguf, repo, opts.private === false ? '0' : '1', card]);
   saveSettings(id, { publishedUrl: r.url });
   return { url: String(r.url) };

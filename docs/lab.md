@@ -17,6 +17,54 @@ DungeonMind fills its own datasets and starts training over the API with a limit
 - **Export JSONL** gives what the trainer gets: chat format (`{"messages":[system, user, assistant]}`) for text.
 - The "DungeonMind DM" dataset (from the old simulator) stays, with its examples.
 
+### Import from Hugging Face
+
+Text / chat datasets have **⬇ Import from Hugging Face** next to Upload. It works for any public dataset; the code is
+`server/src/lab/hfImport.ts`.
+
+1. **Paste** a link (`https://huggingface.co/datasets/owner/name`, also with `/tree/main/…` behind it) or `owner/name`.
+2. **Preview** shows the name, the license, the number of rows or files, and the first 5 rows.
+3. **Map** columns into *Input*, *Output* and optional *System* (several columns in one field are joined with a blank
+   line), or use a **preset**: `fireball` for `lara-martin/FIREBALL`, `chat` for a `messages` / `conversations`
+   column with `{role, content}` or `{from, value}` messages. A matching preset is picked for you.
+4. **Limit:** how many *new* examples to import (5,000 by default, or All).
+5. **Import** runs in the background with a live counter and **Stop**; what was imported stays after a Stop.
+
+**Importing again continues** after the last imported example: 5,000 and then another 5,000 gives 10,000, also after
+a Stop or a restart. Where an import got to is kept per repo in the dataset (`datasets.sources`); when the dataset
+no longer has any example from that repo, the next import starts from the beginning. Nothing resumes by itself after
+a restart: press Import again.
+
+How it reads a dataset:
+
+- **Rows API** (most datasets, Parquet too): `datasets-server.huggingface.co`, the `train` split of the first config,
+  100 rows a page. A row with a truncated cell is skipped: half a text never becomes a training example.
+- **The repo's own files**, when the rows API can't read the dataset (FIREBALL is script-based): its `.jsonl`, `.json`
+  and `.csv` files by name, at most 500 MB each. Other files are ignored; lines that can't be read are skipped.
+- Only `huggingface.co` and `datasets-server.huggingface.co` are called, with the token from Settings → Hugging Face
+  when there is one. A gated dataset needs that token. 429 and 5xx answers are tried three more times.
+- Text goes in as it is; lists become one item per line; objects become `key: value` lines.
+- Examples are written in batches of 1,000 with source *Hugging Face* and a `ref` (`hf:<repo>:<config>/<split>:<row>`
+  or `hf:<repo>:<file>:<line>`). A dataset holds at most **1,000,000 examples**, whatever their source; an import
+  stops there.
+- The dataset's description gets `Imported from Hugging Face: <repo> (<license>)`, and a published model's card lists
+  every imported dataset with its license and link (**Training data**). Check the license before you publish: with
+  none listed, the page warns.
+
+**FIREBALL** (`lara-martin/FIREBALL`, D&D played on Discord, CC-BY-4.0, [paper](https://arxiv.org/abs/2305.01528)):
+the preset turns each turn into an example. Input: the combat (one line per actor: name, hp, class, race, effects),
+whose turn it is, the chat so far and the player's message. Output: the Avrae commands, their results and what was
+said after. Empty sections are left out. Discord ids (`speaker_id`, `controller_id`) are never stored or shown.
+
+> **Warnings**
+> - **FIREBALL gets a dataset of its own, never "DungeonMind DM"**; the import refuses that. Its outputs are Avrae
+>   commands and Discord text, not the DM's JSON. Mixing them makes the DM's JSON worse.
+> - **About two thirds of FIREBALL's turns have no story text**, only commands such as `!cast armor of ag -l 2 -i`.
+>   A model trained on it also learns to write those.
+> - **DungeonMind's nightly training only uses "DungeonMind DM".** Train on FIREBALL by hand in Lab → New model.
+> - **Use a limit for training.** 153,829 turns is far too much for one run on a small GPU. Importing all of them is
+>   fine; check the time estimate before training.
+
 ## New model
 
 One screen in three steps:
@@ -99,3 +147,9 @@ are in [HIVEMIND_CHANGES.md → M9](HIVEMIND_CHANGES.md#live-training-events-tra
 | `GET /api/lab/window` · `PUT /api/settings/training` | The training window (setting it: admin) |
 | `GET/PUT/DELETE /api/workflows/:id/schedule` | A workflow's schedule |
 | `/api/datasets…` | Datasets and their examples |
+| `POST /api/datasets/:id/import/preview` | Preview a Hugging Face dataset: `{repo}` → `{repo, license, gated, needsToken, route, files, rows, columns, sample, preset, imported, running}` |
+| `POST /api/datasets/:id/import` | Start an import: `{repo, preset}` or `{repo, map: {input, output, system?}}`, `limit` (default 5,000; `null` = all) → `202 {jobId}`; 409 while one runs |
+| `GET /api/datasets/import/:jobId` | The import: `{state, done, total, skipped, file, files, capped, error}` (only your own; others are 404) |
+| `DELETE /api/datasets/import/:jobId` | Stop the import (what was written stays) |
+
+The import routes are not open to limited API tokens.

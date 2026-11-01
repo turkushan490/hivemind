@@ -549,9 +549,8 @@ only their own. Not in `SCOPED_ROUTES`: limited tokens get 403.
   `/v1` too), newest first, from an in-memory ring of the last 1,000 (nothing in the database; screen traffic is
   not logged). Each line: `at, token, user, method, route, status, ms`, and for `POST /api/runs` and
   `/v1/chat/completions` also `runId` and `canvasName`. `route` is the route pattern (`/api/runs/:id`), never the
-  URL; headers, bodies and query strings are never kept. The log is written from the raw response's
-  `finish`/`close` (one `onRequest` hook in `server/src/app.ts`), because Fastify's `onResponse` hooks don't run
-  for hijacked replies such as event streams.
+  URL; headers, bodies and query strings are never kept. One `onResponse` hook in `server/src/app.ts` writes it
+  (an event stream gets its line when it ends).
 
 ### Stale rows
 

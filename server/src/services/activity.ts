@@ -18,31 +18,23 @@ export function noteRun(req: FastifyRequest, runId: string, canvasName?: string)
 }
 
 
-/** onRequest hook: notes when a token request starts; the line is written when the response is done. */
+/** onResponse hook: one line per request made with an API token (event streams too, when they end). */
 export async function logApiCall(req: FastifyRequest, reply: FastifyReply) {
   if (!req.headers.authorization?.startsWith('Bearer ')) return;
-  const t0 = Date.now();
-  let logged = false;
-  // On the raw response, so hijacked replies (event streams) are logged too.
-  const done = () => {
-    if (logged) return;
-    logged = true;
-    const user = req.user;
-    const run = started.get(req);
-    calls.push({
-      at: t0,
-      token: user?.tokenName ?? (user ? 'token' : 'Unknown token'),
-      ...(user && { user: user.username, ownerId: user.id }),
-      method: req.method,
-      route: req.routeOptions.url ?? '(no such route)',
-      status: reply.raw.statusCode,
-      ms: Date.now() - t0,
-      ...(run && { runId: run.runId, ...(run.canvasName && { canvasName: run.canvasName }) }),
-    });
-    if (calls.length > MAX_CALLS) calls.splice(0, calls.length - MAX_CALLS);
-  };
-  reply.raw.once('finish', done);
-  reply.raw.once('close', done);
+  const user = req.user;
+  const run = started.get(req);
+  const ms = Math.round(reply.elapsedTime);
+  calls.push({
+    at: Date.now() - ms,
+    token: user?.tokenName ?? (user ? 'token' : 'Unknown token'),
+    ...(user && { user: user.username, ownerId: user.id }),
+    method: req.method,
+    route: req.routeOptions.url ?? '(no such route)',
+    status: reply.raw.statusCode,
+    ms,
+    ...(run && { runId: run.runId, ...(run.canvasName && { canvasName: run.canvasName }) }),
+  });
+  if (calls.length > MAX_CALLS) calls.splice(0, calls.length - MAX_CALLS);
 }
 
 /** GET /api/activity/calls: newest first; a full admin sees everyone's, others their own. */

@@ -31,7 +31,7 @@ export async function buildApp(opts: { logger?: boolean; web?: boolean; onRoute?
 
   if (opts.onRoute) app.addHook('onRoute', opts.onRoute);
   // Activity → Incoming API calls: every request with an API token, route pattern and status only.
-  app.addHook('onRequest', logApiCall);
+  app.addHook('onResponse', logApiCall);
   await app.register(cookie);
 
   // Unexpected errors in a request: logged with an id the UI can show.

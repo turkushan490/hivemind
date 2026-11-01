@@ -1,4 +1,4 @@
-import type { CanvasGraph, CanvasNode, ModelInfo, ModelRef, OutputFile, RunEvent, RunStatus, SentCall } from '@hivemind/shared';
+import type { CanvasGraph, CanvasNode, ModelInfo, ModelRef, OutputFile, RunEvent, RunLimits, RunStatus, SentCall } from '@hivemind/shared';
 import { NODES, type ChatContext, type NodeInput, type NodeServices } from '../nodes/index.js';
 import type { DecisionRequest, DecisionResult } from '../providers/decisions.js';
 import type { ChatMessage, ProviderAdapter } from '../providers/types.js';
@@ -55,6 +55,10 @@ export interface EngineDeps {
     usage(u: UsageRecord): void;
     winner(w: WinnerRecord): void;
   };
+  /** Settings → Run limits; default 600 s per call, 4096 tokens and a 16K context on local models. */
+  limits?: RunLimits;
+  /** Who this run is, for "Waiting for the GPU behind …" ("DungeonMind", a workflow name); the block's name is added. */
+  lockLabel?: string;
 }
 
 export interface RunResult {
@@ -63,35 +67,100 @@ export interface RunResult {
   cost: number;
 }
 
+/** Settings → Run limits when nothing is saved (services/runLimits.ts). 600 s: a cold load counts, and a slow model needs ~400 s for 4096 tokens. */
+export const DEFAULT_LIMITS: RunLimits = { maxSeconds: 600, maxTokens: 4096, numCtx: 16384 };
+
 /** One lock per local host, so a 16 GB GPU never loads two models at once. */
 const hostLocks = new Map<string, Promise<void>>();
+/** Who holds each host's lock right now ("DungeonMind: chronicler", "Training: dm-v3"). */
+const holders = new Map<string, { label?: string }>();
 
-export async function withHostLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
+/** The label of whoever holds this host's GPU right now. */
+export const hostHolder = (key: string): string | undefined => holders.get(key)?.label;
+
+/** The text a cancelled run shows: the reason given to abort() ("Stopped by Unload"), else "Cancelled". */
+export const cancelText = (signal: AbortSignal): string => (typeof signal.reason === 'string' && signal.reason ? signal.reason : 'Cancelled');
+
+/**
+ * Runs fn once every earlier job on this host is done. With a signal, a cancel while waiting rejects at once
+ * with "Cancelled"; the queue stays intact (this slot is let go only after the job in front of it ends).
+ */
+export async function withHostLock<T>(key: string, fn: () => Promise<T>, opts: { signal?: AbortSignal; label?: string } = {}): Promise<T> {
   const prev = hostLocks.get(key) ?? Promise.resolve();
   let release!: () => void;
   const mine = new Promise<void>((r) => (release = r));
   const chained = prev.then(() => mine);
   hostLocks.set(key, chained);
-  await prev;
+  const letGo = () => {
+    release();
+    if (hostLocks.get(key) === chained) hostLocks.delete(key);
+  };
+  const { signal } = opts;
+  if (signal) {
+    let onAbort!: () => void;
+    const aborted = new Promise<'aborted'>((r) => {
+      onAbort = () => r('aborted');
+      if (signal.aborted) r('aborted');
+      else signal.addEventListener('abort', onAbort, { once: true });
+    });
+    const got = await Promise.race([prev.then(() => 'ready' as const), aborted]);
+    signal.removeEventListener('abort', onAbort);
+    if (got === 'aborted') {
+      // Never skip the queue: later jobs still wait for the one in front of this slot.
+      void prev.then(letGo);
+      throw new Error('Cancelled');
+    }
+  } else {
+    await prev;
+  }
+  const holder = { label: opts.label };
+  holders.set(key, holder);
   try {
     return await fn();
   } finally {
-    release();
-    if (hostLocks.get(key) === chained) hostLocks.delete(key);
+    if (holders.get(key) === holder) holders.delete(key);
+    letGo();
   }
 }
 
-/** Context size within what Ollama accepts; undefined = the model's own default. */
-const numCtxOf = (node: CanvasNode) => {
+/** Context size within what Ollama accepts; a block without one gets the run limit on local models, else the model's own default. */
+const numCtxOf = (node: CanvasNode, limits: RunLimits, isLocal: boolean) => {
   const n = node.config.numCtx;
-  return n && Number.isFinite(n) ? Math.round(Math.min(131072, Math.max(2048, n))) : undefined;
+  if (n && Number.isFinite(n)) return Math.round(Math.min(131072, Math.max(2048, n)));
+  return isLocal ? limits.numCtx : undefined;
 };
 
-/** Answer length cap (16 to 32768 tokens); undefined = no cap. */
-const maxTokensOf = (node: CanvasNode) => {
+/** Answer length cap (16 to 32768 tokens); a block without one gets the run limit on local models, else no cap. */
+const maxTokensOf = (node: CanvasNode, limits: RunLimits, isLocal: boolean) => {
   const n = node.config.maxTokens;
-  return n && Number.isFinite(n) ? Math.round(Math.min(32768, Math.max(16, n))) : undefined;
+  if (n && Number.isFinite(n)) return Math.round(Math.min(32768, Math.max(16, n)));
+  return isLocal ? limits.maxTokens : undefined;
 };
+
+/** Seconds one model call may take: the block's own (10 to 86400) wins over the run limit. */
+const maxSecondsOf = (node: CanvasNode, limits: RunLimits) => {
+  const n = node.config.maxSeconds;
+  if (n && Number.isFinite(n)) return Math.round(Math.min(86400, Math.max(10, n)));
+  return limits.maxSeconds;
+};
+
+/** A model call that ran past its time limit (not a cancel: the run goes on, the block fails). */
+class TimeLimitError extends Error {}
+
+/** An abort signal that fires after `seconds`, or with the run's own signal. */
+function callTimer(signal: AbortSignal, seconds: number) {
+  const timer = new AbortController();
+  const t = setTimeout(() => timer.abort(), seconds * 1000);
+  const both = AbortSignal.any([signal, timer.signal]);
+  /** Rejects when either fires, so a provider that ignores its signal can't hang the block. */
+  const stopped = new Promise<never>((_, reject) => {
+    const fire = () => reject(new Error('aborted'));
+    if (both.aborted) fire();
+    else both.addEventListener('abort', fire, { once: true });
+  });
+  stopped.catch(() => {});
+  return { signal: both, timedOut: () => timer.signal.aborted && !signal.aborted, stopped, clear: () => clearTimeout(t) };
+}
 
 export async function runGraph(
   graph: CanvasGraph,
@@ -102,6 +171,7 @@ export async function runGraph(
   chat: ChatContext = { system: '', history: [] },
 ): Promise<RunResult> {
   validateGraph(graph);
+  const limits = deps.limits ?? DEFAULT_LIMITS;
   const byId = new Map(graph.nodes.map((n) => [n.id, n]));
   const parents = new Map<string, string[]>(graph.nodes.map((n) => [n.id, []]));
   const children = new Map<string, string[]>(graph.nodes.map((n) => [n.id, []]));
@@ -149,6 +219,8 @@ export async function runGraph(
     const usesModels = def.usesModel || !!def.minModels;
     const provider = usesModels && primary ? await deps.resolve(primary.providerId).catch(() => undefined) : undefined;
     const heldHost = provider?.local && provider.exclusive !== false ? provider.hostKey : undefined;
+    const blockName = node.label || model?.model || node.type;
+    const lockLabel = deps.lockLabel ? `${deps.lockLabel}: ${blockName}` : blockName;
 
     const exec = async () => {
       const t0 = Date.now();
@@ -182,52 +254,71 @@ export async function runGraph(
         let callGen: number | undefined;
         let callIn = 0;
         let callCostUsd: number | undefined;
-        for await (const chunk of p.adapter.stream({ model: ref.model, messages, temperature: node.config.temperature, think, json, numCtx: numCtxOf(node), maxTokens: maxTokensOf(node) }, signal)) {
-          if (chunk.type === 'loading') {
-            loading = true;
-            sizeBytes = (await p.modelInfo(ref.model).catch(() => undefined))?.sizeBytes;
-            const expect = p.stats?.expectLoad(ref.model, sizeBytes);
-            deps.emit({ ...base, type: 'model_loading', model: ref.model, sizeBytes, expectedMs: expect?.ms, estimated: expect?.estimated });
-          } else if (chunk.type === 'warm') {
-            sizeBytes ??= (await p.modelInfo(ref.model).catch(() => undefined))?.sizeBytes;
-          } else if (chunk.type === 'thinking') {
-            thought = true;
-            markReady();
-            if (!firstToken) firstToken = Date.now();
-            deps.emit({ ...base, type: 'thinking', model: ref.model, text: chunk.text });
-          } else if (chunk.type === 'token') {
-            markReady();
-            if (!firstToken) firstToken = Date.now();
-            // Live speed counts from the first word of the answer, not from the start of thinking.
-            if (!firstAnswer) firstAnswer = Date.now();
-            tokens++;
-            callTokens++;
-            out += chunk.text;
-            const secs = (Date.now() - firstAnswer) / 1000;
-            deps.emit({ ...base, type: 'token', model: ref.model, text: chunk.text, tokens, tokensPerSec: secs > 0.2 ? tokens / secs : undefined });
-          } else {
-            // Prefer the provider's exact token count over the number of chunks.
-            if (chunk.outputTokens) {
-              tokens += chunk.outputTokens - callTokens;
-              callTokens = chunk.outputTokens;
-            }
-            if (chunk.genMs) {
-              genMs = (genMs ?? 0) + chunk.genMs;
-              callGen = chunk.genMs;
-            }
-            // Only a real load is worth remembering (a warm model reports a few ms).
-            if (chunk.loadMs && chunk.loadMs > 300) callLoad = chunk.loadMs;
-            if (callLoad && loadMs === undefined) loadMs = callLoad;
-            inputTokens = (inputTokens ?? 0) + (chunk.inputTokens ?? 0);
-            callIn += chunk.inputTokens ?? 0;
-            // Provider prices first (OpenRouter), then the pricing table (OpenAI, Anthropic); free models cost 0.
-            const info = await p.modelInfo(ref.model).catch(() => undefined);
-            const c = callCost(info, ref.model, chunk.inputTokens ?? 0, callTokens);
-            if (c !== undefined) {
-              nodeCost = (nodeCost ?? 0) + c;
-              callCostUsd = (callCostUsd ?? 0) + c;
+        const maxTokens = maxTokensOf(node, limits, p.local);
+        const limitSecs = maxSecondsOf(node, limits);
+        // The clock starts here, once the GPU is held: time in the queue doesn't count.
+        const timer = callTimer(signal, limitSecs);
+        const it = p.adapter.stream({ model: ref.model, messages, temperature: node.config.temperature, think, json, numCtx: numCtxOf(node, limits, p.local), maxTokens }, timer.signal)[Symbol.asyncIterator]();
+        try {
+          for (;;) {
+            const next = await Promise.race([it.next(), timer.stopped]);
+            if (next.done) break;
+            const chunk = next.value;
+            if (chunk.type === 'loading') {
+              loading = true;
+              sizeBytes = (await p.modelInfo(ref.model).catch(() => undefined))?.sizeBytes;
+              const expect = p.stats?.expectLoad(ref.model, sizeBytes);
+              deps.emit({ ...base, type: 'model_loading', model: ref.model, sizeBytes, expectedMs: expect?.ms, estimated: expect?.estimated });
+            } else if (chunk.type === 'warm') {
+              sizeBytes ??= (await p.modelInfo(ref.model).catch(() => undefined))?.sizeBytes;
+            } else if (chunk.type === 'thinking') {
+              thought = true;
+              markReady();
+              if (!firstToken) firstToken = Date.now();
+              deps.emit({ ...base, type: 'thinking', model: ref.model, text: chunk.text });
+            } else if (chunk.type === 'token') {
+              markReady();
+              if (!firstToken) firstToken = Date.now();
+              // Live speed counts from the first word of the answer, not from the start of thinking.
+              if (!firstAnswer) firstAnswer = Date.now();
+              tokens++;
+              callTokens++;
+              out += chunk.text;
+              const secs = (Date.now() - firstAnswer) / 1000;
+              deps.emit({ ...base, type: 'token', model: ref.model, text: chunk.text, tokens, tokensPerSec: secs > 0.2 ? tokens / secs : undefined });
+            } else {
+              // Prefer the provider's exact token count over the number of chunks.
+              if (chunk.outputTokens) {
+                tokens += chunk.outputTokens - callTokens;
+                callTokens = chunk.outputTokens;
+              }
+              if (chunk.genMs) {
+                genMs = (genMs ?? 0) + chunk.genMs;
+                callGen = chunk.genMs;
+              }
+              // Only a real load is worth remembering (a warm model reports a few ms).
+              if (chunk.loadMs && chunk.loadMs > 300) callLoad = chunk.loadMs;
+              if (callLoad && loadMs === undefined) loadMs = callLoad;
+              inputTokens = (inputTokens ?? 0) + (chunk.inputTokens ?? 0);
+              callIn += chunk.inputTokens ?? 0;
+              // Provider prices first (OpenRouter), then the pricing table (OpenAI, Anthropic); free models cost 0.
+              const info = await p.modelInfo(ref.model).catch(() => undefined);
+              const c = callCost(info, ref.model, chunk.inputTokens ?? 0, callTokens);
+              if (c !== undefined) {
+                nodeCost = (nodeCost ?? 0) + c;
+                callCostUsd = (callCostUsd ?? 0) + c;
+              }
+              if (chunk.stopped === 'length') deps.emit({ ...base, type: 'node_progress', note: maxTokens ? `Stopped at the ${maxTokens}-token limit` : 'Stopped at the token limit' });
             }
           }
+        } catch (err) {
+          if (timer.timedOut()) throw new TimeLimitError(`${ref.model} was stopped after ${limitSecs} seconds`);
+          if (signal.aborted) throw new Error(cancelText(signal));
+          throw err;
+        } finally {
+          timer.clear();
+          // Stop the provider's request too (a hanging fetch to Ollama), without waiting for it.
+          if (timer.signal.aborted) void Promise.resolve(it.return?.()).catch(() => {});
         }
         try {
           deps.record?.usage({ nodeId: node.id, nodeType: node.type, providerId: ref.providerId, model: ref.model, inputTokens: callIn, outputTokens: callTokens, cost: callCostUsd, genMs: callGen });
@@ -259,7 +350,8 @@ export async function runGraph(
           // Another AI server on the same GPU (ComfyUI) gives its memory back before a local model loads.
           if (p.local && p.exclusive !== false) await deps.services?.freeGpu?.(p.hostKey, m.providerId).catch(() => {});
           // A different local GPU than the one this block holds: wait for that GPU too.
-          if (p.local && p.exclusive !== false && p.hostKey !== heldHost) return withHostLock(p.hostKey, () => call(messages, m, node.config.think === false ? false : undefined, json));
+          if (p.local && p.exclusive !== false && p.hostKey !== heldHost)
+            return withHostLock(p.hostKey, () => call(messages, m, node.config.think === false ? false : undefined, json), { signal, label: lockLabel });
           return call(messages, m, node.config.think === false ? false : undefined, json);
         },
         decide: async (req, ref) => {
@@ -270,7 +362,18 @@ export async function runGraph(
           const ask = async (): Promise<DecisionResult> => {
             // A local decision model (Ollama) shares the GPU like any other local model.
             if (p.local && p.exclusive !== false) await deps.services?.freeGpu?.(p.hostKey, m.providerId).catch(() => {});
-            const r = await p.adapter.decide!({ model: m.model, ...req } as DecisionRequest, signal);
+            const secs = maxSecondsOf(node, limits);
+            const timer = callTimer(signal, secs);
+            let r: DecisionResult;
+            try {
+              r = await Promise.race([p.adapter.decide!({ model: m.model, ...req } as DecisionRequest, timer.signal), timer.stopped]);
+            } catch (err) {
+              if (timer.timedOut()) throw new TimeLimitError(`${m.model} was stopped after ${secs} seconds`);
+              if (signal.aborted) throw new Error(cancelText(signal));
+              throw err;
+            } finally {
+              timer.clear();
+            }
             markReady();
             const info = await p.modelInfo(m.model).catch(() => undefined);
             const c = callCost(info, r.model, r.usage.inputTokens, r.usage.outputTokens) ?? callCost(info, m.model, r.usage.inputTokens, r.usage.outputTokens);
@@ -281,7 +384,7 @@ export async function runGraph(
             } catch {}
             return r;
           };
-          if (p.local && p.exclusive !== false && p.hostKey !== heldHost) return withHostLock(p.hostKey, ask);
+          if (p.local && p.exclusive !== false && p.hostKey !== heldHost) return withHostLock(p.hostKey, ask, { signal, label: lockLabel });
           return ask();
         },
         choose: (ids) => {
@@ -366,13 +469,13 @@ export async function runGraph(
     try {
       if (heldHost) {
         deps.emit({ ...base, type: 'node_queued' });
-        await withHostLock(heldHost, exec);
+        await withHostLock(heldHost, exec, { signal, label: lockLabel });
         return;
       }
       await exec();
     } catch (err) {
       failed.add(node.id);
-      deps.emit({ ...base, type: 'error', error: signal.aborted ? 'Cancelled' : (err as Error).message });
+      deps.emit({ ...base, type: 'error', error: signal.aborted && !(err instanceof TimeLimitError) ? cancelText(signal) : (err as Error).message });
     }
   };
 

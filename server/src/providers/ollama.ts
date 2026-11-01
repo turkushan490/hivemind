@@ -139,6 +139,7 @@ export function ollamaAdapter(cfg: ProviderConfig): ProviderAdapter {
           eval_count?: number;
           eval_duration?: number;
           load_duration?: number;
+          done_reason?: string;
         };
         if (msg.error) throw new Error(`Ollama: ${msg.error}`);
         if (msg.message?.thinking) yield { type: 'thinking', text: msg.message.thinking };
@@ -150,6 +151,8 @@ export function ollamaAdapter(cfg: ProviderConfig): ProviderAdapter {
             outputTokens: msg.eval_count,
             genMs: msg.eval_duration ? msg.eval_duration / 1e6 : undefined,
             loadMs: msg.load_duration ? msg.load_duration / 1e6 : undefined,
+            // num_predict reached: the answer was cut off at the token ceiling.
+            ...(msg.done_reason === 'length' && { stopped: 'length' as const }),
           };
           return;
         }

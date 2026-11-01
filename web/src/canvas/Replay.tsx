@@ -85,6 +85,7 @@ export function History({ onPick, onClose }: { onPick: (id: string) => void; onC
                 <div className="flex flex-wrap items-center gap-1.5 text-xs text-slate-500">
                   <span className={`rounded px-1.5 ${STATUS[r.status] ?? ''}`}>{r.status}</span>
                   {r.canvasName && <span className="truncate">{r.canvasName}</span>}
+                  {r.source && <span className="rounded bg-[#21262d] px-1.5 text-slate-400" title="Who started it">{r.source}</span>}
                   <span>{Number.isFinite(started) ? new Date(started).toLocaleString() : ''}</span>
                   {Number.isFinite(took) && <span>· {clock(took)}</span>}
                   {!!r.cost && <span>· ${r.cost.toFixed(4)}</span>}

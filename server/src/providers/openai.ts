@@ -90,6 +90,7 @@ export function openaiAdapter(cfg: ProviderConfig): ProviderAdapter {
       });
       await checkResponse(res, `${cfg.preset} chat`);
       let usage: { prompt_tokens?: number; completion_tokens?: number } | undefined;
+      let stopped: 'length' | undefined;
       for await (const msg of readSSE(res.body!)) {
         if (msg.error) throw new Error(`${cfg.preset}: ${msg.error.message ?? JSON.stringify(msg.error)}`);
         const delta = msg.choices?.[0]?.delta;
@@ -99,8 +100,9 @@ export function openaiAdapter(cfg: ProviderConfig): ProviderAdapter {
         const text = delta?.content;
         if (text) yield { type: 'token', text };
         if (msg.usage) usage = msg.usage;
+        if (msg.choices?.[0]?.finish_reason === 'length') stopped = 'length';
       }
-      yield { type: 'done', inputTokens: usage?.prompt_tokens, outputTokens: usage?.completion_tokens };
+      yield { type: 'done', inputTokens: usage?.prompt_tokens, outputTokens: usage?.completion_tokens, ...(stopped && { stopped }) };
     },
   };
 }

@@ -27,8 +27,8 @@ export type StreamChunk =
   | { type: 'warm' }
   | { type: 'token'; text: string }
   | { type: 'thinking'; text: string }
-  /** genMs: pure generation time when the provider reports it (more exact tok/s). */
-  | { type: 'done'; inputTokens?: number; outputTokens?: number; genMs?: number; loadMs?: number };
+  /** genMs: pure generation time when the provider reports it (more exact tok/s). stopped: cut off at maxTokens. */
+  | { type: 'done'; inputTokens?: number; outputTokens?: number; genMs?: number; loadMs?: number; stopped?: 'length' };
 
 /** Runtime config of one provider, key already decrypted. */
 export interface ProviderConfig {

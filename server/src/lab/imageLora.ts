@@ -209,7 +209,7 @@ export async function runComfyJob(job: ComfyJob, mode: 'new' | 'follow' | 'resum
     rmSync(join(dir, 'input', 'hivemind', job.id), { recursive: true, force: true });
     job.save({ lora: `hivemind/${stem}.safetensors` });
     return update(job.id, 'done', { step: s.steps, totalSteps: s.steps, etaS: 0, note: `Ready: pick hivemind/${stem}.safetensors as the LoRA in an Image block` });
-  });
+  }, { label: `Image training: ${job.name}` });
 }
 
 const PICTURE = /\.(png|jpe?g|webp)$/i;

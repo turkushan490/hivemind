@@ -555,7 +555,7 @@ async function runLocal(row: TrainRow, deps: TrainDeps, mode: RunMode, signal: A
       update(id, state, progress);
       await new Promise((r) => setTimeout(r, pollMs()));
     }
-  });
+  }, { label: `Training: ${row.name}` });
 }
 
 /** Pause: the trainer saves a checkpoint after the current step and the GPU is free until Resume. */

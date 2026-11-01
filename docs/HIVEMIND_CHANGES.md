@@ -1,6 +1,6 @@
 # HiveMind changes for DungeonMind
 
-**Status:** Part 1 (M0 §1–§10) is built (HiveMind milestone 7), and so is **M9** (milestone 9: HiveMind as DungeonMind's training engine — schedules, the training window, training with limited tokens, per-run models, block inputs, live training events; see [M9](#m9--hivemind-as-dungeonminds-training-engine)). Part 2 (the D&D Lab) was built as L1–L4 and has **moved to DungeonMind** in M9: HiveMind keeps only the generic datasets and training. Notes on how it was built are marked *Built:*. User guides: [lab.md](lab.md), [decisions.md](decisions.md).
+**Status:** Part 1 (M0 §1–§10) is built (HiveMind milestone 7), and so is **M9** (milestone 9: HiveMind as DungeonMind's training engine — schedules, the training window, training with limited tokens, per-run models, block inputs, live training events; see [M9](#m9--hivemind-as-dungeonminds-training-engine)), and **M10** (run limits, `cancelWhenAlone`, an Unload that checks, the Activity page; see [M10](#m10--runs-that-stop-unload-that-unloads-and-the-activity-page)). Part 2 (the D&D Lab) was built as L1–L4 and has **moved to DungeonMind** in M9: HiveMind keeps only the generic datasets and training. Notes on how it was built are marked *Built:*. User guides: [lab.md](lab.md), [decisions.md](decisions.md).
 ## Why
 
 **DungeonMind** (`github.com/turkushan490/dungeonmind`, separate repo, AGPL-3.0) is a self-hostable website where groups play D&D 5e together with an **AI Dungeon Master**. DungeonMind owns the game: sheets, dice, rules math, saves. It uses **HiveMind for all AI**: LLMs, ComfyUI images and memory.
@@ -461,6 +461,110 @@ The block's output (what the next blocks and `outputs` get) is now JSON:
 | `skipped` | Fewer new examples than `minNewExamples`; the run goes on. | `null` | the new examples counted |
 
 For an image LoRA, `model` is the LoRA file once `done`.
+
+## M10 — Runs that stop, Unload that unloads, and the Activity page
+
+*Built (milestone 10).* A local thinking model can loop for many minutes in a run nobody follows, hold the GPU lock
+and block every run behind it. These changes put a limit on every model call, stop runs whose client is gone, make
+Stop and Unload work on runs that wait or run, and show what is running and what comes in through the API.
+
+### Health flags
+
+`GET /api/health` → `features` also lists `cancelWhenAlone` and `activity`.
+
+### Run limits (Settings → Run limits)
+
+Admin setting `run.limits`: `GET /api/settings/run-limits` (any user), `PUT /api/settings/run-limits` (admin;
+only the fields sent change, out-of-range values → 400).
+
+| Setting | Default | Range | Applies to |
+|---|---|---|---|
+| `maxSeconds` | 600 | 10–86400 | every model call (`call` and `decide`), all providers |
+| `maxTokens` | 4096 | 16–32768 | local providers, when the block has no `maxTokens` |
+| `numCtx` | 16384 | 2048–131072 | local providers, when the block has no `numCtx` |
+
+- **Time limit.** The timer runs around one model call, after the GPU lock is held: time in the queue doesn't
+  count, a cold load does. The provider gets `AbortSignal.any([run, timer])`, so the request to Ollama is aborted;
+  a provider that ignores its signal still can't hang the block. The block fails with
+  `<model> was stopped after N seconds` (an `error` event, so it is in Problems) and the lock is released. A call
+  stopped by the timer is not retried as "only thought". A block's own `maxSeconds` (10–86400, Block settings →
+  Time limit) wins over the setting. Image and Train blocks are not timed. `RUN_TIMEOUT_MINUTES` still limits the
+  whole run.
+- **Token ceiling.** A local model without its own `maxTokens` gets `num_predict` from the setting; cloud models
+  still get no cap. Ollama's `done_reason: "length"` (and `finish_reason: "length"` from OpenAI-compatible
+  servers) becomes `stopped: "length"` on the `done` chunk, and the run shows the note
+  `Stopped at the 4096-token limit` (`node_progress`). The ceiling includes thinking: a thinking model that hits it
+  with no answer is asked once more without thinking, as before.
+- **Context size.** A local model without its own `numCtx` gets `num_ctx` from the setting, for every block (the
+  Voice template's Assistant block used to get Ollama's 4096 and fail on longer prompts). Blocks with their own
+  `numCtx` keep it.
+
+### Stop a run when its client is gone (`cancelWhenAlone`)
+
+`POST /api/runs {…, cancelWhenAlone: true}`: the run is cancelled when nobody has followed
+`/api/runs/:id/events` for 30 seconds. The clock also starts at run start, for a client that never connects. The
+run ends `cancelled`, with `Stopped: nobody followed the run for 30 seconds`. Without the flag (the default, and
+every run from the HiveMind screen) a run goes on when the page is closed. `/v1/chat/completions` already stopped
+its run when the client went away.
+
+### Stopping a waiting run
+
+`withHostLock(key, fn, { signal, label })`: with a signal, a cancel while waiting for the GPU rejects at once with
+`Cancelled`; the queue stays intact (the slot is let go only after the job in front of it), so later runs are not
+let through early. The lock remembers who holds each host (`"DungeonMind: chronicler"`, `"Training: dm-v3"`,
+`"Image training: …"`) for "Waiting for the GPU behind …". Training and image jobs pass only their label and wait
+as before.
+
+### Unload really unloads
+
+`POST /api/memory/unload {providerId?, model?}`:
+
+1. Live runs using or waiting for that model (all models of the provider for "Unload all") are cancelled. An admin
+   cancels anyone's; another user only their own: a run of someone else is reported in `failed`
+   (`In use by a run of another user (<workflow>)`) and that model is left loaded.
+2. Up to 5 seconds for them to end.
+3. `keep_alive: 0`.
+4. `loaded()` is polled for up to 10 seconds. A model that is still there is reported in `failed` as
+   `Still loaded: Ollama did not let it go`, never as unloaded.
+
+The answer is `{unloaded, failed, stoppedRuns}`. A run stopped this way shows `Stopped by Unload`. `GET /api/memory`
+adds per model `runs: [{runId, canvasName, state: "waiting" | "running"}]` (an admin sees all, others their own);
+the panel lists them under the model, and the button says **Stop & unload**.
+
+### Activity page (`activity`)
+
+Top nav **Activity** (also for viewers), polled every 3 seconds while open. An admin sees everything, anyone else
+only their own. Not in `SCOPED_ROUTES`: limited tokens get 403.
+
+- `GET /api/activity/running` → `{runs, training}`. Each run: `runId, canvasId, canvasName, source, owner, mine,
+  startedAt, question` (the first 200 characters) and `blocks: [{nodeId, label, providerId, model, state,
+  startedAt, tokens, waitingBehind?}]` (tokens counts thinking too). `training` lists jobs that hold or wait for
+  the GPU (read-only; the page links to Lab). The page has **Stop** (`POST /api/runs/:id/cancel`) and opens the
+  live run (`/api/runs/:id/events`, which a full admin may now follow for anyone's live run).
+- `POST /api/runs/:id/cancel` works for the run's owner and for a full admin (not a limited token); everyone else
+  gets 404, as before.
+- `runs.source` (migration 16): `Screen`, `API: <token name>`, `/v1: <token name>`, `Schedule` or `Batch`.
+  `GET /api/runs` returns it as `source`; Run history shows it.
+- `GET /api/activity/calls?limit=200&token=<name>&failed=1`: every request made with an API token (scoped or full,
+  `/v1` too), newest first, from an in-memory ring of the last 1,000 (nothing in the database; screen traffic is
+  not logged). Each line: `at, token, user, method, route, status, ms`, and for `POST /api/runs` and
+  `/v1/chat/completions` also `runId` and `canvasName`. `route` is the route pattern (`/api/runs/:id`), never the
+  URL; headers, bodies and query strings are never kept. The log is written from the raw response's
+  `finish`/`close` (one `onRequest` hook in `server/src/app.ts`), because Fastify's `onResponse` hooks don't run
+  for hijacked replies such as event streams.
+
+### Stale rows
+
+At startup, before the server takes requests, runs still on `running` (the previous process never finished them)
+become `error`, with `Stopped by a restart` stored as an error event (`closeStaleRuns()` in `server/src/main.ts`).
+
+### Code
+
+- `server/src/services/runLimits.ts`, `server/src/engine/run.ts` (limits, timer, `withHostLock`, `hostHolder`).
+- `server/src/events/runs.ts` (live blocks, `source`, `cancelWhenAlone`, `cancelRun` with a reason, `closeStaleRuns`).
+- `server/src/api/memory.ts`, `server/src/api/activity.ts`, `server/src/services/activity.ts`.
+- `web/src/pages/ActivityPage.tsx`, `web/src/components/MemoryButton.tsx`, Settings → Run limits, Block settings → Time limit.
+- Tests: `server/test/runLimits.test.ts`, `server/test/activity.test.ts`.
 
 ---
 

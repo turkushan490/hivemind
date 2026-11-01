@@ -4,7 +4,8 @@ import { newId } from '../crypto.js';
 import { db } from '../db/index.js';
 import { validateGraph } from '../engine/graph.js';
 import { checkVars } from '../engine/vars.js';
-import { cancelRun, startRun, subscribe } from '../events/runs.js';
+import { cancelRun, isFullAdmin, startRun, subscribe } from '../events/runs.js';
+import { noteRun } from '../services/activity.js';
 import { nodeOutputs, publicEvents } from '../services/runOutputs.js';
 import { requireUser, type User } from './auth.js';
 import { canvasAllowed } from './scope.js';
@@ -92,7 +93,7 @@ export function applyModels(graph: CanvasGraph, models: unknown): CanvasGraph {
  * Starts a run the way POST /api/runs does (also used by the scheduler, as the schedule's owner). Throws an
  * error with a statusCode for a bad request.
  */
-export function startCanvasRun(user: User, body: RunRequest, opts: { scheduled?: boolean } = {}): string {
+export function startCanvasRun(user: User, body: RunRequest, opts: { scheduled?: boolean; source?: string } = {}): string {
   const question = body.question?.trim();
   if (!question) throw bad('Ask a question');
   const as400 = <T>(fn: () => T): T => {
@@ -111,6 +112,7 @@ export function startCanvasRun(user: User, body: RunRequest, opts: { scheduled?:
   if (!chosen) throw bad(user.role === 'viewer' ? 'Viewers can only run saved canvases' : 'Send a canvasId or a graph');
   const graph = applyModels(chosen, body.models);
   as400(() => validateGraph(graph));
+  if (body.cancelWhenAlone !== undefined && typeof body.cancelWhenAlone !== 'boolean') throw bad('cancelWhenAlone must be true or false');
   return startRun({
     ownerId: user.id,
     user,
@@ -121,8 +123,13 @@ export function startCanvasRun(user: User, body: RunRequest, opts: { scheduled?:
     resolve: resolverFor(providerUser),
     freeGpu: gpuFreerFor(providerUser),
     training: trainingFor(user, opts),
+    source: opts.source ?? (opts.scheduled ? 'Schedule' : sourceOf(user)),
+    cancelWhenAlone: body.cancelWhenAlone === true,
   });
 }
+
+/** Where a request came from: the screen (session cookie) or an API token, by its name. */
+export const sourceOf = (user: User, prefix = 'API') => (user.tokenId ? `${prefix}: ${user.tokenName ?? 'token'}` : prefix === 'API' ? 'Screen' : prefix);
 
 export function runRoutes(app: FastifyInstance) {
   // ---- Canvases ----
@@ -157,7 +164,10 @@ export function runRoutes(app: FastifyInstance) {
   /** Body: { question, canvasId } to run a saved canvas, or { question, graph } for an ad-hoc one; optional vars for {{vars.name}} and models per block. */
   app.post('/api/runs', { preHandler: requireUser }, async (req, reply) => {
     try {
-      return { runId: startCanvasRun(req.user!, (req.body ?? {}) as RunRequest) };
+      const body = (req.body ?? {}) as RunRequest;
+      const runId = startCanvasRun(req.user!, body);
+      noteRun(req, runId, body.canvasId ? canvasFor(req.user!, body.canvasId)?.name : undefined);
+      return { runId };
     } catch (err) {
       const code = (err as { statusCode?: number }).statusCode;
       if (!code) throw err;
@@ -196,7 +206,7 @@ export function runRoutes(app: FastifyInstance) {
       times: Math.max(0, Math.min(100_000, Math.floor(Number(body.times) || 0))),
       vars,
       start: (question, v) =>
-        startRun({ ownerId: user.id, user, canvasId: row.id, graph: graph!, question, vars: v, resolve: resolverFor(providerUser), freeGpu: gpuFreerFor(providerUser), training: trainingFor(user) }),
+        startRun({ ownerId: user.id, user, canvasId: row.id, graph: graph!, question, vars: v, resolve: resolverFor(providerUser), freeGpu: gpuFreerFor(providerUser), training: trainingFor(user), source: 'Batch' }),
     });
   });
 
@@ -208,7 +218,7 @@ export function runRoutes(app: FastifyInstance) {
     (
       db
         .prepare(
-          `SELECT r.id, r.canvas_id, r.question, r.status, r.started_at, r.finished_at, r.final, r.cost, c.name AS canvas_name
+          `SELECT r.id, r.canvas_id, r.question, r.status, r.started_at, r.finished_at, r.final, r.cost, r.source, c.name AS canvas_name
            FROM runs r LEFT JOIN canvases c ON c.id = r.canvas_id
            WHERE r.owner_id = ? ORDER BY r.started_at DESC LIMIT 200`,
         )
@@ -223,6 +233,7 @@ export function runRoutes(app: FastifyInstance) {
       finishedAt: r.finished_at ?? undefined,
       final: r.final ?? undefined,
       cost: r.cost ?? undefined,
+      source: r.source ?? undefined,
     })),
   );
 
@@ -260,7 +271,8 @@ export function runRoutes(app: FastifyInstance) {
       res.write('event: end\ndata: {}\n\n');
       res.end();
     };
-    const unsubscribe = subscribe(id, req.user!.id, (ev) => res.write(`data: ${JSON.stringify(ev.sent ? publicEvents([ev])[0] : ev)}\n\n`), end);
+    // A full admin may follow anyone's live run (Activity → Watch).
+    const unsubscribe = subscribe(id, req.user!.id, (ev) => res.write(`data: ${JSON.stringify(ev.sent ? publicEvents([ev])[0] : ev)}\n\n`), end, { admin: isFullAdmin(req.user!) });
     if (!unsubscribe) {
       res.write(`event: error\ndata: ${JSON.stringify({ error: 'Run not found' })}\n\n`);
       clearInterval(ping);
@@ -272,7 +284,8 @@ export function runRoutes(app: FastifyInstance) {
     });
   });
 
+  /** The run's owner, or a full admin (Activity → Stop), may stop it; anyone else gets 404. */
   app.post('/api/runs/:id/cancel', { preHandler: requireUser }, async (req, reply) =>
-    cancelRun((req.params as { id: string }).id, req.user!.id) ? { ok: true } : reply.code(404).send({ error: 'No running run with that id' }),
+    cancelRun((req.params as { id: string }).id, req.user!) ? { ok: true } : reply.code(404).send({ error: 'No running run with that id' }),
   );
 }

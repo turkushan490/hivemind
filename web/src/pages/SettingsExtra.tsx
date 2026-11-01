@@ -1,4 +1,4 @@
-import { SEARCH_SOURCES, type HfSettings, type HomeAssistantSettings, type ModelInfo, type VoiceSettings, type ModelRef, type ProviderInfo, type SearchSettings, type SearchSource, type TrainWindow } from '@hivemind/shared';
+import { SEARCH_SOURCES, type HfSettings, type HomeAssistantSettings, type ModelInfo, type VoiceSettings, type ModelRef, type ProviderInfo, type SearchSettings, type SearchSource, type TrainWindow, type RunLimits } from '@hivemind/shared';
 import { useEffect, useState } from 'react';
 import { api } from '../api';
 import { BuilderModelChooser } from '../canvas/BuilderModelChooser';
@@ -664,6 +664,65 @@ export function TrainingPanel({ isAdmin, active }: { isAdmin: boolean; active: b
         </div>
       ) : (
         <p className="text-xs text-slate-500">Only an admin can change it.</p>
+      )}
+    </div>
+  );
+}
+
+/** Settings → Run limits: how long one model call may take, and what local models get when a block sets nothing. */
+export function RunLimitsPanel({ isAdmin, active }: { isAdmin: boolean; active: boolean }) {
+  const [saved, setSaved] = useState<RunLimits | null>(null);
+  const [form, setForm] = useState<RunLimits | null>(null);
+  useEffect(() => {
+    if (!active) return;
+    api<RunLimits>('/api/settings/run-limits', { quiet: true })
+      .then((x) => {
+        setSaved(x);
+        setForm(x);
+      })
+      .catch(() => {});
+  }, [active]);
+  if (!saved || !form) return null;
+  const changed = (Object.keys(form) as (keyof RunLimits)[]).some((k) => form[k] !== saved[k]);
+  const save = async () => {
+    try {
+      const next = await api<RunLimits>('/api/settings/run-limits', { method: 'PUT', body: form });
+      setSaved(next);
+      setForm(next);
+      toast('Run limits saved', 'ok');
+    } catch {}
+  };
+  const field = (k: keyof RunLimits, label: string, help: string, min: number, max: number) => (
+    <label className="block space-y-1">
+      <span className="block text-sm font-medium">{label}</span>
+      <input
+        className="input w-40 py-1"
+        type="number"
+        min={min}
+        max={max}
+        disabled={!isAdmin}
+        value={form[k]}
+        onChange={(e) => setForm({ ...form, [k]: Number(e.target.value) })}
+      />
+      <span className="block text-xs text-slate-500">{help}</span>
+    </label>
+  );
+  return (
+    <div className="card max-w-2xl space-y-3">
+      <h2 className="font-semibold">Run limits</h2>
+      <p className="text-sm text-slate-400">
+        A local model that loops can hold the GPU for a long time, and every other run waits behind it. These limits stop it. Time spent waiting for the GPU does not
+        count; loading a cold model does. A block&apos;s own setting always wins.
+      </p>
+      {field('maxSeconds', 'Time limit per model call (seconds)', 'Every model call, local and cloud. 10 to 86400; default 600.', 10, 86400)}
+      {field('maxTokens', 'Token ceiling for local models', 'For blocks without their own "Max tokens". Thinking counts too. 16 to 32768; default 4096.', 16, 32768)}
+      {field('numCtx', 'Context size for local models', 'For blocks without their own context size. 2048 to 131072; default 16384.', 2048, 131072)}
+      {isAdmin ? (
+        <button className="btn" disabled={!changed} onClick={save}>
+          Save
+        </button>
+      ) : (
+        <p className="text-xs text-slate-500">Only an admin can change them.</p>
       )}
     </div>
   );

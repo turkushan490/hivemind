@@ -15,6 +15,8 @@ export interface User {
   scope?: TokenScope;
   /** The API token this request came with (training jobs remember which token started them). */
   tokenId?: string;
+  /** That token's name ("DungeonMind"), for the Activity page and a run's source. */
+  tokenName?: string;
 }
 
 /** What a limited API token may use: canvas ids and memory keys, exact or ending in "*" ("dnd-*", "rules:*"). */
@@ -46,11 +48,11 @@ function findUserBySession(token: string): User | undefined {
 
 function findUserByApiToken(token: string): User | undefined {
   const row = db
-    .prepare('SELECT u.id, u.username, u.role, t.id AS tid, t.scope FROM api_tokens t JOIN users u ON u.id = t.user_id WHERE t.token_hash = ?')
-    .get(sha256(token)) as (User & { tid: string; scope: string | null }) | undefined;
+    .prepare('SELECT u.id, u.username, u.role, t.id AS tid, t.name AS tname, t.scope FROM api_tokens t JOIN users u ON u.id = t.user_id WHERE t.token_hash = ?')
+    .get(sha256(token)) as (User & { tid: string; tname: string; scope: string | null }) | undefined;
   if (!row) return;
   db.prepare("UPDATE api_tokens SET last_used_at = datetime('now') WHERE id = ?").run(row.tid);
-  return { id: row.id, username: row.username, role: row.role, tokenId: row.tid, ...(row.scope && { scope: JSON.parse(row.scope) as TokenScope }) };
+  return { id: row.id, username: row.username, role: row.role, tokenId: row.tid, tokenName: row.tname, ...(row.scope && { scope: JSON.parse(row.scope) as TokenScope }) };
 }
 
 /** Session cookie for the web UI, `Authorization: Bearer hm_…` for apps (phone, Home Assistant). */

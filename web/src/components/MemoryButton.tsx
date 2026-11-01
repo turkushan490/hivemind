@@ -30,11 +30,18 @@ export function MemoryButton() {
   const total = mem.reduce((s, p) => s + p.models.reduce((a, m) => a + m.sizeBytes, 0), 0);
   const count = mem.reduce((s, p) => s + p.models.length, 0);
 
+  const inUse = mem.some((p) => p.models.some((m) => m.runs?.length));
+
   const unload = async (providerId?: string, model?: string) => {
     setBusy(true);
     try {
-      const r = await api<{ unloaded: string[]; failed: { model: string; error: string }[] }>('/api/memory/unload', { body: { providerId, model } });
-      if (r.unloaded.length) toast(`Unloaded ${r.unloaded.length} model${r.unloaded.length > 1 ? 's' : ''} from memory`, 'ok');
+      const r = await api<{ unloaded: string[]; failed: { model: string; error: string }[]; stoppedRuns?: number }>('/api/memory/unload', { body: { providerId, model } });
+      const stopped = r.stoppedRuns ?? 0;
+      const runs = `${stopped} run${stopped === 1 ? '' : 's'}`;
+      const models = `${r.unloaded.length} model${r.unloaded.length === 1 ? '' : 's'}`;
+      if (stopped && r.unloaded.length) toast(`Stopped ${runs} and unloaded ${models}`, 'ok');
+      else if (r.unloaded.length) toast(`Unloaded ${models} from memory`, 'ok');
+      else if (stopped) toast(`Stopped ${runs}`, 'ok');
       else if (!r.failed.length) toast('Nothing was loaded', 'info');
       for (const f of r.failed) toast(`Could not unload ${f.model}: ${f.error}`);
       await load();
@@ -54,7 +61,7 @@ export function MemoryButton() {
           <div className="flex items-center">
             <h3 className="font-semibold">Loaded models</h3>
             <button className="btn ml-auto bg-red-600 hover:bg-red-500" disabled={busy || count === 0} onClick={() => unload()}>
-              {busy ? 'Unloading…' : 'Unload all'}
+              {busy ? 'Unloading…' : inUse ? 'Stop & unload all' : 'Unload all'}
             </button>
           </div>
           {mem.length === 0 && <p className="text-sm text-slate-400">No local providers.</p>}
@@ -64,19 +71,26 @@ export function MemoryButton() {
               {p.error && <p className="text-xs text-red-400">{p.error}</p>}
               {!p.error && p.models.length === 0 && <p className="text-xs text-slate-500">Nothing loaded — RAM and VRAM are free.</p>}
               {p.models.map((m) => (
-                <div key={m.model} className="flex items-center gap-2">
-                  <span className="min-w-0 flex-1 truncate" title={m.model}>
-                    {m.model}
-                  </span>
-                  <span className="text-xs whitespace-nowrap text-slate-400">
-                    {gb(m.sizeBytes)}
-                    {m.vramBytes > 0 && m.vramBytes < m.sizeBytes ? ` (${gb(m.vramBytes)} GPU)` : m.vramBytes ? ' GPU' : ' RAM'}
-                  </span>
-                  {p.canUnload && (
-                    <button className="btn-ghost px-2 py-0.5 text-xs" disabled={busy} onClick={() => unload(p.providerId, m.model)}>
-                      Unload
-                    </button>
-                  )}
+                <div key={m.model}>
+                  <div className="flex items-center gap-2">
+                    <span className="min-w-0 flex-1 truncate" title={m.model}>
+                      {m.model}
+                    </span>
+                    <span className="text-xs whitespace-nowrap text-slate-400">
+                      {gb(m.sizeBytes)}
+                      {m.vramBytes > 0 && m.vramBytes < m.sizeBytes ? ` (${gb(m.vramBytes)} GPU)` : m.vramBytes ? ' GPU' : ' RAM'}
+                    </span>
+                    {p.canUnload && (
+                      <button className="btn-ghost px-2 py-0.5 text-xs" disabled={busy} onClick={() => unload(p.providerId, m.model)}>
+                        {m.runs?.length ? 'Stop & unload' : 'Unload'}
+                      </button>
+                    )}
+                  </div>
+                  {m.runs?.map((r) => (
+                    <div key={r.runId} className="ml-3 truncate text-xs text-slate-400" title={r.runId}>
+                      {r.state === 'running' ? '▶ in use by' : '… waiting:'} {r.canvasName ?? 'a run'}
+                    </div>
+                  ))}
                 </div>
               ))}
             </div>

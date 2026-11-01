@@ -26,4 +26,8 @@ export const FEATURES: readonly string[] = [
   'trainEvents',
   // Lab → Datasets: import a Hugging Face dataset (POST /api/datasets/:id/import).
   'datasetImport',
+  // POST /api/runs → cancelWhenAlone: the run stops when nobody has followed its events for 30 seconds.
+  'cancelWhenAlone',
+  // The Activity page: GET /api/activity/running and /api/activity/calls.
+  'activity',
 ];

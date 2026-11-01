@@ -30,8 +30,10 @@ export interface NodeConfig {
   jsonSchema?: string;
   /** Context size in tokens for local (Ollama) models; default = the model's own. */
   numCtx?: number;
-  /** At most this many tokens per answer (a thinking model can't go on forever); default = no limit. */
+  /** At most this many tokens per answer (a thinking model can't go on forever); default = the run limit for local models (Settings → Run limits), none for cloud models. */
   maxTokens?: number;
+  /** Each model call of this block may take at most this many seconds (10-86400), counted once it holds the GPU; default = the run limit. */
+  maxSeconds?: number;
   /** false: thinking models answer straight away, without thinking first. */
   think?: boolean;
   /** LLM: send the chat history from /v1 as real messages instead of one prompt. */
@@ -276,6 +278,8 @@ export interface LoadedModel {
   vramBytes: number;
   /** When the provider unloads it by itself (ISO time). */
   expiresAt?: string;
+  /** Live runs using or waiting for this model. */
+  runs?: { runId: string; canvasName?: string; state: 'waiting' | 'running' }[];
 }
 
 /** GET /api/memory: one entry per local provider. */
@@ -537,6 +541,8 @@ export interface RunRequest {
   vars?: Record<string, string>;
   /** This run only: the model of a block (by node id), or of every AI model block ("*"); a node id wins over "*". */
   models?: Record<string, ModelRef>;
+  /** Cancel the run when nobody has followed /api/runs/:id/events for 30 seconds (also from the start, for a client that never connects). */
+  cancelWhenAlone?: boolean;
 }
 
 export interface RunSummary {
@@ -549,6 +555,73 @@ export interface RunSummary {
   finishedAt?: string;
   final?: string;
   cost?: number;
+  /** Who or what started it: "Screen", "API: <token>", "/v1: <token>", "Schedule", "Batch". */
+  source?: string;
+}
+
+/** Settings → Run limits (GET/PUT /api/settings/run-limits). */
+export interface RunLimits {
+  /** Every model call: at most this many seconds once it holds the GPU (all providers). */
+  maxSeconds: number;
+  /** Local models, for blocks without their own maxTokens. */
+  maxTokens: number;
+  /** Local models, for blocks without their own numCtx. */
+  numCtx: number;
+}
+
+/** GET /api/activity/running: one block of a live run that is waiting for or using a model. */
+export interface ActiveBlock {
+  nodeId: string;
+  label: string;
+  providerId?: string;
+  model?: string;
+  state: 'waiting' | 'running';
+  startedAt: number;
+  tokens: number;
+  /** Waiting: who holds the GPU now ("DungeonMind: chronicler"). */
+  waitingBehind?: string;
+}
+
+export interface ActiveRun {
+  runId: string;
+  canvasId?: string;
+  canvasName?: string;
+  /** Who started it (see RunSummary.source). */
+  source: string;
+  owner: string;
+  mine: boolean;
+  startedAt: number;
+  /** The first 200 characters of the question. */
+  question: string;
+  blocks: ActiveBlock[];
+}
+
+export interface ActiveTraining {
+  id: string;
+  name: string;
+  base: string;
+  state: string;
+  owner: string;
+  startedAt: string;
+}
+
+export interface ActivityRunning {
+  runs: ActiveRun[];
+  training: ActiveTraining[];
+}
+
+/** GET /api/activity/calls: one API request made with a token (kept in memory, the last 1,000). */
+export interface ApiCall {
+  at: number;
+  token: string;
+  user?: string;
+  method: string;
+  /** The route pattern ("/api/runs/:id"), never the URL itself. */
+  route: string;
+  status: number;
+  ms: number;
+  runId?: string;
+  canvasName?: string;
 }
 
 // ---- Templates ----

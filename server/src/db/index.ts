@@ -243,6 +243,10 @@ const MIGRATIONS = [
   -- Hugging Face imports: [{repo, license, url, position}] per dataset; position is where the next import of that repo starts.
   ALTER TABLE datasets ADD COLUMN sources TEXT;
   `,
+  `
+  -- Who or what started a run: "Screen", "API: <token name>", "/v1: <token name>", "Schedule", "Batch".
+  ALTER TABLE runs ADD COLUMN source TEXT;
+  `,
 ];
 
 export const db = new DatabaseSync(join(config.dataDir, 'hivemind.db'));

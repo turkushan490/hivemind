@@ -88,7 +88,11 @@ Apps that need more than one answer text (like [DungeonMind](https://github.com/
 | `memorySearch` / `memoryImport` | Memory blocks can search (`mode: "search"`); `POST /api/memory/keys/:key/import` (max 20 000 entries / 20 MB, else 413) and `/search`. |
 | `imageBatch` | An Image block makes 1–8 pictures per run. |
 | `decisionProviders` / `decide` / `autoModel` | Decision models, the Decide block and the Auto (Jev router) model ([decisions.md](decisions.md)). |
+| `cancelWhenAlone` | `POST /api/runs {…, cancelWhenAlone: true}` cancels the run when nobody has followed `/api/runs/:id/events` for 30 seconds (also from the start). |
+| `activity` | The Activity page: `GET /api/activity/running` (live runs, their blocks, who holds the GPU) and `GET /api/activity/calls` (the last 1,000 token requests, route and status only). |
 | `nodeOutputs` | `GET /api/runs/:id` adds `outputs: {<label>: {nodeId, type, text}}`, one per finished block (label, else the block id; a duplicate label gets `#2`). Skipped and failed blocks are left out. The SSE `node_done` event carries `label`. |
+
+Every model call is limited by Settings → Run limits (600 s per call; local models without their own settings get a 4096-token ceiling and a 16K context), for `/v1` runs too.
 
 ```bash
 H=http://server:4820; T="Authorization: Bearer hm_..."

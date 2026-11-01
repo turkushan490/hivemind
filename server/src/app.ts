@@ -2,6 +2,7 @@ import cookie from '@fastify/cookie';
 import staticFiles from '@fastify/static';
 import Fastify, { type FastifyInstance, type RouteOptions } from 'fastify';
 import { existsSync } from 'node:fs';
+import { activityRoutes } from './api/activity.js';
 import { authRoutes, viewerGuard } from './api/auth.js';
 import { builderRoutes } from './api/builder.js';
 import { exportRoutes } from './api/exports.js';
@@ -22,12 +23,15 @@ import { voiceRoutes } from './api/voice.js';
 import { config } from './config.js';
 import { logError } from './errors.js';
 import { FEATURES } from './features.js';
+import { logApiCall } from './services/activity.js';
 
 /** The whole web app without listening: main.ts starts it, tests inject requests into it. */
 export async function buildApp(opts: { logger?: boolean; web?: boolean; onRoute?: (r: RouteOptions) => void } = {}): Promise<FastifyInstance> {
   const app = Fastify({ logger: opts.logger === false ? false : { level: process.env.LOG_LEVEL || 'info' }, trustProxy: process.env.TRUST_PROXY || 'loopback, linklocal, uniquelocal', bodyLimit: 5 * 1024 * 1024 });
 
   if (opts.onRoute) app.addHook('onRoute', opts.onRoute);
+  // Activity → Incoming API calls: every request with an API token, route pattern and status only.
+  app.addHook('onRequest', logApiCall);
   await app.register(cookie);
 
   // Unexpected errors in a request: logged with an id the UI can show.
@@ -95,6 +99,7 @@ export async function buildApp(opts: { logger?: boolean; web?: boolean; onRoute?
   labRoutes(app);
   datasetRoutes(app);
   scheduleRoutes(app);
+  activityRoutes(app);
 
   if (opts.web !== false && existsSync(config.webDir)) {
     await app.register(staticFiles, {

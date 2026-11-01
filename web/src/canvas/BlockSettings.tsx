@@ -21,8 +21,42 @@ export function BlockSettings(p: Props) {
     <>
       {p.kind === 'llm' && <AutoSettings {...p} />}
       <ModelOptions {...p} />
+      <TimeLimit {...p} />
       <KindSettings {...p} />
     </>
+  );
+}
+
+/** Blocks that call a chat or decision model (not Image or Train): how long one call may take. */
+const TIMED: NodeType[] = ['llm', 'review', 'judge', 'router', 'debate', 'vote', 'decide', 'generate', 'evaluate'];
+
+function TimeLimit(p: Props) {
+  const [text, setText] = useState(p.config.maxSeconds ? String(p.config.maxSeconds) : '');
+  useEffect(() => setText(p.config.maxSeconds ? String(p.config.maxSeconds) : ''), [p.nodeId]);
+  if (!TIMED.includes(p.kind)) return null;
+  const n = Number(text);
+  const bad = text !== '' && (!Number.isFinite(n) || n < 10 || n > 86400);
+  return (
+    <label className="block space-y-1 rounded-lg border border-[#30363d] p-2.5">
+      <span className="text-xs font-semibold text-slate-300">Time limit (seconds)</span>
+      <input
+        className="input text-xs"
+        type="number"
+        min={10}
+        max={86400}
+        placeholder="Run limit (Settings → Run limits)"
+        value={text}
+        onChange={(e) => {
+          setText(e.target.value);
+          const v = Number(e.target.value);
+          if (e.target.value === '') p.onChange({ maxSeconds: undefined });
+          else if (Number.isFinite(v) && v >= 10 && v <= 86400) p.onChange({ maxSeconds: Math.round(v) });
+        }}
+      />
+      <span className={`text-xs ${bad ? 'text-amber-300' : 'text-slate-500'}`}>
+        {bad ? '10 to 86400 seconds.' : 'Each model call of this block, counted once it has the GPU. Empty: the run limit.'}
+      </span>
+    </label>
   );
 }
 

@@ -209,7 +209,8 @@ export function UsePage({ active, viewer, onProblem, onBuild }: { active: boolea
             <details key={h.id} className="rounded-lg border border-[#30363d] bg-[#161b22] px-3 py-2">
               <summary className="cursor-pointer text-sm text-slate-200">{h.question}</summary>
               <div className="mt-2">{h.final ? <AnswerView text={h.final} compact /> : <span className="text-sm text-slate-500">({h.status})</span>}</div>
-              <div className="mt-2 flex justify-end gap-2">
+              <div className="mt-2 flex items-center justify-end gap-2">
+                {h.source && h.source !== 'Screen' && <span className="mr-auto text-xs text-slate-500">Started by {h.source}</span>}
                 {h.final && <SpeakButton text={h.final} />}
                 <ExportRun runId={h.id} />
                 {h.final && <ThumbsButton runId={h.id} />}

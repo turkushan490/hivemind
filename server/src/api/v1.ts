@@ -9,7 +9,8 @@ import { getPrefs } from './builder.js';
 import { routeCanvas } from '../services/canvasRouter.js';
 import { logError } from '../errors.js';
 import { gpuFreerFor, resolverFor, trainingFor } from './providers.js';
-import { canvasesFor, runSetup } from './runs.js';
+import { canvasesFor, runSetup, sourceOf } from './runs.js';
+import { noteRun } from '../services/activity.js';
 
 
 /** Bearer API token (or the web session), answered in OpenAI's error format. */
@@ -69,7 +70,20 @@ export function v1Routes(app: FastifyInstance) {
     }
 
     const user = req.user!;
-    const runId = startRun({ ownerId: user.id, user, canvasId: row.id, graph, question, vars, chat, resolve: resolverFor(providerUser), freeGpu: gpuFreerFor(providerUser), training: trainingFor(user) });
+    const runId = startRun({
+      ownerId: user.id,
+      user,
+      canvasId: row.id,
+      graph,
+      question,
+      vars,
+      chat,
+      resolve: resolverFor(providerUser),
+      freeGpu: gpuFreerFor(providerUser),
+      training: trainingFor(user),
+      source: sourceOf(user, '/v1'),
+    });
+    noteRun(req, runId, row.name);
     const model = body.model;
     const live = streamSource(graph);
     const events: RunEvent[] = [];

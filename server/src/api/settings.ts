@@ -4,10 +4,22 @@ import { logError } from '../errors.js';
 import { forgetKey, importMemory, keyExists, MAX_IMPORT_BYTES, MAX_IMPORT_ENTRIES, searchMemory } from '../services/memory.js';
 import { homeAssistantConnection, homeAssistantSettings, saveHomeAssistantSettings } from '../services/homeassistant.js';
 import { saveSearchSettings, searchSettings, webSearch } from '../services/search.js';
+import { runLimits, saveRunLimits } from '../services/runLimits.js';
 import { requireAdmin, requireUser } from './auth.js';
 import { memoryAllowed } from './scope.js';
 
 export function settingsRoutes(app: FastifyInstance) {
+  // Settings → Run limits: time per model call, and the token ceiling and context size of local models.
+  app.get('/api/settings/run-limits', { preHandler: requireUser }, async () => runLimits());
+
+  app.put('/api/settings/run-limits', { preHandler: requireAdmin }, async (req, reply) => {
+    try {
+      return saveRunLimits((req.body ?? {}) as Parameters<typeof saveRunLimits>[0]);
+    } catch (err) {
+      return reply.code((err as { statusCode?: number }).statusCode ?? 400).send({ error: (err as Error).message });
+    }
+  });
+
   app.get('/api/settings/search', { preHandler: requireUser }, async () => searchSettings());
 
   app.put('/api/settings/search', { preHandler: requireAdmin }, async (req) => {

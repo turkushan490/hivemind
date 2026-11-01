@@ -38,6 +38,11 @@ export function App() {
   const [unseen, setUnseen] = useState(0);
   const [serverDown, setServerDown] = useState(false);
   const [wizard, setWizard] = useState(false);
+  const [build, setBuild] = useState<{ version: string; release: string }>();
+
+  useEffect(() => {
+    api<{ version: string; release: string }>('/api/health', { quiet: true }).then(setBuild).catch(() => {});
+  }, []);
 
   const load = async () => {
     try {
@@ -102,6 +107,11 @@ export function App() {
         <header className="mb-4 flex flex-wrap items-center gap-3">
           <img src="/icon.svg" className="h-8 w-8" alt="" />
           <h1 className="text-xl font-semibold">HiveMind</h1>
+          {build && (
+            <span className="rounded bg-amber-500/15 px-1.5 py-0.5 text-xs font-medium text-amber-300" title={`Commit ${build.version.slice(0, 7)}`}>
+              Beta · v{build.release}
+            </span>
+          )}
           <nav className="ml-4 flex gap-1">
             {(Object.keys(TABS) as Tab[]).filter(allowed).map((t) => (
               <button

@@ -58,7 +58,9 @@ jobs:
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          build-args: APP_VERSION=${{ github.sha }}
+          build-args: |
+            APP_VERSION=${{ github.sha }}
+            APP_RELEASE=0.9.${{ github.run_number }}
           # The 16 GB base is too big for the GitHub cache: only HiveMind's own small stages are cached.
           cache-from: type=gha
           cache-to: type=gha,mode=min

@@ -81,7 +81,7 @@ export async function buildApp(opts: { logger?: boolean; web?: boolean; onRoute?
   app.addHook('preHandler', scopeGuard);
 
   // features: what clients like DungeonMind can rely on (see features.ts).
-  app.get('/api/health', async () => ({ ok: true, version: process.env.APP_VERSION || 'dev', features: [...FEATURES] }));
+  app.get('/api/health', async () => ({ ok: true, version: process.env.APP_VERSION || 'dev', release: process.env.APP_RELEASE || 'dev', features: [...FEATURES] }));
 
   authRoutes(app);
   providerRoutes(app);

@@ -194,13 +194,13 @@ describe('cancelWhenAlone', () => {
   });
 
   it('keeps going when a new follower comes in time, or without the flag', async () => {
-    runs.runTiming.aloneMs = 200;
+    runs.runTiming.aloneMs = 1500;
     const id = await start({ canvasId: 'dnd-chronicle', cancelWhenAlone: true });
     const plain = await start({ graph: graph('loop-b') });
     (await follow(id))();
     await sleep(100);
     const drop = await follow(id);
-    await sleep(300);
+    await sleep(1700);
     expect(row(id).status).toBe('running');
     expect(row(plain).status).toBe('running');
     drop();

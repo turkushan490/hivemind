@@ -31,6 +31,8 @@ COPY --from=build /app/server/trainer ./server/trainer
 COPY --from=build /app/web/dist ./web
 ARG APP_VERSION=dev
 ENV APP_VERSION=$APP_VERSION
+ARG APP_RELEASE=dev
+ENV APP_RELEASE=$APP_RELEASE
 VOLUME /data
 EXPOSE 4820
 HEALTHCHECK --interval=30s --timeout=5s CMD node -e "fetch('http://127.0.0.1:'+process.env.PORT+'/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"

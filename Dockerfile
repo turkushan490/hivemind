@@ -1,5 +1,7 @@
 # ---- build ----
 FROM node:24-slim AS build
+# The project tests use git (against local repos).
+RUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY package.json package-lock.json ./
 COPY packages/shared/package.json packages/shared/

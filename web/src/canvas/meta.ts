@@ -1,6 +1,6 @@
 import type { NodeType } from '@hivemind/shared';
 
-export type NodeGroup = 'Core' | 'Logic' | 'Data' | 'Create' | 'Action' | 'Train';
+export type NodeGroup = 'Core' | 'Logic' | 'Data' | 'Create' | 'Action' | 'Project' | 'Train';
 
 export interface NodeMeta {
   title: string;
@@ -227,14 +227,87 @@ export const NODE_META: Record<NodeType, NodeMeta> = {
     hasInput: true,
     hasOutput: true,
   },
+  readProject: {
+    title: 'Read project',
+    color: '#93c5fd',
+    group: 'Project',
+    description: "Reads a project (a folder of files, e.g. a website): its file list, PROJECT.md (the project's notes) and the files you pick, up to a size budget. Put it before a model that changes the project.",
+    usesModel: false,
+    hasInput: true,
+    hasOutput: true,
+  },
+  writeFiles: {
+    title: 'Write files',
+    color: '#60a5fa',
+    group: 'Project',
+    description: 'Writes the files in the answer wired into it into the project (folders are made): code blocks like ```html path=pages/about.html, or JSON {"files": [...]}. Shows what changed.',
+    usesModel: false,
+    hasInput: true,
+    hasOutput: true,
+  },
+  updateNotes: {
+    title: 'Update notes',
+    color: '#a5b4fc',
+    group: 'Project',
+    description: 'A model keeps PROJECT.md up to date (what the site is, its style, pages and decisions), so the next run knows what was chosen before.',
+    usesModel: true,
+    hasInput: true,
+    hasOutput: true,
+  },
+  git: {
+    title: 'Git',
+    color: '#f0883e',
+    group: 'Project',
+    description: 'Commits and pushes the project to its GitHub repo (or pulls, or opens a pull request). Passes when the project is not connected to GitHub. Never force-pushes.',
+    usesModel: false,
+    hasInput: true,
+    hasOutput: true,
+  },
+  build: {
+    title: 'Build',
+    color: '#fde047',
+    group: 'Project',
+    description: 'Runs npm install and an npm script (build) for projects with a package.json (React, Vite…), inside HiveMind. The output folder (dist/) is what the preview shows. Plain HTML sites need no build.',
+    usesModel: false,
+    hasInput: true,
+    hasOutput: true,
+  },
+  pause: {
+    title: 'Pause',
+    color: '#fb923c',
+    group: 'Logic',
+    description: 'Stops the run and waits for you: shows what came in (and the files changed so far, with a preview). Continue (after editing if you like), Reject (goes to a block named "rejected") or Stop.',
+    usesModel: false,
+    hasInput: true,
+    hasOutput: true,
+  },
+  foreach: {
+    title: 'For each',
+    color: '#c084fc',
+    group: 'Logic',
+    description: 'Runs the blocks between it and its Collect block once per item of the list wired in (a JSON list, or one item per line). Each run gets one item.',
+    usesModel: false,
+    hasInput: true,
+    hasOutput: true,
+  },
+  collect: {
+    title: 'Collect',
+    color: '#c084fc',
+    group: 'Logic',
+    description: 'Ends a For each: gathers what every item gave, in order, and passes it on.',
+    usesModel: false,
+    hasInput: true,
+    hasOutput: true,
+  },
 };
 
 export const PALETTE: { group: NodeGroup; types: NodeType[] }[] = [
   { group: 'Core', types: ['input', 'llm', 'review', 'judge', 'output'] },
-  { group: 'Logic', types: ['router', 'decide', 'debate', 'vote'] },
+  { group: 'Logic', types: ['router', 'decide', 'debate', 'vote', 'pause', 'foreach', 'collect'] },
   { group: 'Data', types: ['template', 'file', 'search', 'memory'] },
   { group: 'Create', types: ['image', 'save'] },
   { group: 'Action', types: ['homeassistant', 'webhook', 'discord'] },
+  { group: 'Project', types: ['readProject', 'writeFiles', 'updateNotes', 'build', 'git'] },
   { group: 'Train', types: ['generate', 'dataset', 'train', 'evaluate', 'deploy'] },
 ];
 
@@ -306,5 +379,33 @@ export function summary(kind: NodeType, c: import('@hivemind/shared').NodeConfig
     }
     case 'deploy':
       return c.model && c.canvasPattern ? { text: `${c.model.model} → ${c.canvasPattern}` } : { text: 'Pick the model and canvases →', missing: true };
+    case 'readProject':
+      return { text: `${projectText(c)}${c.onlyNamed ? ' · named files' : c.globs ? ` · ${c.globs.replace(/\s+/g, ' ').slice(0, 30)}` : ''}` };
+    case 'writeFiles':
+      return { text: `${projectText(c)}${c.writeMode === 'new' ? ' · new files only' : ''}` };
+    case 'updateNotes':
+      return c.model ? { text: `${projectText(c)} · ${c.model.model}` } : { text: 'Pick a model →', missing: true };
+    case 'git':
+      return { text: `${projectText(c)} · ${GIT_ACTIONS[c.gitAction ?? 'commitPush']}` };
+    case 'build':
+      return { text: `${projectText(c)} · npm run ${c.script || 'build'}` };
+    case 'pause':
+      return { text: c.timeoutMinutes ? `${c.title || 'Check'} · ${c.timeoutMinutes} min` : c.title || 'Waits for you' };
+    case 'foreach':
+      return { text: `each item · max ${c.maxItems ?? 50}` };
   }
 }
+
+export const GIT_ACTIONS: Record<NonNullable<import('@hivemind/shared').NodeConfig['gitAction']>, string> = {
+  commitPush: 'commit + push',
+  commit: 'commit',
+  push: 'push',
+  pull: 'pull',
+  pr: 'pull request',
+};
+
+/** The project a block works on, as shown on the canvas: its own setting, or the run's vars.project. */
+const projectText = (c: import('@hivemind/shared').NodeConfig) => (c.project?.trim() ? `📁 ${c.project.startsWith('{{') ? c.project : (projectNames.get(c.project) ?? c.project)}` : '📁 {{vars.project}}');
+
+/** Project names by id, filled in by the project picker so blocks show names, not ids. */
+export const projectNames = new Map<string, string>();

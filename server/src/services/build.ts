@@ -1,7 +1,7 @@
 import type { BuildResult } from '@hivemind/shared';
 import { execFileSync, spawn } from 'node:child_process';
 import { chmodSync, chownSync, cpSync, existsSync, lstatSync, mkdirSync, readdirSync, rmSync, statSync } from 'node:fs';
-import { join, relative, sep } from 'node:path';
+import { join, relative, resolve, sep } from 'node:path';
 import { config } from '../config.js';
 import { cleanRel, rootOf, touchProject } from './projects.js';
 
@@ -14,8 +14,8 @@ import { cleanRel, rootOf, touchProject } from './projects.js';
 
 const err = (statusCode: number, message: string) => Object.assign(new Error(message), { statusCode });
 
-export const buildsDir = join(config.dataDir, 'builds');
-export const npmCacheDir = join(config.dataDir, 'cache', 'npm');
+export const buildsDir = resolve(config.dataDir, 'builds');
+export const npmCacheDir = resolve(config.dataDir, 'cache', 'npm');
 
 const LOG_MAX = 2 * 1024 * 1024;
 const DEFAULT_TIMEOUT_MS = 10 * 60_000;

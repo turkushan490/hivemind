@@ -6,6 +6,7 @@ import { BuilderSettings, HomeAssistantPanel, HuggingFacePanel, VoicePanel, Memo
 import { Tokens } from './Tokens';
 import { Users } from './Users';
 import { Access } from './Access';
+import { GithubPanel, SkillsPanel } from './GithubSkills';
 
 type Role = 'admin' | 'user' | 'viewer';
 
@@ -20,6 +21,8 @@ const SECTIONS = {
   huggingface: 'Hugging Face',
   training: 'Training',
   limits: 'Run limits',
+  skills: 'Skills',
+  github: 'GitHub',
   users: 'Users',
   access: 'Access',
   tokens: 'API tokens',
@@ -62,6 +65,8 @@ export function Settings({ role, meId, active, onWizard }: { role: Role; meId: s
         {panel('huggingface', <HuggingFacePanel isAdmin={isAdmin} active={active && section === 'huggingface'} />)}
         {panel('training', <TrainingPanel isAdmin={isAdmin} active={active && section === 'training'} />)}
         {panel('limits', <RunLimitsPanel isAdmin={isAdmin} active={active && section === 'limits'} />)}
+        {panel('skills', <SkillsPanel isAdmin={isAdmin} active={active && section === 'skills'} />)}
+        {panel('github', <GithubPanel active={active && section === 'github'} />)}
         {panel('users', <Users meId={meId} active={active && section === 'users'} />)}
         {panel('access', <Access active={active && section === 'access'} />)}
         {panel('tokens', <Tokens isAdmin={isAdmin} />)}

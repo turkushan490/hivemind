@@ -7,6 +7,7 @@ import { ActivityPage } from './pages/ActivityPage';
 import { FilesPage } from './pages/FilesPage';
 import { Login } from './pages/Login';
 import { Problems } from './pages/Problems';
+import { ProjectsPage } from './pages/ProjectsPage';
 import { RunPage } from './pages/Run';
 import { Settings } from './pages/Settings';
 import { Stats } from './pages/Stats';
@@ -21,7 +22,7 @@ interface Me {
   role: 'admin' | 'user' | 'viewer';
 }
 
-const TABS = { use: 'Use', canvas: 'Workflow', files: 'Files', run: 'Quick council', stats: 'Stats', lab: 'Lab', activity: 'Activity', settings: 'Settings', problems: 'Problems' } as const;
+const TABS = { use: 'Use', canvas: 'Workflow', projects: 'Projects', files: 'Files', run: 'Quick council', stats: 'Stats', lab: 'Lab', activity: 'Activity', settings: 'Settings', problems: 'Problems' } as const;
 type Tab = keyof typeof TABS;
 /** Viewers only use canvases. */
 const VIEWER_TABS: Tab[] = ['use', 'activity', 'settings', 'problems'];
@@ -36,6 +37,7 @@ export function App() {
   const [opened, setOpened] = useState<Set<Tab>>(() => new Set([tab]));
   useEffect(() => setOpened((o) => (o.has(tab) ? o : new Set(o).add(tab))), [tab]);
   const [unseen, setUnseen] = useState(0);
+  const [waiting, setWaiting] = useState(0);
   const [serverDown, setServerDown] = useState(false);
   const [wizard, setWizard] = useState(false);
   const [build, setBuild] = useState<{ version: string; release: string }>();
@@ -73,6 +75,9 @@ export function App() {
       try {
         const { unseen } = await api<{ unseen: number }>('/api/problems/unseen', { quiet: true });
         setUnseen(unseen);
+        // Runs waiting at a Pause block (yours; an admin's: everyone's).
+        const act = await api<{ runs: { paused?: unknown[] }[] }>('/api/activity/running', { quiet: true }).catch(() => undefined);
+        if (act) setWaiting(act.runs.reduce((n, r) => n + (r.paused?.length ?? 0), 0));
         setServerDown(false);
       } catch (err) {
         if ((err as { status?: number }).status === 0) setServerDown(true);
@@ -121,6 +126,11 @@ export function App() {
               >
                 {TABS[t]}
                 {t === 'problems' && unseen > 0 && <span className="rounded-full bg-red-600 px-1.5 text-xs font-semibold text-white">{unseen}</span>}
+                {t === 'activity' && waiting > 0 && (
+                  <span className="rounded-full bg-orange-500 px-1.5 text-xs font-semibold text-white" title="Runs waiting for you at a Pause block">
+                    {waiting}
+                  </span>
+                )}
               </button>
             ))}
           </nav>
@@ -148,6 +158,11 @@ export function App() {
         {opened.has('canvas') && (
           <div hidden={tab !== 'canvas'}>
             <CanvasPage active={tab === 'canvas'} onProblem={() => setUnseen((n) => n + 1)} />
+          </div>
+        )}
+        {opened.has('projects') && (
+          <div hidden={tab !== 'projects'}>
+            <ProjectsPage active={tab === 'projects'} />
           </div>
         )}
         {opened.has('files') && (

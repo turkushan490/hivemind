@@ -15,7 +15,7 @@ import { createZip, readZip } from './zip.js';
 
 const err = (statusCode: number, message: string) => Object.assign(new Error(message), { statusCode });
 
-export const skillsDir = join(config.dataDir, 'skills');
+export const skillsDir = resolve(config.dataDir, 'skills');
 mkdirSync(skillsDir, { recursive: true });
 
 export const SKILL_LIMITS = { fileBytes: 1024 * 1024, totalBytes: 10 * 1024 * 1024, files: 200, promptChars: 30_000 };

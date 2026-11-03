@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import { api } from '../api';
 import { toast } from '../notify';
 import { ModelPicker } from './ModelPicker';
+import { ForeachSettings, PauseSettings, ProjectBlockSettings, SkillsOption } from './ProjectSettings';
 
 interface Props {
   nodeId: string;
@@ -21,6 +22,7 @@ export function BlockSettings(p: Props) {
     <>
       {p.kind === 'llm' && <AutoSettings {...p} />}
       <ModelOptions {...p} />
+      {(p.kind === 'llm' || p.kind === 'review' || p.kind === 'judge') && <SkillsOption {...p} />}
       <TimeLimit {...p} />
       <KindSettings {...p} />
     </>
@@ -28,7 +30,7 @@ export function BlockSettings(p: Props) {
 }
 
 /** Blocks that call a chat or decision model (not Image or Train): how long one call may take. */
-const TIMED: NodeType[] = ['llm', 'review', 'judge', 'router', 'debate', 'vote', 'decide', 'generate', 'evaluate'];
+const TIMED: NodeType[] = ['llm', 'review', 'judge', 'router', 'debate', 'vote', 'decide', 'generate', 'evaluate', 'updateNotes'];
 
 function TimeLimit(p: Props) {
   const [text, setText] = useState(p.config.maxSeconds ? String(p.config.maxSeconds) : '');
@@ -295,6 +297,16 @@ function KindSettings(p: Props) {
       return <TrainSettings {...p} />;
     case 'homeassistant':
       return <HomeAssistantSettings {...p} />;
+    case 'readProject':
+    case 'writeFiles':
+    case 'updateNotes':
+    case 'git':
+    case 'build':
+      return <ProjectBlockSettings {...p} />;
+    case 'pause':
+      return <PauseSettings {...p} />;
+    case 'foreach':
+      return <ForeachSettings {...p} />;
     case 'webhook':
       return <WebhookSettings {...p} />;
     case 'discord':

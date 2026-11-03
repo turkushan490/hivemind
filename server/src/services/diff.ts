@@ -11,7 +11,8 @@ export interface LineDiff {
   diff?: string;
 }
 
-const splitLines = (s: string) => (s === '' ? [] : s.replace(/\r\n/g, '\n').split('\n'));
+/** Lines of a text; the line break at the end of a file is not an extra empty line. */
+const splitLines = (s: string) => (s === '' ? [] : s.replace(/\r\n/g, '\n').replace(/\n$/, '').split('\n'));
 
 /** The difference between two versions of a text file (old undefined: a new file; new undefined: deleted). */
 export function lineDiff(before: string | undefined, after: string | undefined): LineDiff {

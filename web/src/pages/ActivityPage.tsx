@@ -2,6 +2,7 @@ import type { ActivityRunning, ActiveRun, ApiCall, RunEvent } from '@hivemind/sh
 import { useEffect, useRef, useState } from 'react';
 import { api } from '../api';
 import { toast } from '../notify';
+import { PausePanel } from '../components/PausePanel';
 
 /** sqlite's datetime('now') is UTC without a zone marker. */
 const parseDb = (s: string) => Date.parse(s.replace(' ', 'T') + 'Z');
@@ -49,8 +50,24 @@ export function ActivityPage({ active, isAdmin, onOpenLab }: { active: boolean; 
     } catch {}
   };
 
+  const waiting = (now?.runs ?? []).flatMap((r) => (r.mine || isAdmin ? (r.paused ?? []).map((p) => ({ run: r, pause: p })) : []));
+
   return (
     <div className="space-y-6">
+      {waiting.length > 0 && (
+        <section className="space-y-2">
+          <h2 className="font-semibold text-orange-300">Waiting for you ({waiting.length})</h2>
+          {waiting.map(({ run, pause }) => (
+            <div key={`${run.runId}-${pause.nodeId}`} className="space-y-1">
+              <div className="text-xs text-slate-400">
+                {run.canvasName ?? 'Ad-hoc workflow'} · {run.source}
+                {!run.mine && ` · by ${run.owner}`}
+              </div>
+              <PausePanel runId={run.runId} pause={pause} />
+            </div>
+          ))}
+        </section>
+      )}
       <section className="space-y-2">
         <h2 className="font-semibold">Running now</h2>
         {!now && <p className="text-sm text-slate-400">Loading…</p>}

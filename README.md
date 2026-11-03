@@ -39,6 +39,8 @@ HiveMind is a self-hosted web app where several AI models work together. Ask one
 - **Home Assistant integration:** a custom integration ([`integrations/home_assistant`](integrations/home_assistant)) — config flow, an Assist conversation agent and a button per canvas, and a `hivemind.run_canvas` action that returns the answer. Works on HA OS and HA Docker over plain HTTP.
 - **Images:** an Image block draws with your own **ComfyUI** (its checkpoints and LoRAs, fully local) or an OpenAI-compatible image API. Ollama and ComfyUI on the same GPU take turns automatically.
 - **Files & websites:** a files folder per user (upload, preview, download), a Save file block (website, Markdown, code, JSON, CSV), and a sandboxed live **preview** of websites the AIs build.
+- **Projects (whole websites):** folders of files that stay between runs, with an editor, a sandboxed preview and a history of what each run changed. Blocks **Read project**, **Write files**, **Update notes** (`PROJECT.md`, so each run knows earlier choices), **Build** (npm, inside the container, without HiveMind's keys) and **Git** (commit, push, pull, pull request with your own GitHub token). A **Pause** block waits for you before anything is published, and **For each … Collect** runs part of a workflow once per item. The **Site builder** template keeps building one site run after run. See [docs/projects.md](docs/projects.md).
+- **Skills:** your own `SKILL.md` folders (the Claude skills format) — upload, import from GitHub or write them — that AI model blocks follow, picked by you or by the model.
 - **Export / import:** canvases as files or a ZIP, finished tasks as ZIPs (answer, every block's output, images, replay data) — and back in again.
 - **Ready-made sets:** Everyday, Coding, Creative, Home / research, Website, Decisions (spam check, smart router, safe action) and Tabletop (the DungeonMind canvases) templates.
 - **Parallel switch:** cloud AIs always run at the same time; local models one by one, or together when you switch it on.
@@ -182,7 +184,8 @@ Layout: `packages/shared` (canvas + event types), `server` (Fastify, providers, 
 5. ✅ Voice (speech in/out), OpenAI-compatible API per canvas, Home Assistant integration, action nodes
 6. ✅ Roles, cost stats, judge winner stats, export, Unraid Community Apps template
 7. ✅ API for DungeonMind (M0), decision models (Jev, Decide block, Auto model), Training Lab L1–L2
-8. Lab L4 (training on Hugging Face) · Android app
+8. ✅ Projects, builds, GitHub, Pause, Site builder, skills
+9. Lab L4 (training on Hugging Face) · Android app
 
 ## License
 

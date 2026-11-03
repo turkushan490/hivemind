@@ -671,6 +671,104 @@ One function, `allowedFor(user)` in `server/src/services/access.ts` (the token i
 
 ---
 
+## M12 — Projects, builds, GitHub, Pause, For each and skills
+
+*Built (milestone 12).* Before this, the Website templates made one HTML file, the Save file block wrote one file to
+`outputs/` and never into a folder you choose, nothing read a folder back into a run, no block could wait for a
+person, and there was no git. Now a project is a folder that stays, workflows read and write it, build it with npm,
+push it to GitHub and stop for a check first. The user guide is [docs/projects.md](projects.md).
+
+### Health flags
+
+`GET /api/health` → `features` also lists `projects`, `projectBuild`, `github`, `pause` and `skills`.
+
+### Projects
+
+- Table `projects (id, owner_id, name, folder, github_repo, github_branch, created_at, updated_at)`, folder
+  `files/projects/<id>/`; `project_changes` keeps what each run or edit changed (the last 500 per project).
+- `GET/POST /api/projects`, `GET/PATCH/DELETE /api/projects/:id`, `GET /api/projects/:id/tree` (files, folders and a
+  fresh preview link), `GET|PUT|DELETE /api/projects/:id/file?path=` (`PUT` takes `{text}` or the raw file as
+  `application/octet-stream`), `POST /api/projects/:id/folder {path}`, `POST /api/projects/:id/move {from, to}`,
+  `GET|POST /api/projects/:id/zip`, `GET /api/projects/:id/history`. Owner or full admin; anyone else gets 404.
+- Project files never show in the Files tab, and `/api/files` can't write into `projects/`.
+- **Preview:** `GET /api/projects/preview/<token>/<path>` with a signed token (12 hours, HMAC with the server's key),
+  without a login, served with `Content-Security-Policy: sandbox allow-scripts …` and no `allow-same-origin`, so the
+  page can't use the HiveMind session or read its pages.
+
+### Blocks
+
+`readProject`, `writeFiles`, `updateNotes`, `git`, `build`, `pause`, `foreach`, `collect`. New `NodeConfig`
+fields: `project` (id, name or a template; empty = `vars.project`), `globs`, `budget`, `onlyNamed`, `writeMode`,
+`optionalWrite`, `gitAction`, `message`, `branch`, `script`, `outDir`, `title`, `timeoutMinutes`, `onTimeout`,
+`maxItems`, `skills`, `skillMode`.
+
+- **For each … Collect** (`server/src/engine/graph.ts` `loopsOf`, `server/src/engine/run.ts` `runLoop`): each For
+  each needs exactly one Collect after it; the blocks between them may only take input from inside the loop or from
+  blocks before the For each, and only feed blocks inside it or the Collect. Loops can't be nested. Each item gets a
+  fresh pass; the Collect gets `### Item n: <name>` sections in order. An item that fails doesn't stop the others.
+- **Reject branch:** the spec asked for a second handle on the Pause block. Branches in HiveMind go by the name of
+  the block wired after (Router, Decide), so the Reject branch is every block wired after a Pause whose name starts
+  with "rejected". No new edge field was needed.
+
+### Pause
+
+- Run status `paused` while any Pause waits; events `paused` (with `pause: PauseInfo`) and `resumed` (`action`).
+- `POST /api/runs/:id/resume {action, text?, comment?, nodeId?}`: owner or full admin; limited tokens their own runs
+  (in `SCOPED_ROUTES`). Stop also cancels the run.
+- The run's `RUN_TIMEOUT_MINUTES` clock and the `cancelWhenAlone` clock stand still while it waits. A Pause holds
+  no GPU lock. `closeStaleRuns()` also closes `paused` rows.
+- `GET /api/activity/running` → each run has `paused: PauseInfo[]`.
+
+### Builds
+
+- The runtime image now has `npm`, `npx`, `git` and the user `hmbuild` (the Dockerfile checks all four).
+- `server/src/services/build.ts`: copy to `/data/builds/<id>`, run as `hmbuild` when HiveMind is root, environment
+  only `PATH`, `HOME`, `NODE_ENV` and npm settings, 10-minute limit (the whole process group is killed), 2 MB log,
+  output folder copied back. `lockDataDir()` at start-up makes `/data` `711` and its entries `700`/`600` (except
+  `builds` and `cache`), so the build user can't read the database, the key or other files.
+- `POST /api/projects/:id/build {script?, outDir?}` → `BuildResult {ok, log, outDir, ms}`. Not for limited tokens.
+- The spec's test used a small Vite project; the test uses a project without packages instead, so CI doesn't depend
+  on the npm registry. It checks the same things: the build runs, the output comes back, no secret leaks, the limit
+  stops it.
+
+### GitHub
+
+- Table `github_accounts (user_id, token_enc, last4, login, author_name, author_email)`.
+- `GET/PUT/DELETE /api/settings/github`, `POST /api/settings/github/test`, `GET /api/github/repos`.
+- `POST /api/projects/:id/git/connect {repo, branch?, create?}`, `…/git/disconnect`, `…/git/commit {message}`,
+  `…/git/push`, `…/git/pull`, `…/git/pr {title, body?, branch?}`, `GET /api/projects/:id/git` (status).
+- `server/src/services/git.ts` runs the git CLI with hooks off, links written as files, no system or user config,
+  no prompts, `file://` and `ext::` remotes off; the token only as an `http.extraheader` through `GIT_CONFIG_*`
+  environment variables. Never `--force`. Pull is fetch + rebase (with uncommitted edits committed first); a conflict
+  is aborted and named.
+- Tests point `HIVEMIND_GIT_REMOTE_BASE` at a folder of bare repos instead of github.com.
+
+### Skills
+
+- Table `skills (id, owner_id, name, description, shared, folder, updated_at)`, files in `/data/skills/<id>/`.
+- `GET/POST /api/skills` (`{skillMd}`), `POST /api/skills/import` (a zip), `POST /api/skills/import/github {repo,
+  path?, ref?}`, `GET /api/skills/:id`, `GET|PUT|DELETE /api/skills/:id/file`, `DELETE /api/skills/:id`,
+  `PUT /api/skills/:id/shared` (admins), `GET /api/skills/:id/zip`. Limited tokens: `GET /api/skills` only.
+- `withSkills()` in `server/src/nodes/index.ts` (LLM, Review, Judge). **Auto** always uses the short picker call:
+  no provider adapter supports tool calls yet, so the `load_skill` / `read_skill_file` tools of the spec are left
+  for when one does. The Builder AI doesn't use skills yet.
+
+### Templates
+
+`site-builder` (Site builder (project)) and `site-quick` (Site: quick change) in the Website group. Picking one asks
+which project it works on, and can make a new one.
+
+### Code
+
+- `server/src/services/projects.ts`, `diff.ts`, `build.ts`, `git.ts`, `skills.ts`, `projectRun.ts`;
+  `server/src/api/projects.ts`, `server/src/api/skills.ts`; `server/src/nodes/projects.ts`; the last migration in
+  `server/src/db/index.ts`.
+- `web/src/pages/ProjectsPage.tsx`, `web/src/pages/GithubSkills.tsx`, `web/src/components/PausePanel.tsx`,
+  `web/src/canvas/ProjectSettings.tsx`.
+- Tests: `server/test/projects.test.ts`, `pause.test.ts`, `gitProjects.test.ts`, `build.test.ts`, `skills.test.ts`.
+
+---
+
 ## The DungeonMind canvases (installed by DungeonMind, documented here)
 
 DungeonMind keeps the JSON in its repo under `hivemind/*.canvas.json` and installs it with `PUT /api/canvases/<id>`. The user picks the models per node in HiveMind afterwards. The defaults come from the Lab scoreboard (Part 2).

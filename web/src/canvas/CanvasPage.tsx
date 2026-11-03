@@ -1,4 +1,4 @@
-import type { Canvas, CanvasGraph, ModelInfo, ModelRef, NodeConfig, NodeType, ProviderInfo } from '@hivemind/shared';
+import type { Canvas, CanvasGraph, ModelInfo, ModelRef, NodeConfig, NodeType, Project, ProviderInfo } from '@hivemind/shared';
 import {
   addEdge,
   Background,
@@ -20,6 +20,7 @@ import { downloadText } from '../components/AnswerView';
 import { toast } from '../notify';
 import { useReplay } from '../run/replay';
 import { Clock, useRun } from '../run/state';
+import { PausePanel } from '../components/PausePanel';
 import { History, ReplayBar } from './Replay';
 import { useStored } from '../stored';
 import { HiveEdge } from './HiveEdge';
@@ -28,8 +29,11 @@ import { BuilderPanel } from './BuilderPanel';
 import { Inspector } from './Inspector';
 import { RepeatRun } from './RepeatRun';
 import { ScheduleButton } from './ScheduleButton';
-import { COMING_SOON, NODE_META, PALETTE } from './meta';
+import { COMING_SOON, NODE_META, PALETTE, projectNames } from './meta';
 import { newNodeId, TEMPLATE_GROUPS, TEMPLATES, type TemplateGroup } from './templates';
+
+/** Blocks that work on a project (a site template asks which one). */
+const PROJECT_BLOCKS: NodeType[] = ['readProject', 'writeFiles', 'updateNotes', 'git', 'build', 'pause'];
 
 const nodeTypes = { hive: HiveNode };
 const edgeTypes = { hive: HiveEdge };
@@ -220,10 +224,31 @@ function Editor({ active, onProblem }: { active: boolean; onProblem: () => void 
     const t = TEMPLATES.find((x) => x.id === id)!;
     const refs = prefillModels(ms);
     const d = ms.find((m) => m.kind === 'decision');
-    show(t.build({ text: refs.slice(0, 3), judge: refs[3], image: pickImageModel(ms), ...(d && { decision: { providerId: d.providerId, model: d.model } }) }));
+    const graph = t.build({ text: refs.slice(0, 3), judge: refs[3], image: pickImageModel(ms), ...(d && { decision: { providerId: d.providerId, model: d.model } }) });
+    show(graph);
     setDoc({ name: t.name });
     setSaved(undefined);
     setShowTemplates(false);
+    // Project templates: which project they work on (all their project blocks get it; "" keeps vars.project).
+    if (graph.nodes.some((n) => PROJECT_BLOCKS.includes(n.type)) && !skipConfirm) void pickProject(graph);
+  }
+
+  async function pickProject(graph: CanvasGraph) {
+    const projects = await api<Project[]>('/api/projects', { quiet: true }).catch(() => [] as Project[]);
+    const list = projects.map((p) => p.name).join(', ');
+    const answer = prompt(
+      projects.length
+        ? `Which project should this workflow work on? Your projects: ${list}\n\nType a name (a new name makes a new project), or leave it empty to send vars.project with each run.`
+        : 'Name a new project for this workflow (a folder of files that stays between runs), or leave it empty to send vars.project with each run.',
+      projects[0]?.name ?? 'My site',
+    );
+    if (!answer?.trim()) return;
+    let p = projects.find((x) => x.name.toLowerCase() === answer.trim().toLowerCase());
+    if (!p) p = await api<Project>('/api/projects', { body: { name: answer.trim() } }).catch(() => undefined);
+    if (!p) return;
+    projectNames.set(p.id, p.name);
+    show({ ...graph, nodes: graph.nodes.map((n) => (PROJECT_BLOCKS.includes(n.type) ? { ...n, config: { ...n.config, project: p!.id } } : n)) });
+    toast(`This workflow works on the project ${p.name}`, 'ok');
   }
 
   const openCanvas = (c: Canvas) => {
@@ -568,6 +593,13 @@ function Editor({ active, onProblem }: { active: boolean; onProblem: () => void 
         </div>
         )}
       </div>
+
+      {!replaying &&
+        run.paused.map((p) => (
+          <div key={p.nodeId} className="max-h-[50vh] overflow-auto border-b border-[#30363d] bg-[#11161d] p-2">
+            <PausePanel runId={run.runId} pause={p} />
+          </div>
+        ))}
 
       {run.connLost && run.running && (
         <div role="alert" className="bg-amber-900/60 px-3 py-1 text-center text-xs text-amber-100">

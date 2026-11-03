@@ -89,6 +89,9 @@ Apps that need more than one answer text (like [DungeonMind](https://github.com/
 | `imageBatch` | An Image block makes 1–8 pictures per run. |
 | `decisionProviders` / `decide` / `autoModel` | Decision models, the Decide block and the Auto (Jev router) model ([decisions.md](decisions.md)). |
 | `cancelWhenAlone` | `POST /api/runs {…, cancelWhenAlone: true}` cancels the run when nobody has followed `/api/runs/:id/events` for 30 seconds (also from the start). |
+| `projects` / `projectBuild` / `github` | Projects (folders that stay), the Read project, Write files, Update notes, Build and Git blocks, and GitHub per user ([projects.md](projects.md)). A run's `vars.project` picks the project. |
+| `pause` | Pause blocks: the run waits (`status: "paused"`, SSE `paused` / `resumed`) until `POST /api/runs/:id/resume {action: "continue" \| "reject" \| "stop", text?, comment?}`. A limited token may answer its own runs. |
+| `skills` | Settings → Skills; AI model blocks follow the skills they name (or pick them). `GET /api/skills` lists them. |
 | `activity` | The Activity page: `GET /api/activity/running` (live runs, their blocks, who holds the GPU) and `GET /api/activity/calls` (the last 1,000 token requests, route and status only). |
 | `nodeOutputs` | `GET /api/runs/:id` adds `outputs: {<label>: {nodeId, type, text}}`, one per finished block (label, else the block id; a duplicate label gets `#2`). Skipped and failed blocks are left out. The SSE `node_done` event carries `label`. |
 

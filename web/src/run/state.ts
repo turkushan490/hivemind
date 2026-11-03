@@ -1,4 +1,4 @@
-import type { CanvasGraph, DecisionEvent, ModelRef, OutputFile, RunEvent } from '@hivemind/shared';
+import type { CanvasGraph, DecisionEvent, ModelRef, OutputFile, PauseInfo, RunEvent } from '@hivemind/shared';
 import { createContext, useEffect, useRef, useState } from 'react';
 import { api } from '../api';
 import { toast } from '../notify';
@@ -125,6 +125,12 @@ export function applyEvent(views: Record<string, NodeView>, ev: RunEvent): Recor
     case 'error':
       next = { ...v, state: 'error', error: ev.error };
       break;
+    case 'paused':
+      next = { ...v, state: 'queued', note: 'Waiting for you…' };
+      break;
+    case 'resumed':
+      next = { ...v, state: 'loading', note: ev.action === 'continue' ? 'Continued' : ev.action === 'reject' ? 'Rejected' : 'Stopped' };
+      break;
   }
   return { ...views, [ev.nodeId]: next };
 }
@@ -146,6 +152,8 @@ export function useRun(onProblem?: () => void) {
   const [final, setFinal] = useState<RunFinal | null>(null);
   const [errors, setErrors] = useState<string[]>([]);
   const [connLost, setConnLost] = useState(false);
+  /** Pause blocks waiting for an answer. */
+  const [paused, setPaused] = useState<PauseInfo[]>([]);
   const source = useRef<EventSource | null>(null);
   const [, tick] = useState(0);
 
@@ -168,6 +176,7 @@ export function useRun(onProblem?: () => void) {
     setViews({});
     setFinal(null);
     setErrors([]);
+    setPaused([]);
     setRunId(runId);
     source.current?.close();
     let lost = false;
@@ -177,6 +186,7 @@ export function useRun(onProblem?: () => void) {
       if (lost) {
         setViews({});
         setErrors([]);
+        setPaused([]);
         toast('Reconnected to the server', 'ok');
       }
       lost = false;
@@ -197,7 +207,12 @@ export function useRun(onProblem?: () => void) {
           onProblem?.();
         }
       }
-      if (ev.type === 'run_done') setFinal({ text: ev.final, status: ev.status, cost: ev.cost, files: ev.files });
+      if (ev.type === 'paused' && ev.pause) setPaused((ps) => [...ps.filter((x) => x.nodeId !== ev.pause!.nodeId), ev.pause!]);
+      if (ev.type === 'resumed') setPaused((ps) => ps.filter((x) => x.nodeId !== ev.nodeId));
+      if (ev.type === 'run_done') {
+        setPaused([]);
+        setFinal({ text: ev.final, status: ev.status, cost: ev.cost, files: ev.files });
+      }
     };
     es.addEventListener('end', () => {
       es.close();
@@ -212,9 +227,10 @@ export function useRun(onProblem?: () => void) {
     setViews({});
     setFinal(null);
     setErrors([]);
+    setPaused([]);
   };
 
-  return { runId, views, final, errors, connLost, running, start, cancel, reset };
+  return { runId, views, final, errors, connLost, running, paused, start, cancel, reset };
 }
 
 /** Elapsed seconds of a node: final time when done, live time while running. */

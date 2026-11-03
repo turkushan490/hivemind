@@ -87,7 +87,8 @@ export function listProjects(user: FileUser): Project[] {
   const rows = seesAllFiles(user)
     ? (db.prepare('SELECT p.*, u.username FROM projects p LEFT JOIN users u ON u.id = p.owner_id ORDER BY p.updated_at DESC').all() as unknown as ProjectRow[])
     : (db.prepare('SELECT * FROM projects WHERE owner_id = ? ORDER BY updated_at DESC').all(user.id) as unknown as ProjectRow[]);
-  return rows.map(toProject);
+  // An admin sees whose each project is (not for their own).
+  return rows.map((r) => toProject(r.owner_id === user.id ? { ...r, username: null } : r));
 }
 
 const cleanProjectName = (name: unknown) => {

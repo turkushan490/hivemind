@@ -8,6 +8,7 @@ import { ThumbsButton } from '../components/ThumbsButton';
 import { NODE_META } from '../canvas/meta';
 import { toast } from '../notify';
 import { IDLE, STATE_LABEL, STATE_TEXT, useRun } from '../run/state';
+import { PausePanel } from '../components/PausePanel';
 import { useStored } from '../stored';
 import { MicButton, speak, SpeakButton, useVoice } from '../voice';
 
@@ -174,6 +175,10 @@ export function UsePage({ active, viewer, onProblem, onBuild }: { active: boolea
           )}
         </div>
       )}
+
+      {run.paused.map((p) => (
+        <PausePanel key={p.nodeId} runId={run.runId} pause={p} />
+      ))}
 
       {run.final && (
         <div className={`card space-y-2 ${run.final.status === 'done' ? 'border-emerald-800' : 'border-red-800'}`}>

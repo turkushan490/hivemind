@@ -22,6 +22,13 @@ RUN npm ci --omit=dev -w server && npm cache clean --force
 # Without a GPU everything except training works as before; with --gpus=all the built-in trainer can fine-tune models.
 FROM unsloth/unsloth:core
 COPY --from=node:24-slim /usr/local/bin/node /usr/local/bin/node
+# npm and npx for project builds (Build block), git for projects on GitHub, and the unprivileged user builds run as.
+COPY --from=node:24-slim /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/npm
+RUN ln -sf ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
+ && ln -sf ../lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx \
+ && (command -v git >/dev/null || (apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*)) \
+ && (id hmbuild >/dev/null 2>&1 || useradd --system --no-create-home --shell /usr/sbin/nologin hmbuild) \
+ && git --version && npm --version && npx --version && id hmbuild
 WORKDIR /app
 ENV NODE_ENV=production PORT=4820 DATA_DIR=/data WEB_DIR=/app/web HF_HOME=/data/trainer-cache/huggingface
 COPY --from=deps /app ./

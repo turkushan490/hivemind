@@ -68,6 +68,14 @@ const BLOCKS: Record<NodeType, string> = {
   train: 'TRAINING: starts training a new model on "dataset": "trainBase" (e.g. unsloth/Qwen3.5-2B), "trainName" (e.g. my-helper:v1). It runs in the background for a long time; only use when the user asks to train or fine-tune.',
   evaluate: 'TRAINING: tests "models" (1+) on "count" examples from "dataset"; "model" judges them against the reference answers and the scores come out as a table.',
   deploy: 'TRAINING: puts "model" into the AI model blocks of the user\'s canvases matching "canvasPattern" (e.g. dnd-*). Only when the user asks to use a trained model.',
+  readProject: 'PROJECTS: reads a project (a folder of files, e.g. a website): its file list, PROJECT.md (the notes) and the files matching "globs" (e.g. "*.html, css/*") up to "budget" characters. "project": the project name or {{vars.project}}. "onlyNamed": true reads only the files named in the text wired in (a plan).',
+  writeFiles: 'PROJECTS: writes the files in the answer wired into it into "project" (folders are made): fenced blocks like ```html path=pages/about.html, or JSON {"files": [{"path", "content"}], "delete": [...]}. Tell the model before it to answer in that form.',
+  updateNotes: 'PROJECTS: a model ("model") updates PROJECT.md, the project\'s notes (what it is, style, pages, decisions), with what this run did. Put it at the end of a workflow that changes a project.',
+  git: 'PROJECTS: "gitAction": commitPush (default) | commit | push | pull | pr (a pull request), with "message" (template). Passes when the project is not connected to GitHub. Only when the user wants GitHub.',
+  build: 'PROJECTS: runs npm install and the npm "script" (default build) of a project with a package.json; the output folder (dist/) is what the preview shows. Not needed for plain HTML sites.',
+  pause: 'waits for the user: shows "title", the text wired in (and the files changed so far) and goes on when they press Continue (they may edit the text). A block wired after it labelled "rejected" runs instead when they press Reject. Use before anything that publishes or pushes.',
+  foreach: 'runs the blocks between it and its Collect block once per item of the list wired in (a JSON list like {"files": [...]}, or one item per line); each run gets one item as its input. Needs exactly one Collect after it. "maxItems" (default 50).',
+  collect: 'ends a For each: gathers the result of every item, in order, and passes them on.',
 };
 
 const ref = (m: ModelInfo) => `${m.providerId}|${m.model}`;

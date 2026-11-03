@@ -34,4 +34,12 @@ export const FEATURES: readonly string[] = [
   // API token) may use; runs with anything else are refused (403). Files are private to their owner.
   'accessProfiles',
   'privateFiles',
+  // Projects (folders that stay, with Read project / Write files / Update notes blocks), builds with npm inside
+  // the container, GitHub (Settings → GitHub, the Git block), the Pause block (POST /api/runs/:id/resume), and
+  // skills (Settings → Skills, the Skills setting of AI model blocks).
+  'projects',
+  'projectBuild',
+  'github',
+  'pause',
+  'skills',
 ];

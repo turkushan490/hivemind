@@ -1,4 +1,4 @@
-import type { ActiveBlock, ActiveRun, CanvasGraph, RunEvent, RunStatus } from '@hivemind/shared';
+import type { ActiveBlock, ActiveRun, CanvasGraph, PauseAction, PauseInfo, ResumeRequest, RunEvent, RunStatus } from '@hivemind/shared';
 import { newId } from '../crypto.js';
 import { db } from '../db/index.js';
 import { cancelText, hostHolder, runGraph, type EngineDeps } from '../engine/run.js';
@@ -12,6 +12,8 @@ import { webSearch } from '../services/search.js';
 import { kindOf, readOwnFile, writeUnique } from '../services/files.js';
 import { allowedFor, checkGraph, type Access } from '../services/access.js';
 import { homeAssistantConnection } from '../services/homeassistant.js';
+import { projectServicesFor } from '../services/projectRun.js';
+import { skillsForRun } from '../services/skills.js';
 
 type Listener = (ev: RunEvent) => void;
 
@@ -49,6 +51,10 @@ interface LiveRun {
   /** Resolves when the run is stored. */
   ended: Promise<void>;
   end: () => void;
+  /** Pause blocks waiting for a person, by node id. */
+  pauses: Map<string, { info: PauseInfo; answer: (r: { action: PauseAction; text?: string; comment?: string }) => void }>;
+  /** Stops the run-time clock while a Pause waits (and starts it again after). */
+  clock?: { pause(): void; resume(): void };
 }
 
 /** Active runs live in memory (event bus); finished runs are stored with all events for replay. */
@@ -108,6 +114,7 @@ export function startRun(opts: {
     blocks: new Map(),
     ended,
     end,
+    pauses: new Map(),
     ...(opts.cancelWhenAlone && { alone: { followers: 0 } }),
   };
   live.set(id, run);
@@ -176,14 +183,31 @@ export function startRun(opts: {
     for (const l of run.listeners) l(ev);
   };
 
-  // A run that hangs (a server that never answers) is stopped, so it can't hold the GPU forever.
+  // A run that hangs (a server that never answers) is stopped, so it can't hold the GPU forever. Time spent
+  // waiting at a Pause block doesn't count.
   const limitMin = Number(process.env.RUN_TIMEOUT_MINUTES) || 30;
-  const limit = setTimeout(() => {
-    if (run.finished) return;
-    emit({ type: 'error', error: `Run stopped: it took longer than ${limitMin} minutes (RUN_TIMEOUT_MINUTES)` });
-    run.abort.abort();
-  }, limitMin * 60_000);
-  limit.unref();
+  let left = limitMin * 60_000;
+  let since = Date.now();
+  let limit: NodeJS.Timeout | undefined;
+  const arm = () => {
+    since = Date.now();
+    limit = setTimeout(() => {
+      if (run.finished) return;
+      emit({ type: 'error', error: `Run stopped: it took longer than ${limitMin} minutes (RUN_TIMEOUT_MINUTES)` });
+      run.abort.abort();
+    }, Math.max(0, left));
+    limit.unref();
+  };
+  arm();
+  run.clock = {
+    pause: () => {
+      clearTimeout(limit);
+      left -= Date.now() - since;
+    },
+    resume: () => {
+      if (!run.finished && !run.abort.signal.aborted) arm();
+    },
+  };
   run.abort.signal.addEventListener('abort', () => clearTimeout(limit), { once: true });
 
   runGraph(opts.graph, opts.question, {
@@ -215,6 +239,10 @@ export function startRun(opts: {
         readFile: (path) => readOwnFile(fileUser, path),
         lanAllowed: fileUser.role === 'admin',
         training: opts.training,
+        // Projects: the runner's own (not for limited API tokens).
+        ...(!opts.user?.scope && { projects: projectServicesFor(fileUser, { id, source: canvasName ? `Run: ${canvasName}` : `Run: ${source}` }) }),
+        pause: { wait: (info, signal) => waitAtPause(run, info, emit, signal) },
+        skills: skillsForRun(fileUser),
       },
     }, run.abort.signal, opts.vars ?? {}, opts.chat)
     .then((r) => {
@@ -232,6 +260,7 @@ export function startRun(opts: {
 
 function finish(run: LiveRun, status: RunStatus, final?: string, cost?: number) {
   run.finished = true;
+  run.pauses.clear();
   run.blocks.clear();
   if (run.alone?.timer) clearTimeout(run.alone.timer);
   db.prepare("UPDATE runs SET status = ?, final = ?, cost = ?, finished_at = datetime('now'), events = ? WHERE id = ?").run(
@@ -253,9 +282,73 @@ function watchAlone(run: LiveRun) {
   const a = run.alone!;
   if (a.timer) clearTimeout(a.timer);
   a.timer = setTimeout(() => {
+    // A run waiting at a Pause waits for a person, not a client: the clock starts again when it goes on.
+    if (run.pauses.size) return;
     if (!run.finished && a.followers === 0) run.abort.abort(`Stopped: nobody followed the run for ${Math.round(runTiming.aloneMs / 1000)} seconds`);
   }, runTiming.aloneMs);
   a.timer.unref();
+}
+
+/**
+ * A Pause block waits here until the run's owner (or an admin) answers, the block's time runs out, or the run is
+ * stopped. While any Pause waits, the run is "paused": its time limit and cancelWhenAlone clock stand still.
+ */
+function waitAtPause(run: LiveRun, info: PauseInfo, emit: EngineDeps['emit'], signal?: AbortSignal): Promise<{ action: PauseAction; text?: string; comment?: string }> {
+  return new Promise((resolve, reject) => {
+    let timer: NodeJS.Timeout | undefined;
+    const done = () => {
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', onAbort);
+      run.pauses.delete(info.nodeId);
+      if (!run.pauses.size) {
+        run.clock?.resume();
+        if (!run.finished) db.prepare("UPDATE runs SET status = 'running' WHERE id = ? AND status = 'paused'").run(run.id);
+        if (run.alone && run.alone.followers === 0 && !run.finished) watchAlone(run);
+      }
+    };
+    const onAbort = () => {
+      done();
+      reject(new Error(signal ? cancelText(signal) : 'Cancelled'));
+    };
+    if (signal?.aborted) return onAbort();
+    signal?.addEventListener('abort', onAbort, { once: true });
+    if (!run.pauses.size) {
+      run.clock?.pause();
+      db.prepare("UPDATE runs SET status = 'paused' WHERE id = ? AND status = 'running'").run(run.id);
+    }
+    run.pauses.set(info.nodeId, {
+      info,
+      answer: (r) => {
+        done();
+        emit({ type: 'resumed', nodeId: info.nodeId, nodeType: 'pause', action: r.action });
+        resolve(r);
+      },
+    });
+    emit({ type: 'paused', nodeId: info.nodeId, nodeType: 'pause', pause: info });
+    if (info.timeoutAt) {
+      timer = setTimeout(() => run.pauses.get(info.nodeId)?.answer({ action: info.onTimeout ?? 'continue', comment: 'Nobody answered in time' }), Math.max(0, info.timeoutAt - Date.now()));
+      timer.unref();
+    }
+  });
+}
+
+/**
+ * Answers a waiting Pause block: the run's owner, or a full admin, may (anyone else: false, a 404). Stop also
+ * stops the run.
+ */
+export function resumeRun(runId: string, who: Pick<User, 'id' | 'role' | 'scope'>, body: ResumeRequest & { nodeId?: string }): boolean {
+  const run = live.get(runId);
+  if (!run || run.finished || (run.ownerId !== who.id && !isFullAdmin(who))) return false;
+  const pause = body.nodeId ? run.pauses.get(body.nodeId) : run.pauses.values().next().value;
+  if (!pause) return false;
+  const action: PauseAction = body.action === 'reject' || body.action === 'stop' ? body.action : 'continue';
+  pause.answer({
+    action,
+    ...(action === 'continue' && typeof body.text === 'string' && { text: body.text.slice(0, 1_000_000) }),
+    ...(action === 'reject' && typeof body.comment === 'string' && { comment: body.comment.slice(0, 10_000) }),
+  });
+  if (action === 'stop') run.abort.abort('Stopped at a Pause');
+  return true;
 }
 
 /** A full admin (not a limited token) may see and stop every run. */
@@ -368,6 +461,7 @@ export function activeRuns(user: Pick<User, 'id' | 'role' | 'scope'>): ActiveRun
       mine: r.ownerId === user.id,
       startedAt: r.startedAt,
       question: r.question.slice(0, 200),
+      ...(r.pauses.size && { paused: [...r.pauses.values()].map((p) => p.info) }),
       blocks: [...r.blocks.values()].map((b): ActiveBlock => {
         const behind = b.state === 'waiting' && b.hostKey ? hostHolder(b.hostKey) : undefined;
         return {
@@ -389,7 +483,7 @@ export function activeRuns(user: Pick<User, 'id' | 'role' | 'scope'>): ActiveRun
  * finish. They become errors, with the reason stored in their events.
  */
 export function closeStaleRuns(): number {
-  const rows = db.prepare("SELECT id, events FROM runs WHERE status = 'running'").all() as { id: string; events: string | null }[];
+  const rows = db.prepare("SELECT id, events FROM runs WHERE status IN ('running', 'paused')").all() as { id: string; events: string | null }[];
   const now = Date.now();
   for (const r of rows) {
     let events: RunEvent[] = [];

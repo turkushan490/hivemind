@@ -3,7 +3,8 @@ import { NODES, type ChatContext, type NodeInput, type NodeServices } from '../n
 import type { DecisionRequest, DecisionResult } from '../providers/decisions.js';
 import type { ChatMessage, ProviderAdapter } from '../providers/types.js';
 import { callCost } from '../services/pricing.js';
-import { validateGraph } from './graph.js';
+import { loopsOf, validateGraph, type Loop } from './graph.js';
+import { itemLabel, listItems } from '../nodes/projects.js';
 
 export interface ResolvedProvider {
   adapter: ProviderAdapter;
@@ -193,7 +194,6 @@ export async function runGraph(
   const skipped = new Set<string>();
   /** Wires a Router did not choose ("source->target"). */
   const blocked = new Set<string>();
-  const started = new Set<string>();
   const allFiles: OutputFile[] = [];
   let cost = 0;
 
@@ -497,24 +497,117 @@ export async function runGraph(
     }
   };
 
-  // Start every node as soon as all its parents are finished (done, failed or skipped).
-  await new Promise<void>((resolve) => {
-    let running = 0;
-    const tick = () => {
-      for (const n of graph.nodes) {
-        if (started.has(n.id)) continue;
-        if (!parents.get(n.id)!.every((p) => outputs.has(p) || failed.has(p) || skipped.has(p))) continue;
-        started.add(n.id);
-        running++;
-        runNode(n).finally(() => {
-          running--;
-          tick();
-        });
+  const finished = (id: string) => outputs.has(id) || failed.has(id) || skipped.has(id);
+
+  /** Runs these blocks, each as soon as all its parents are finished (done, failed or skipped). */
+  const schedule = (ids: string[], run: (n: CanvasNode) => Promise<void>) =>
+    new Promise<void>((resolve) => {
+      const mine = new Set<string>();
+      let running = 0;
+      const tick = () => {
+        for (const id of ids) {
+          if (mine.has(id)) continue;
+          if (!parents.get(id)!.every(finished)) continue;
+          mine.add(id);
+          running++;
+          run(byId.get(id)!).finally(() => {
+            running--;
+            tick();
+          });
+        }
+        if (running === 0) resolve();
+      };
+      tick();
+    });
+
+  // For each … Collect: the blocks between them run once per item (runLoop), not in the main pass.
+  const loops = loopsOf(graph);
+  const inLoop = new Set(loops.flatMap((l) => [...l.body, l.collect]));
+
+  const runLoop = async (loop: Loop): Promise<void> => {
+    const node = byId.get(loop.foreach)!;
+    const base = { nodeId: node.id, nodeType: node.type };
+    const collect = byId.get(loop.collect)!;
+    const cbase = { nodeId: collect.id, nodeType: collect.type };
+    const ps = parents.get(node.id)!;
+    const usable = ps.filter((p) => outputs.has(p) && !blocked.has(`${p}->${node.id}`));
+    const bodyIds = graph.nodes.map((n) => n.id).filter((id) => loop.body.has(id));
+    const skipAll = (why: 'skipped' | 'failed') => {
+      for (const id of [node.id, ...bodyIds, collect.id]) {
+        if (why === 'failed') failed.add(id);
+        else skipped.add(id);
       }
-      if (running === 0) resolve();
+      if (why === 'failed') {
+        deps.emit({ ...base, type: 'error', error: 'All inputs failed' });
+        deps.emit({ ...cbase, type: 'error', error: 'All inputs failed' });
+      } else {
+        deps.emit({ ...base, type: 'node_skipped' });
+        deps.emit({ ...cbase, type: 'node_skipped' });
+      }
     };
-    tick();
-  });
+    if (ps.length > 0 && usable.length === 0) return skipAll(ps.some((p) => failed.has(p)) ? 'failed' : 'skipped');
+    const text = usable.length ? usable.filter((p) => byId.get(p)!.type !== 'input').map((p) => outputs.get(p)!).join('\n\n') || question : question;
+    const t0 = Date.now();
+    deps.emit({ ...base, type: 'node_start' });
+    const max = Math.max(1, Math.min(500, node.config.maxItems ?? 50));
+    const all = listItems(text);
+    const items = all.slice(0, max);
+    if (!items.length) {
+      failed.add(node.id);
+      deps.emit({ ...base, type: 'error', error: 'For each: no items in what was wired in (a JSON list, or one item per line)' });
+      for (const id of [...bodyIds, collect.id]) failed.add(id);
+      deps.emit({ ...cbase, type: 'error', error: 'All inputs failed' });
+      return;
+    }
+    if (all.length > max) deps.emit({ ...base, type: 'node_progress', note: `${all.length} items, only the first ${max} run (maxItems)` });
+    const results: string[] = [];
+    let ok = 0;
+    const feeding = parents.get(collect.id)!.filter((p) => loop.body.has(p));
+    for (let i = 0; i < items.length; i++) {
+      if (signal.aborted) break;
+      deps.emit({ ...base, type: 'node_progress', note: `Item ${i + 1} of ${items.length}: ${itemLabel(items[i])}` });
+      // A fresh pass: the loop's blocks forget the last item.
+      for (const id of bodyIds) {
+        outputs.delete(id);
+        failed.delete(id);
+        skipped.delete(id);
+      }
+      for (const key of [...blocked]) if (loop.body.has(key.split('->')[0]) || key.startsWith(`${node.id}->`)) blocked.delete(key);
+      outputs.set(node.id, items[i]);
+      await schedule(bodyIds, runNode);
+      const got = feeding.filter((p) => outputs.has(p)).map((p) => outputs.get(p)!);
+      const broke = feeding.filter((p) => failed.has(p));
+      if (got.length) ok++;
+      results.push(`### Item ${i + 1}: ${itemLabel(items[i])}\n${got.length ? got.join('\n\n') : broke.length ? '(failed)' : '(skipped)'}`);
+    }
+    outputs.set(node.id, items.join('\n'));
+    deps.emit({ ...base, type: 'node_done', label: node.label || node.id, text: `${items.length} item${items.length === 1 ? '' : 's'}`, elapsedMs: Date.now() - t0 });
+    // The Collect block: every item's result, in order.
+    deps.emit({ ...cbase, type: 'node_start' });
+    if (signal.aborted) {
+      failed.add(collect.id);
+      deps.emit({ ...cbase, type: 'error', error: cancelText(signal) });
+      return;
+    }
+    if (!ok) {
+      failed.add(collect.id);
+      deps.emit({ ...cbase, type: 'error', error: 'Every item failed' });
+      return;
+    }
+    const joined = results.join('\n\n');
+    outputs.set(collect.id, joined);
+    deps.emit({ ...cbase, type: 'node_done', label: collect.label || collect.id, text: joined, elapsedMs: Date.now() - t0 });
+  };
+
+  const loopOf = new Map(loops.map((l) => [l.foreach, l]));
+  await schedule(
+    graph.nodes.map((n) => n.id).filter((id) => !inLoop.has(id)),
+    async (n) => {
+      const loop = loopOf.get(n.id);
+      if (loop) await runLoop(loop);
+      else await runNode(n);
+    },
+  );
 
   const outNodes = graph.nodes.filter((n) => n.type === 'output');
   // With output nodes, only they count; a failed judge must not pass off one council answer as final.

@@ -7,6 +7,7 @@ import { config } from './config.js';
 import { describe, logError } from './errors.js';
 import { startScheduler } from './services/schedules.js';
 import { closeStaleRuns } from './events/runs.js';
+import { lockDataDir } from './services/build.js';
 
 // A crash is never silent: it is stored, shown in the Problems tab after the restart, then the process exits so Docker restarts it.
 process.on('uncaughtException', (err) => {
@@ -55,6 +56,8 @@ process.once('SIGINT', stop);
 
 // Runs left on "running" by the previous process never finish: closed before the server takes requests.
 closeStaleRuns();
+// Project builds run as their own user: the data folder (database, secret key, files) is closed to it first.
+lockDataDir();
 
 const app = await buildApp();
 

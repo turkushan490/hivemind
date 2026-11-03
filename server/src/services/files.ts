@@ -110,6 +110,8 @@ function walkFiles(max: number, keep: (rel: string) => boolean = () => true): Fi
   const walk = (dir: string) => {
     for (const name of readdirSync(dir)) {
       if (out.length >= max) return;
+      // Projects (files/projects/<id>/) have their own page and owners.
+      if (dir === filesDir && name === 'projects') continue;
       const full = join(dir, name);
       const st = statSync(full);
       if (st.isDirectory()) walk(full);
@@ -131,7 +133,8 @@ export function listFiles(u: FileUser): FileEntry[] {
   const rows = (db.prepare('SELECT f.path, f.owner_id, u.username FROM files f LEFT JOIN users u ON u.id = f.owner_id').all() as { path: string; owner_id: string | null; username: string | null }[]);
   const owners = new Map(rows.map((r) => [r.path, r]));
   const all = seesAllFiles(u);
-  const out = walkFiles(3000, (p) => all || owners.get(p)?.owner_id === u.id);
+  // Projects have their own page (and can hold thousands of files).
+  const out = walkFiles(3000, (p) => !p.startsWith('projects/') && (all || owners.get(p)?.owner_id === u.id));
   if (all)
     for (const f of out) {
       const o = owners.get(f.path);
@@ -143,6 +146,8 @@ export function listFiles(u: FileUser): FileEntry[] {
 /** Writes a file without overwriting: "x.md" becomes "x (2).md" when taken. Returns the path used; ownerId owns it. */
 export function writeUnique(rel: string, data: Buffer | string, ownerId: string | null): string {
   let full = safePath(rel);
+  // Projects are written only through their own routes and blocks (owner checks, limits).
+  if (relative(filesDir, full).split(sep)[0] === 'projects') throw Object.assign(new Error('Write project files on the Projects page'), { statusCode: 400 });
   const ext = extname(full);
   const base = full.slice(0, full.length - ext.length);
   for (let i = 2; existsAt(full); i++) full = `${base} (${i})${ext}`;

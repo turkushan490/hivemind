@@ -1,7 +1,7 @@
 // Types shared by the server, the web UI and (later) the Android app.
 // The canvas format and run events are the contract between them.
 
-export const NODE_TYPES = ['input', 'llm', 'review', 'judge', 'output', 'router', 'debate', 'vote', 'decide', 'template', 'file', 'search', 'memory', 'save', 'image', 'homeassistant', 'webhook', 'discord', 'generate', 'dataset', 'train', 'evaluate', 'deploy'] as const;
+export const NODE_TYPES = ['input', 'llm', 'review', 'judge', 'output', 'router', 'debate', 'vote', 'decide', 'template', 'file', 'search', 'memory', 'save', 'image', 'homeassistant', 'webhook', 'discord', 'generate', 'dataset', 'train', 'evaluate', 'deploy', 'readProject', 'writeFiles', 'updateNotes', 'git', 'build', 'pause', 'foreach', 'collect'] as const;
 export type NodeType = (typeof NODE_TYPES)[number];
 
 /** Which model a node uses: a configured provider plus a model id on it. */
@@ -127,6 +127,34 @@ export interface NodeConfig {
    * {{input}}, {{question}} and {{inputs}} are filled in (JSON-escaped when the template is JSON).
    */
   body?: string;
+  /** Project blocks: the project's id, or a template such as {{vars.project}} (empty: vars.project). */
+  project?: string;
+  /** Read project: which files to read (globs, one per line or comma separated; default *.html, *.css, *.js, *.md). */
+  globs?: string;
+  /** Read project: at most this many characters of file contents (default 60,000). */
+  budget?: number;
+  /** Read project: only read the files named in the text wired in (a plan, a list of paths). */
+  onlyNamed?: boolean;
+  /** Write files: overwrite existing files (default), only add new ones, or leave existing ones for a Pause block to show. */
+  writeMode?: 'overwrite' | 'new' | 'ask';
+  /** Write files: an answer without files is fine (a reviewer that found nothing to fix). */
+  optionalWrite?: boolean;
+  /** Git: what to do, the commit message (template) and, for a pull request, the branch to push to. */
+  gitAction?: 'commit' | 'push' | 'commitPush' | 'pull' | 'pr';
+  message?: string;
+  branch?: string;
+  /** Build: the npm script to run (default "build") and the folder it writes (default dist, else build). */
+  script?: string;
+  outDir?: string;
+  /** Pause: the title and message shown while it waits (templates), and what happens when nobody answers in time. */
+  title?: string;
+  timeoutMinutes?: number;
+  onTimeout?: 'continue' | 'reject' | 'stop';
+  /** For each: at most this many items (default 50). */
+  maxItems?: number;
+  /** Skills (LLM, Review, Judge): fixed skills by name, or "auto": the model's own pick from the list. */
+  skills?: string[];
+  skillMode?: 'off' | 'fixed' | 'auto';
 }
 
 export const HTTP_METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'] as const;
@@ -491,6 +519,9 @@ export type RunEventType =
   | 'node_progress'
   /** The block did not run: a Router chose another branch. */
   | 'node_skipped'
+  /** A Pause block waits for a person (pause holds what it shows); resumed when they answer. */
+  | 'paused'
+  | 'resumed'
   | 'run_done'
   | 'error';
 
@@ -542,6 +573,122 @@ export interface RunEvent {
    * of the events the API returns; GET /api/runs/:id?inputs=1 shows it per block (NodeOutput.messages).
    */
   sent?: SentCall;
+  /** paused: what the Pause block shows and asks. */
+  pause?: PauseInfo;
+  /** resumed: what the person chose. */
+  action?: PauseAction;
+}
+
+export type PauseAction = 'continue' | 'reject' | 'stop';
+
+/** What a paused run shows: the block, its title and message, and what came into it. */
+export interface PauseInfo {
+  nodeId: string;
+  title: string;
+  message?: string;
+  /** The text wired into the block; Continue may send an edited version on. */
+  input: string;
+  /** Files a Write files block changed before it, with a diff each. */
+  changes?: FileChange[];
+  /** The project's live preview (runs that build a site). */
+  previewUrl?: string;
+  projectId?: string;
+  /** When nobody answers: what happens, and when (ms since epoch). */
+  timeoutAt?: number;
+  onTimeout?: PauseAction;
+}
+
+/** POST /api/runs/:id/resume body. */
+export interface ResumeRequest {
+  action: PauseAction;
+  /** Continue: the edited text, sent on instead of the input. */
+  text?: string;
+  /** Reject: why; sent out to the "rejected" branch. */
+  comment?: string;
+}
+
+/** One file a Write files block (or the editor) changed. */
+export interface FileChange {
+  path: string;
+  status: 'added' | 'changed' | 'deleted' | 'skipped';
+  added: number;
+  removed: number;
+  /** A unified diff (capped). */
+  diff?: string;
+}
+
+// ---- Projects (folders with files that stay, e.g. a website) ----
+
+export interface Project {
+  id: string;
+  name: string;
+  ownerId: string;
+  owner?: string;
+  githubRepo?: string;
+  githubBranch?: string;
+  createdAt: string;
+  updatedAt: string;
+  files: number;
+  sizeBytes: number;
+}
+
+export interface ProjectFile {
+  path: string;
+  size: number;
+  modified: string;
+  /** Text files open in the editor. */
+  text: boolean;
+}
+
+/** GET /api/projects/:id/history: what each run (or edit) changed. */
+export interface ProjectChange {
+  id: number;
+  at: string;
+  runId?: string;
+  source: string;
+  changes: FileChange[];
+}
+
+export interface BuildResult {
+  ok: boolean;
+  /** The last 200 lines. */
+  log: string;
+  outDir?: string;
+  ms: number;
+}
+
+/** Settings → GitHub (per user); the token is never sent back. */
+export interface GithubSettings {
+  hasToken: boolean;
+  /** The token's last four characters. */
+  last4?: string;
+  login?: string;
+  authorName?: string;
+  authorEmail?: string;
+}
+
+export interface GitStatus {
+  repo?: string;
+  branch?: string;
+  connected: boolean;
+  /** Uncommitted changes (porcelain lines). */
+  changes: string[];
+  ahead: number;
+  lastCommit?: { sha: string; message: string; at: string };
+}
+
+// ---- Skills (a folder with SKILL.md, like Claude skills) ----
+
+export interface Skill {
+  id: string;
+  name: string;
+  description: string;
+  shared: boolean;
+  mine: boolean;
+  owner?: string;
+  files: { path: string; size: number }[];
+  sizeBytes: number;
+  updatedAt: string;
 }
 
 /** One chat model call as it was sent. */
@@ -551,7 +698,7 @@ export interface SentCall {
   messages: { role: 'system' | 'user' | 'assistant'; content: string; images?: string[] }[];
 }
 
-export type RunStatus = 'running' | 'done' | 'error' | 'cancelled';
+export type RunStatus = 'running' | 'paused' | 'done' | 'error' | 'cancelled';
 
 /** One block's result in GET /api/runs/:id → outputs, keyed by label (or id; duplicates get "#2", "#3"). */
 export interface NodeOutput {
@@ -628,6 +775,8 @@ export interface ActiveRun {
   /** The first 200 characters of the question. */
   question: string;
   blocks: ActiveBlock[];
+  /** Pause blocks waiting for a person. */
+  paused?: PauseInfo[];
 }
 
 export interface ActiveTraining {

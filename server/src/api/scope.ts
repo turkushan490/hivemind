@@ -27,6 +27,7 @@ const SCOPED_ROUTES = new Set([
   'GET /api/runs/:id',
   'GET /api/runs/:id/events',
   'POST /api/runs/:id/cancel',
+  'POST /api/runs/:id/resume',
   'GET /api/memory/keys',
   'DELETE /api/memory/keys/:key',
   'POST /api/memory/keys/:key/import',
@@ -37,6 +38,8 @@ const SCOPED_ROUTES = new Set([
   'GET /api/providers/:id/loras',
   'GET /v1/models',
   'POST /v1/chat/completions',
+  // Skills: may be listed (and used in runs), never changed.
+  'GET /api/skills',
   'GET /api/workflows/:id/schedule',
   'PUT /api/workflows/:id/schedule',
   'DELETE /api/workflows/:id/schedule',

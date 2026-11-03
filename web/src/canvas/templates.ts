@@ -783,8 +783,100 @@ export const TEMPLATES: Template[] = [
         node('output', 960, 120, 'Final answer'),
       ),
   },
+  {
+    id: 'site-builder',
+    group: 'Website',
+    name: 'Site builder (project)',
+    description: 'Keeps building one site in a project, run after run: plans the files, you check the plan, writes them one by one, reviews, you check the site, pushes to GitHub and updates PROJECT.md.',
+    build: siteBuilder,
+  },
+  {
+    id: 'site-quick',
+    group: 'Website',
+    name: 'Site: quick change',
+    description: 'A small change to a project: one model edits the files, you check them, then they are pushed to GitHub.',
+    build: (m) =>
+      chain(
+        node('input', 0, 160, 'What to change'),
+        node('readProject', 320, 160, 'Read project', {}),
+        node('llm', 640, 160, 'Coder', { ...(m.judge ?? m.text[0] ? { model: (m.judge ?? m.text[0])! } : {}), system: CODER_SYSTEM, prompt: QUICK_PROMPT, skillMode: 'auto', ...BIG_ANSWER }),
+        node('writeFiles', 960, 160, 'Write files', {}),
+        node('pause', 1280, 160, 'Check the changes', { title: 'Check the changes', prompt: 'Look at the changed files and the preview. Continue pushes them to GitHub.' }),
+        node('git', 1600, 160, 'Push to GitHub', { gitAction: 'commitPush', message: '{{question}}' }),
+        node('output', 1920, 160, 'Result'),
+      ),
+  },
   ...VOICE,
   ...DECISIONS,
   ...TRAIN,
   ...TABLETOP,
 ];
+
+// ---- Site builder: a project that grows run after run ----
+
+/** Long answers for local models: one whole file per call. */
+const BIG_ANSWER: NodeConfig = { maxTokens: 16384, numCtx: 32768, maxSeconds: 3600 };
+
+const PLANNER_SYSTEM =
+  'You plan changes to a website project. Read PROJECT.md (the notes: style, pages, earlier decisions) and the files, then plan which files to create, change or delete for the request. ' +
+  'Follow the style and decisions in PROJECT.md. Keep the plan small: only files that really need to change. Use relative links between pages.';
+
+const PLAN_SCHEMA = '{"files": [{"path": "folder/name.html", "action": "create | change | delete", "reason": "one line"}]}';
+
+const CODER_SYSTEM =
+  'You are a web developer working on a project of several files. Follow the style and decisions in PROJECT.md. Write complete files, never parts or "…". ' +
+  'Answer with each file in a code block whose first line names the path, like ```html path=pages/about.html — and nothing after the last block.';
+
+const CODER_PROMPT =
+  'The request: {{question}}\n\nThe file to write now (from the plan) and the project as it is:\n\n{{inputs}}\n\n' +
+  'Write the complete new content of that one file. If its action is "delete", answer with only {"delete": ["<its path>"]}.';
+
+const QUICK_PROMPT = 'The request: {{question}}\n\nThe project as it is:\n\n{{inputs}}\n\nMake the change. Answer with every file you change or add, complete, each in its own ```<lang> path=<path> block.';
+
+const REVIEW_SYSTEM_SITE =
+  'You review a website project after changes: check that links between pages point to files that exist, that every page loads its CSS and scripts, and that the HTML is complete and valid. ' +
+  'If something is broken, answer with the fixed files, complete, each in a ```<lang> path=<path> block. If everything is fine, answer only: All good.';
+
+function siteBuilder(m: TemplateModels): CanvasGraph {
+  const strong = m.judge ?? m.text[0];
+  const coderModel = m.text[0] ?? strong;
+  const q = node('input', 0, 240, 'What to build or change');
+  const read = node('readProject', 300, 240, 'Read project', {});
+  const plan = node('llm', 600, 240, 'Planner', { ...(strong && { model: strong }), system: PLANNER_SYSTEM, prompt: 'The request: {{question}}\n\n{{inputs}}', json: true, jsonSchema: PLAN_SCHEMA, ...BIG_ANSWER, maxTokens: 4096 });
+  const checkPlan = node('pause', 900, 240, 'Check the plan', { title: 'Check the plan', prompt: 'These files will be written. Edit the plan if you like, then press Continue.' });
+  const each = node('foreach', 1200, 240, 'For each file', { maxItems: 30 });
+  const readOne = node('readProject', 1500, 80, 'Read this file', { onlyNamed: true });
+  const coder = node('llm', 1800, 240, 'Coder', { ...(coderModel && { model: coderModel }), system: CODER_SYSTEM, prompt: CODER_PROMPT, skillMode: 'auto', ...BIG_ANSWER });
+  const write = node('writeFiles', 2100, 240, 'Write file', {});
+  const all = node('collect', 2400, 240, 'All files written');
+  const readSite = node('readProject', 2700, 240, 'Read the site', {});
+  const review = node('llm', 3000, 240, 'Reviewer', { ...(strong && { model: strong }), system: REVIEW_SYSTEM_SITE, prompt: 'The request was: {{question}}\n\n{{inputs}}', ...BIG_ANSWER });
+  const fixes = node('writeFiles', 3300, 240, 'Write fixes', { optionalWrite: true });
+  const checkSite = node('pause', 3600, 240, 'Check the site', { title: 'Check the site', prompt: 'Look at the changed files and the preview. Continue pushes to GitHub (when the project is connected) and updates PROJECT.md.' });
+  const git = node('git', 3900, 240, 'Push to GitHub', { gitAction: 'commitPush', message: '{{question}}' });
+  const notes = node('updateNotes', 4200, 240, 'Update PROJECT.md', strong ? { model: strong } : {});
+  const out = node('output', 4500, 240, 'Result');
+  return {
+    nodes: [q, read, plan, checkPlan, each, readOne, coder, write, all, readSite, review, fixes, checkSite, git, notes, out],
+    edges: [
+      wire(q, read),
+      wire(read, plan),
+      wire(plan, checkPlan),
+      wire(checkPlan, each),
+      wire(each, readOne),
+      wire(each, coder),
+      wire(readOne, coder),
+      wire(each, write),
+      wire(coder, write),
+      wire(write, all),
+      wire(all, readSite),
+      wire(readSite, review),
+      wire(review, fixes),
+      wire(fixes, checkSite),
+      wire(checkSite, git),
+      wire(git, notes),
+      wire(all, notes),
+      wire(notes, out),
+    ],
+  };
+}

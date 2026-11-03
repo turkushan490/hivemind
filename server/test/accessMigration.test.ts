@@ -15,8 +15,10 @@ describe('access migration', () => {
     const source = await import('node:fs').then((fs) => fs.readFileSync(new URL('../src/db/index.ts', import.meta.url), 'utf8'));
     const list = source.slice(source.indexOf('export const MIGRATIONS'), source.indexOf('];\n', source.indexOf('export const MIGRATIONS')));
     const all = [...list.matchAll(/`([\s\S]*?)`,/g)].map((m) => m[1]);
-    const old = all.slice(0, -1);
-    expect(all.at(-1)).toMatch(/access_profiles/);
+    // Everything before the access profiles migration (later migrations run on top, as on a real upgrade).
+    const at = all.findIndex((m) => /CREATE TABLE access_profiles/.test(m));
+    expect(at).toBeGreaterThan(0);
+    const old = all.slice(0, at);
 
     const pre = new DatabaseSync(join(dir, 'hivemind.db'));
     for (const m of old) pre.exec(m);

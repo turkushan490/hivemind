@@ -1,10 +1,10 @@
-import type { CanvasGraph, ModelRef, RunEvent, RunRequest, RunSummary } from '@hivemind/shared';
+import type { CanvasGraph, ModelRef, ResumeRequest, RunEvent, RunRequest, RunSummary } from '@hivemind/shared';
 import type { FastifyInstance } from 'fastify';
 import { newId } from '../crypto.js';
 import { db } from '../db/index.js';
 import { validateGraph } from '../engine/graph.js';
 import { checkVars } from '../engine/vars.js';
-import { cancelRun, isFullAdmin, startRun, subscribe } from '../events/runs.js';
+import { cancelRun, isFullAdmin, resumeRun, startRun, subscribe } from '../events/runs.js';
 import { noteRun } from '../services/activity.js';
 import { nodeOutputs, publicEvents } from '../services/runOutputs.js';
 import { requireUser, type User } from './auth.js';
@@ -252,18 +252,18 @@ export function runRoutes(app: FastifyInstance) {
       .prepare('SELECT id, question, status, started_at, finished_at, final, cost, events FROM runs WHERE id = ? AND owner_id = ?')
       .get((req.params as { id: string }).id, req.user!.id) as Record<string, any> | undefined;
     if (!row) return reply.code(404).send({ error: 'Run not found' });
-    if (row.status === 'running') return reply.code(409).send({ error: 'This run is still going' });
+    if (row.status === 'running' || row.status === 'paused') return reply.code(409).send({ error: 'This run is still going' });
     const events = JSON.parse(row.events ?? '[]') as RunEvent[];
     return { id: row.id, question: row.question, status: row.status, final: row.final ?? undefined, cost: row.cost ?? undefined, outputs: nodeOutputs(events, { inputs }), events: publicEvents(events) };
   });
 
   app.delete('/api/runs/:id', { preHandler: requireUser }, async (req) => {
-    db.prepare("DELETE FROM runs WHERE id = ? AND owner_id = ? AND status != 'running'").run((req.params as { id: string }).id, req.user!.id);
+    db.prepare("DELETE FROM runs WHERE id = ? AND owner_id = ? AND status NOT IN ('running', 'paused')").run((req.params as { id: string }).id, req.user!.id);
     return { ok: true };
   });
 
   app.delete('/api/runs', { preHandler: requireUser }, async (req) => {
-    db.prepare("DELETE FROM runs WHERE owner_id = ? AND status != 'running'").run(req.user!.id);
+    db.prepare("DELETE FROM runs WHERE owner_id = ? AND status NOT IN ('running', 'paused')").run(req.user!.id);
     return { ok: true };
   });
 
@@ -290,6 +290,13 @@ export function runRoutes(app: FastifyInstance) {
       clearInterval(ping);
       unsubscribe();
     });
+  });
+
+  /** Answers a waiting Pause block: {action: continue | reject | stop, text?, comment?, nodeId?}. Owner or full admin; else 404. */
+  app.post('/api/runs/:id/resume', { preHandler: requireUser }, async (req, reply) => {
+    const body = (req.body ?? {}) as ResumeRequest & { nodeId?: string };
+    if (!['continue', 'reject', 'stop'].includes(String(body.action))) return reply.code(400).send({ error: 'action must be continue, reject or stop' });
+    return resumeRun((req.params as { id: string }).id, req.user!, body) ? { ok: true } : reply.code(404).send({ error: 'No paused run with that id' });
   });
 
   /** The run's owner, or a full admin (Activity → Stop), may stop it; anyone else gets 404. */

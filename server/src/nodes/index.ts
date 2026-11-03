@@ -4,6 +4,7 @@ import type { ChatMessage } from '../providers/types.js';
 import { DECIDE_NODE, DEFAULT_THRESHOLD, toView } from './decide.js';
 import { ACTION_NODES } from './actions.js';
 import { TRAINING_NODES } from './training.js';
+import { PROJECT_NODES, type PauseServices, type ProjectServices } from './projects.js';
 
 /** Output of an upstream node, as seen by the node that runs next. */
 export interface NodeInput {
@@ -59,6 +60,12 @@ export interface NodeServices {
   readFile?(path: string): Buffer;
   /** Webhook: may call addresses in the local network (runs of an admin; BLOCK_PRIVATE_ADDRESSES can still say no). */
   lanAllowed?: boolean;
+  /** Project blocks: the projects of whoever runs the workflow. */
+  projects?: ProjectServices;
+  /** Pause blocks: wait for a person. */
+  pause?: PauseServices;
+  /** Skills (Settings → Skills): your own and the shared ones, by name. */
+  skills?: { list(): { name: string; description: string }[]; load(name: string): string | undefined };
 }
 
 /** A chat sent through /v1: its system messages and the turns before the last question. */
@@ -252,6 +259,54 @@ export async function autoModel(ctx: NodeContext, state: string): Promise<ModelR
   return model;
 }
 
+/**
+ * Skills (Settings → Skills) in a block's system prompt. Fixed: the skills named on the block. Auto: a short first
+ * call with the block's model picks 0-3 from the list of names and descriptions. The run shows which were loaded.
+ */
+export async function withSkills(ctx: NodeContext, system: string | undefined): Promise<string | undefined> {
+  const c = ctx.node.config;
+  const mode = c.skillMode ?? (c.skills?.length ? 'fixed' : 'off');
+  const svc = ctx.services.skills;
+  if (mode === 'off' || !svc) return system;
+  let names: string[] = [];
+  if (mode === 'fixed') {
+    names = (c.skills ?? []).filter(Boolean);
+  } else {
+    const all = svc.list();
+    if (!all.length) return system;
+    ctx.progress('Choosing skills…');
+    const prev = answers(ctx.inputs);
+    const task = `${ctx.question}${prev.length ? `\n\n${labelled(prev).slice(0, 4000)}` : ''}`.slice(0, 6000);
+    const list = all.map((s) => `- ${s.name}: ${s.description}`).join('\n');
+    const reply = await ctx.callModel(
+      withSystem(
+        'You pick which skills (instructions written for an AI) help with a task. Reply with the names of 0 to 3 skills that clearly fit, one per line, exactly as written, or NONE. Nothing else.',
+        `Task:\n${task}\n\nSkills:\n${list}`,
+      ),
+    );
+    const lower = reply.toLowerCase();
+    names = all.filter((s) => lower.includes(s.name.toLowerCase())).slice(0, 3).map((s) => s.name);
+  }
+  const loaded: string[] = [];
+  const parts: string[] = [];
+  const missing: string[] = [];
+  for (const n of names) {
+    const text = svc.load(n);
+    if (text) {
+      loaded.push(n);
+      parts.push(text);
+    } else missing.push(n);
+  }
+  if (missing.length && mode === 'fixed') ctx.progress(`Skill not found: ${missing.join(', ')}`);
+  if (!loaded.length) {
+    if (mode === 'auto') ctx.progress('No skill fits this task');
+    return system;
+  }
+  ctx.progress(`Skills loaded: ${loaded.join(', ')}`);
+  const block = `Use these skills (instructions to follow where they apply):\n\n${parts.join('\n\n---\n\n')}`;
+  return system ? `${system}\n\n${block}` : block;
+}
+
 const QUALITY_LEVELS = ['Wrong, off-topic or unhelpful', 'Partly right or incomplete', 'Mostly right and useful', 'Correct, complete and clear'];
 
 /**
@@ -294,7 +349,7 @@ export const NODES: Record<NodeType, NodeDefinition> = {
     async execute(ctx) {
       const prev = answers(ctx.inputs);
       const { prompt } = ctx.node.config;
-      const system = ctx.node.config.system && fill(ctx.node.config.system, ctx, labelled(prev));
+      const system = await withSkills(ctx, ctx.node.config.system && fill(ctx.node.config.system, ctx, labelled(prev)));
       let user: string;
       if (prompt) user = fill(prompt, ctx, labelled(prev));
       else if (prev.length === 0) user = ctx.question;
@@ -341,10 +396,11 @@ export const NODES: Record<NodeType, NodeDefinition> = {
         .join('\n\n');
       const contenders = prev.map((p, i) => ({ p, n: i + 1 })).filter(({ p }) => p.type !== 'review');
       let user = fill(ctx.node.config.prompt ?? 'Question: {{question}}\n\n{{inputs}}', ctx, body);
+      const judgeSystem = await withSkills(ctx, ctx.node.config.system ? fill(ctx.node.config.system, ctx) : JUDGE_SYSTEM);
       // With two or more answers the judge also names the best one, for the leaderboard; that line is removed again.
-      if (ctx.node.config.json) return jsonCall(ctx, withSystem(ctx.node.config.system ? fill(ctx.node.config.system, ctx) : JUDGE_SYSTEM, user));
+      if (ctx.node.config.json) return jsonCall(ctx, withSystem(judgeSystem, user));
       if (contenders.length >= 2) user += `\n\nAfter your final answer, add one last line exactly like "BEST: <number>" with the number of the best single answer (${contenders.map((c) => c.n).join(', ')}).`;
-      const { text, best } = splitBest(await ctx.callModel(withSystem(ctx.node.config.system ? fill(ctx.node.config.system, ctx) : JUDGE_SYSTEM, user)));
+      const { text, best } = splitBest(await ctx.callModel(withSystem(judgeSystem, user)));
       const winner = contenders.find((c) => c.n === best);
       if (winner) {
         ctx.pickWinner?.(winner.p.nodeId, contenders.map((c) => c.p.nodeId));
@@ -604,4 +660,7 @@ export const NODES: Record<NodeType, NodeDefinition> = {
 
   // ---- Train ----
   ...TRAINING_NODES,
+
+  // ---- Projects ----
+  ...PROJECT_NODES,
 };

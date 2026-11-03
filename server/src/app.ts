@@ -13,6 +13,8 @@ import { datasetRoutes } from './api/datasets.js';
 import { libraryRoutes } from './api/library.js';
 import { memoryRoutes } from './api/memory.js';
 import { problemRoutes } from './api/problems.js';
+import { projectRoutes } from './api/projects.js';
+import { skillRoutes } from './api/skills.js';
 import { providerRoutes } from './api/providers.js';
 import { runRoutes } from './api/runs.js';
 import { scheduleRoutes } from './api/schedules.js';
@@ -56,6 +58,9 @@ export async function buildApp(opts: { logger?: boolean; web?: boolean; onRoute?
       const upload =
         (req.url.startsWith('/api/files') && type.startsWith('application/octet-stream')) ||
         (req.url.startsWith('/api/import/') && type.startsWith('application/zip')) ||
+        (/^\/api\/projects\/[^/]+\/file/.test(req.url) && type.startsWith('application/octet-stream')) ||
+        (/^\/api\/projects\/[^/]+\/zip/.test(req.url) && type.startsWith('application/zip')) ||
+        (req.url.startsWith('/api/skills/import') && !req.url.startsWith('/api/skills/import/github') && type.startsWith('application/zip')) ||
         (req.url.startsWith('/api/voice/transcribe') && /^(audio\/|video\/|application\/octet-stream)/.test(type));
       if (hasBody && !upload && !type.startsWith('application/json')) return reply.code(415).send({ error: 'Send JSON' });
     }
@@ -65,7 +70,7 @@ export async function buildApp(opts: { logger?: boolean; web?: boolean; onRoute?
   let bigUploads = 0;
   app.addHook('onRequest', async (req, reply) => {
     if (Number(req.headers['content-length'] ?? 0) <= 20 * 1024 * 1024 && !req.headers['transfer-encoding']) return;
-    if (!/^\/api\/(files|import\/)/.test(req.url)) return;
+    if (!/^\/api\/(files|import\/|projects\/)/.test(req.url)) return;
     if (bigUploads >= 2) return reply.code(503).send({ error: 'Two big uploads are already running — try again in a moment' });
     bigUploads++;
     let done = false;
@@ -105,6 +110,8 @@ export async function buildApp(opts: { logger?: boolean; web?: boolean; onRoute?
   scheduleRoutes(app);
   activityRoutes(app);
   accessRoutes(app);
+  projectRoutes(app);
+  skillRoutes(app);
 
   if (opts.web !== false && existsSync(config.webDir)) {
     await app.register(staticFiles, {

@@ -273,6 +273,50 @@ export const MIGRATIONS: string[] = [
   );
   CREATE INDEX files_owner ON files(owner_id);
   `,
+  `
+  -- Projects: a folder of files that stays between runs (files/projects/<id>/), e.g. a website.
+  CREATE TABLE projects (
+    id TEXT PRIMARY KEY,
+    owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    folder TEXT NOT NULL,
+    github_repo TEXT,
+    github_branch TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  CREATE INDEX projects_owner ON projects(owner_id);
+  -- What each run (or edit) changed in a project: [{path, status, added, removed, diff}].
+  CREATE TABLE project_changes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    run_id TEXT,
+    source TEXT NOT NULL,
+    changes TEXT NOT NULL,
+    at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  CREATE INDEX project_changes_project ON project_changes(project_id, id);
+  -- Settings → GitHub, per user: the token (encrypted) and the commit author.
+  CREATE TABLE github_accounts (
+    user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    token_enc TEXT NOT NULL,
+    last4 TEXT NOT NULL,
+    login TEXT,
+    author_name TEXT,
+    author_email TEXT
+  );
+  -- Skills: a folder with SKILL.md (data/skills/<id>/); shared ones every user may use.
+  CREATE TABLE skills (
+    id TEXT PRIMARY KEY,
+    owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    shared INTEGER NOT NULL DEFAULT 0,
+    folder TEXT NOT NULL,
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE (owner_id, name)
+  );
+  `,
 ];
 
 export const db = new DatabaseSync(join(config.dataDir, 'hivemind.db'));

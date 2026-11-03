@@ -9,8 +9,8 @@ import { memoryFor } from '../services/memory.js';
 import type { User } from '../api/auth.js';
 import { scopedMemory } from '../api/scope.js';
 import { webSearch } from '../services/search.js';
-import { kindOf, safePath, writeUnique } from '../services/files.js';
-import { readFileSync } from 'node:fs';
+import { kindOf, readOwnFile, writeUnique } from '../services/files.js';
+import { allowedFor, checkGraph, type Access } from '../services/access.js';
 import { homeAssistantConnection } from '../services/homeassistant.js';
 
 type Listener = (ev: RunEvent) => void;
@@ -76,7 +76,16 @@ export function startRun(opts: {
   source?: string;
   /** Cancel the run when nobody has followed its events for 30 seconds. */
   cancelWhenAlone?: boolean;
+  /**
+   * Settings → Access: what may be used; default what `user` may use. Always the caller's, also when a shared
+   * canvas runs with its owner's providers. Checked here before the run starts (403), and on every model call.
+   */
+  access?: Access;
 }): string {
+  const access = opts.access ?? (opts.user ? allowedFor(opts.user) : undefined);
+  if (access) checkGraph(opts.graph, access);
+  // Files: what the run saves belongs to whoever runs it; it reads only their files (an admin's: all).
+  const fileUser = opts.user ?? { id: opts.ownerId, role: 'user' as const };
   const id = newId();
   const source = opts.source ?? 'Screen';
   const canvasName = opts.canvasId
@@ -182,6 +191,7 @@ export function startRun(opts: {
       emit,
       limits: runLimits(),
       lockLabel: source.includes(': ') ? source.slice(source.indexOf(': ') + 2) : (canvasName ?? source),
+      access,
       // Stats: every model call and every Judge/Vote pick, kept even when the run is deleted from History.
       record: {
         usage: (u) =>
@@ -197,12 +207,13 @@ export function startRun(opts: {
         search: webSearch,
         memory: opts.user ? scopedMemory(memoryFor(opts.ownerId), opts.user) : memoryFor(opts.ownerId),
         saveFile: (path, data) => {
-          const saved = writeUnique(path, data);
+          const saved = writeUnique(path, data, opts.ownerId);
           return { path: saved, kind: kindOf(saved) };
         },
         freeGpu: opts.freeGpu,
         homeAssistant: homeAssistantConnection,
-        readFile: (path) => readFileSync(safePath(path)),
+        readFile: (path) => readOwnFile(fileUser, path),
+        lanAllowed: fileUser.role === 'admin',
         training: opts.training,
       },
     }, run.abort.signal, opts.vars ?? {}, opts.chat)

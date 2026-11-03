@@ -8,8 +8,13 @@ function defaults(model: string) {
   return { steps: 25, cfg: 6, sampler: 'dpmpp_2m', scheduler: 'karras' };
 }
 
-/** A plain text-to-image workflow (checkpoint → optional LoRA → prompts → sampler → decode → save). */
-export function txt2imgWorkflow(req: ImageRequest, seed: number) {
+/**
+ * A plain text-to-image workflow (checkpoint → optional LoRA → prompts → sampler → decode → output). The output is
+ * PreviewImage (ComfyUI's temp folder, which it clears on its own restart): HiveMind downloads the picture right
+ * away, so pictures don't pile up in ComfyUI's output folder where anyone who reaches ComfyUI could list them.
+ * keep (Settings → Access → "Keep a copy in ComfyUI's output folder") uses SaveImage instead.
+ */
+export function txt2imgWorkflow(req: ImageRequest, seed: number, keep = false) {
   const d = defaults(req.model);
   const lora = req.lora ? { '10': { class_type: 'LoraLoader', inputs: { model: ['4', 0], clip: ['4', 1], lora_name: req.lora, strength_model: req.loraStrength ?? 1, strength_clip: req.loraStrength ?? 1 } } } : {};
   const model = req.lora ? ['10', 0] : ['4', 0];
@@ -36,7 +41,7 @@ export function txt2imgWorkflow(req: ImageRequest, seed: number) {
       },
     },
     '8': { class_type: 'VAEDecode', inputs: { samples: ['3', 0], vae: ['4', 2] } },
-    '9': { class_type: 'SaveImage', inputs: { filename_prefix: 'hivemind', images: ['8', 0] } },
+    '9': keep ? { class_type: 'SaveImage', inputs: { filename_prefix: 'hivemind', images: ['8', 0] } } : { class_type: 'PreviewImage', inputs: { images: ['8', 0] } },
   };
 }
 
@@ -85,7 +90,7 @@ export function comfyAdapter(cfg: ProviderConfig): ProviderAdapter & { loras(): 
           method: 'POST',
           signal,
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ prompt: txt2imgWorkflow(req, Math.floor(Math.random() * 2 ** 31)), client_id: clientId }),
+          body: JSON.stringify({ prompt: txt2imgWorkflow(req, Math.floor(Math.random() * 2 ** 31), !!cfg.keepImages), client_id: clientId }),
         });
         if (!res.ok) {
           const body = await res.text();

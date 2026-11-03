@@ -3,7 +3,7 @@ import type { FastifyInstance, FastifyReply } from 'fastify';
 import { readFileSync } from 'node:fs';
 import { newId } from '../crypto.js';
 import { db } from '../db/index.js';
-import { safePath, writeUnique } from '../services/files.js';
+import { ownPath, safePath, writeUnique } from '../services/files.js';
 import { runMarkdown, runReport } from '../services/runExport.js';
 import { createZip, readZip, type ZipEntry } from '../services/zip.js';
 import { requireUser, type User } from './auth.js';
@@ -60,9 +60,9 @@ function taskEntries(user: User, id: string, prefix = ''): ZipEntry[] {
   const files = [...new Set(events.flatMap((e) => (e.type === 'node_done' ? (e.files ?? []).map((f) => f.path) : [])))];
   for (const f of files) {
     try {
-      entries.push({ name: `${prefix}files/${f}`, data: readFileSync(safePath(f)) });
+      entries.push({ name: `${prefix}files/${f}`, data: readFileSync(ownPath(user, f)) });
     } catch {
-      // The file was deleted from the folder since; the rest of the task still exports.
+      // The file was deleted from the folder since (or isn't this user's); the rest of the task still exports.
     }
   }
   entries.push({
@@ -190,7 +190,7 @@ export function exportRoutes(app: FastifyInstance) {
       let events = JSON.stringify(data.events);
       // Bring the task's files back into the folder; if a name is taken, point the task at the new name.
       for (const f of files) {
-        const saved = writeUnique(f.original, f.data);
+        const saved = writeUnique(f.original, f.data, req.user!.id);
         if (saved !== f.original) events = events.split(JSON.stringify(f.original).slice(1, -1)).join(JSON.stringify(saved).slice(1, -1));
       }
       db.prepare('INSERT INTO runs (id, owner_id, question, status, started_at, finished_at, final, cost, events) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)').run(

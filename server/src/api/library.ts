@@ -4,7 +4,7 @@ import type { FastifyInstance } from 'fastify';
 import { newId } from '../crypto.js';
 import { describe, logError } from '../errors.js';
 import { requireUser, type User } from './auth.js';
-import { adapterFor, canEdit, forgetModels, rowFor, visibleRows } from './providers.js';
+import { adapterFor, canEdit, forgetModels, rowFor, usableRows } from './providers.js';
 
 // Downloads run in the background on the server, so they keep going when the page is closed.
 const jobs = new Map<string, PullJob & { abort: AbortController; ownerId: string }>();
@@ -136,7 +136,7 @@ export function libraryRoutes(app: FastifyInstance) {
   });
 
   app.get('/api/ollama/pulls', { preHandler: requireUser }, async (req) => {
-    const visible = new Set(visibleRows(req.user!).map((r) => r.id));
+    const visible = new Set(usableRows(req.user!).map((r) => r.id));
     return [...jobs.values()].filter((j) => visible.has(j.providerId)).map(publicJob).sort((a, b) => b.startedAt - a.startedAt);
   });
 

@@ -2,6 +2,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { config } from '../config.js';
 import { hashPassword, newId, randomToken, sha256, verifyPassword } from '../crypto.js';
 import { db } from '../db/index.js';
+import { getProfile, newUsersProfile, userProfileId } from '../services/access.js';
 
 export const ROLES = ['admin', 'user', 'viewer'] as const;
 export type Role = (typeof ROLES)[number];
@@ -132,11 +133,17 @@ function startSession(reply: FastifyReply, userId: string) {
   reply.setCookie(COOKIE, token, { path: '/', httpOnly: true, sameSite: 'strict', secure: config.secureCookies, maxAge: SESSION_DAYS * 86400 });
 }
 
-export function createUser(username: string, pwHash: string, role: Role): string {
+/** profileId: Settings → Access; default the "New users get" profile (admins always have Everything). */
+export function createUser(username: string, pwHash: string, role: Role, profileId = newUsersProfile()): string {
   const id = newId();
-  db.prepare('INSERT INTO users (id, username, pw_hash, role) VALUES (?, ?, ?, ?)').run(id, username, pwHash, role);
+  db.prepare('INSERT INTO users (id, username, pw_hash, role, profile_id) VALUES (?, ?, ?, ?, ?)').run(id, username, pwHash, role, profileId);
   return id;
 }
+
+const userRow = (id: string) => {
+  const u = db.prepare('SELECT id, username, role, created_at AS createdAt FROM users WHERE id = ?').get(id) as { id: string; role: Role } | undefined;
+  return u && { ...u, profileId: userProfileId(u) };
+};
 
 export function authRoutes(app: FastifyInstance) {
   app.get('/api/setup', async () => ({ needsSetup: userCount() === 0 }));
@@ -185,26 +192,34 @@ export function authRoutes(app: FastifyInstance) {
 
   // ---- Users (admin) ----
   app.get('/api/users', { preHandler: requireAdmin }, async () =>
-    db.prepare('SELECT id, username, role, created_at AS createdAt FROM users ORDER BY created_at').all(),
+    (db.prepare('SELECT id, username, role, created_at AS createdAt FROM users ORDER BY created_at').all() as { id: string; role: Role }[]).map((u) => ({ ...u, profileId: userProfileId(u) })),
   );
 
+  /** Body: {username, password, role?, profileId?} (profileId default: the "New users get" profile). */
   app.post('/api/users', { preHandler: requireAdmin }, async (req, reply) => {
-    const { username, password, role } = (req.body ?? {}) as Record<string, unknown>;
+    const { username, password, role, profileId } = (req.body ?? {}) as Record<string, unknown>;
     const bad = validCredentials(username, password);
     if (bad) return reply.code(400).send({ error: bad });
+    if (profileId !== undefined && (typeof profileId !== 'string' || !getProfile(profileId))) return reply.code(400).send({ error: 'No such access profile' });
     try {
-      return { id: createUser(username as string, await hashPassword(password as string), ROLES.includes(role as Role) ? (role as Role) : 'user') };
+      return {
+        id: createUser(username as string, await hashPassword(password as string), ROLES.includes(role as Role) ? (role as Role) : 'user', (profileId as string | undefined) ?? newUsersProfile()),
+      };
     } catch {
       return reply.code(409).send({ error: 'Username already taken' });
     }
   });
 
-  /** Change a user's role and/or set a new password. */
+  /** Change a user's role, access profile and/or set a new password. */
   app.patch('/api/users/:id', { preHandler: requireAdmin }, async (req, reply) => {
     const { id } = req.params as { id: string };
-    const { role, password } = (req.body ?? {}) as { role?: string; password?: string };
+    const { role, password, profileId } = (req.body ?? {}) as { role?: string; password?: string; profileId?: string };
     const target = db.prepare('SELECT id, role FROM users WHERE id = ?').get(id) as { id: string; role: Role } | undefined;
     if (!target) return reply.code(404).send({ error: 'No such user' });
+    if (profileId !== undefined) {
+      if (typeof profileId !== 'string' || !getProfile(profileId)) return reply.code(400).send({ error: 'No such access profile' });
+      db.prepare('UPDATE users SET profile_id = ? WHERE id = ?').run(profileId, id);
+    }
     if (role !== undefined) {
       if (!ROLES.includes(role as Role)) return reply.code(400).send({ error: `Role must be one of ${ROLES.join(', ')}` });
       if (id === req.user!.id && role !== 'admin') return reply.code(400).send({ error: "You can't take away your own admin rights" });
@@ -216,7 +231,7 @@ export function authRoutes(app: FastifyInstance) {
       // Logged out everywhere except the admin's own session.
       if (id !== req.user!.id) db.prepare('DELETE FROM sessions WHERE user_id = ?').run(id);
     }
-    return db.prepare('SELECT id, username, role, created_at AS createdAt FROM users WHERE id = ?').get(id);
+    return userRow(id);
   });
 
   app.delete('/api/users/:id', { preHandler: requireAdmin }, async (req, reply) => {
@@ -230,13 +245,13 @@ export function authRoutes(app: FastifyInstance) {
   app.get('/api/tokens', { preHandler: requireUser }, async (req) =>
     (
       db
-        .prepare('SELECT id, name, prefix, created_at AS createdAt, last_used_at AS lastUsedAt, scope FROM api_tokens WHERE user_id = ? ORDER BY created_at')
-        .all(req.user!.id) as { scope: string | null }[]
-    ).map(({ scope, ...t }) => ({ ...t, ...(scope && { scope: JSON.parse(scope) }) })),
+        .prepare('SELECT id, name, prefix, created_at AS createdAt, last_used_at AS lastUsedAt, scope, profile_id AS profileId FROM api_tokens WHERE user_id = ? ORDER BY created_at')
+        .all(req.user!.id) as { scope: string | null; profileId: string | null }[]
+    ).map(({ scope, profileId, ...t }) => ({ ...t, ...(scope && { scope: JSON.parse(scope) }), ...(profileId && { profileId }) })),
   );
 
   app.post('/api/tokens', { preHandler: requireUser }, async (req, reply) => {
-    const body = (req.body ?? {}) as { name?: string; canvases?: unknown; memory?: unknown; training?: unknown; datasets?: unknown };
+    const body = (req.body ?? {}) as { name?: string; canvases?: unknown; memory?: unknown; training?: unknown; datasets?: unknown; profileId?: unknown };
     const name = String(body.name ?? '').trim();
     if (!name) return reply.code(400).send({ error: 'Give the token a name' });
     // A limited token can't make tokens with more rights than itself.
@@ -258,18 +273,22 @@ export function authRoutes(app: FastifyInstance) {
     } catch (err) {
       return reply.code(400).send({ error: (err as Error).message });
     }
+    // An access profile of its own only narrows what the token can use (it never gets more than its user).
+    const profileId = body.profileId === undefined || body.profileId === null ? undefined : body.profileId;
+    if (profileId !== undefined && (typeof profileId !== 'string' || !getProfile(profileId))) return reply.code(400).send({ error: 'No such access profile' });
     const token = `hm_${randomToken(24)}`;
     const id = newId();
-    db.prepare('INSERT INTO api_tokens (id, user_id, name, token_hash, prefix, scope) VALUES (?, ?, ?, ?, ?, ?)').run(
+    db.prepare('INSERT INTO api_tokens (id, user_id, name, token_hash, prefix, scope, profile_id) VALUES (?, ?, ?, ?, ?, ?, ?)').run(
       id,
       req.user!.id,
       name,
       sha256(token),
       token.slice(0, 7),
       scope ? JSON.stringify(scope) : null,
+      (profileId as string | undefined) ?? null,
     );
     // Only time the full token is shown.
-    return { id, name, token, ...(scope && { scope }) };
+    return { id, name, token, ...(scope && { scope }), ...(profileId !== undefined && { profileId }) };
   });
 
   app.delete('/api/tokens/:id', { preHandler: requireUser }, async (req) => {

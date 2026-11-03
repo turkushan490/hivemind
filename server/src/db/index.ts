@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { config } from '../config.js';
 
 // Each entry runs once, in order; never edit an old one, add a new one.
-const MIGRATIONS = [
+export const MIGRATIONS: string[] = [
   `
   CREATE TABLE users (
     id TEXT PRIMARY KEY,
@@ -246,6 +246,32 @@ const MIGRATIONS = [
   `
   -- Who or what started a run: "Screen", "API: <token name>", "/v1: <token name>", "Schedule", "Batch".
   ALTER TABLE runs ADD COLUMN source TEXT;
+  `,
+  `
+  -- Access profiles (Settings → Access): which providers, models and LoRAs a user or API token may use.
+  -- providers: {"<providerId>": {"models": "all" | [names or globs], "loras": "none" | "all" | [names or globs]}}.
+  -- "everything" is built in (not stored); Basic starts with every shared cloud provider, all models, no LoRAs.
+  CREATE TABLE access_profiles (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE COLLATE NOCASE,
+    providers TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  INSERT INTO access_profiles (id, name, providers) VALUES ('basic', 'Basic', COALESCE((
+    SELECT json_group_object(id, json('{"models":"all","loras":"none"}')) FROM providers
+    WHERE owner_id IS NULL AND local = 0 AND kind NOT IN ('decision', 'comfyui', 'ollama')
+  ), '{}'));
+  ALTER TABLE users ADD COLUMN profile_id TEXT;
+  ALTER TABLE api_tokens ADD COLUMN profile_id TEXT;
+  UPDATE users SET profile_id = 'basic' WHERE role != 'admin';
+  UPDATE api_tokens SET profile_id = 'everything' WHERE user_id IN (SELECT id FROM users WHERE role = 'admin');
+  -- Who owns each file in the files folder. A path without a row is admin-only.
+  CREATE TABLE files (
+    path TEXT PRIMARY KEY,
+    owner_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  CREATE INDEX files_owner ON files(owner_id);
   `,
 ];
 

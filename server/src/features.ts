@@ -30,4 +30,8 @@ export const FEATURES: readonly string[] = [
   'cancelWhenAlone',
   // The Activity page: GET /api/activity/running and /api/activity/calls.
   'activity',
+  // Settings → Access: GET /api/models, /api/providers/:id/models and /loras list only what the user (and the
+  // API token) may use; runs with anything else are refused (403). Files are private to their owner.
+  'accessProfiles',
+  'privateFiles',
 ];

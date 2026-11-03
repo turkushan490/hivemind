@@ -175,8 +175,9 @@ export const ACTION_NODES: Record<'homeassistant' | 'webhook' | 'discord', NodeD
           headers['content-type'] ??= 'application/json';
         } else headers['content-type'] ??= 'text/plain; charset=utf-8';
       }
-      // No calls into loopback / cloud metadata (and none into the LAN when BLOCK_PRIVATE_ADDRESSES is on).
-      await checkUrl(url, 'The webhook URL');
+      // No calls into loopback / cloud metadata, and none into the LAN when BLOCK_PRIVATE_ADDRESSES is on or a
+      // non-admin runs it (ComfyUI's /history and /view would hand out every picture).
+      await checkUrl(url, 'The webhook URL', { noPrivate: !ctx.services.lanAllowed });
       ctx.progress(`${method} ${new URL(url).host}…`);
       const res = await send(url, { method, headers, body, redirect: 'manual' }, ctx.signal, new URL(url).host);
       if (res.status >= 300 && res.status < 400) throw new Error(`${new URL(url).host} answered with a redirect (HTTP ${res.status}); use the final address`);

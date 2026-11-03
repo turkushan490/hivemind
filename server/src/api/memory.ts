@@ -3,7 +3,8 @@ import type { FastifyInstance } from 'fastify';
 import { describe, logError } from '../errors.js';
 import { cancelRun, isFullAdmin, liveRunsUsing, runEnded, sameModel } from '../events/runs.js';
 import { requireUser } from './auth.js';
-import { adapterFor, canEdit, rowFor, visibleRows } from './providers.js';
+import { adapterFor, canEdit, rowFor, usableRows, visibleRows } from './providers.js';
+import { allowedFor } from '../services/access.js';
 
 /** How long Unload waits for stopped runs to end, and for Ollama to really let the model go (tests make it short). */
 export const unloadTiming = { runWaitMs: 5_000, goneWaitMs: 10_000, pollMs: 500 };
@@ -14,13 +15,15 @@ export function memoryRoutes(app: FastifyInstance) {
   /** What every local provider (Ollama) holds in RAM/VRAM right now, and the live runs using each model. */
   app.get('/api/memory', { preHandler: requireUser }, async (req): Promise<ProviderMemory[]> => {
     const user = req.user!;
-    const rows = visibleRows(user).filter((r) => r.enabled && r.local);
+    // Only providers and models this user may use (Settings → Access): the names of the others stay hidden.
+    const access = allowedFor(user);
+    const rows = usableRows(user, access).filter((r) => r.enabled && r.local);
     return Promise.all(
       rows.map(async (r) => {
         const base = { providerId: r.id, name: r.name, canUnload: canEdit(user, r) };
         try {
           const using = liveRunsUsing(r.id).filter((x) => x.ownerId === user.id || isFullAdmin(user));
-          const models = ((await adapterFor(r).loaded?.()) ?? []).map((m) => {
+          const models = ((await adapterFor(r).loaded?.()) ?? []).filter((m) => access.model(r.id, m.model)).map((m) => {
             const runs = using.filter((x) => x.models.some((n) => sameModel(n, m.model))).map((x) => ({ runId: x.runId, canvasName: x.canvasName, state: x.state }));
             return runs.length ? { ...m, runs } : m;
           });

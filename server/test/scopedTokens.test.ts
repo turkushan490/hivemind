@@ -94,6 +94,8 @@ describe('limited tokens that may train', () => {
     await app.inject({ method: 'POST', url: `/api/datasets/${other}/items`, headers: bearer(), payload: { items: [{ input: 'secret', output: 'x' }] } });
     const { db } = await import('../src/db/index.js');
     db.prepare("INSERT INTO providers (id, preset, kind, name, base_url, local) VALUES ('ollama', 'ollama', 'ollama', 'Ollama', 'http://ollama.test:11434', 1)").run();
+    // The user may use (and train onto) the shared Ollama (Settings → Access).
+    db.prepare("UPDATE users SET profile_id = 'everything' WHERE id = 'u1'").run();
   });
 
   it('sees, makes and fills only matching datasets', async () => {

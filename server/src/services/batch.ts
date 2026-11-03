@@ -54,7 +54,15 @@ class Batch {
     for (let i = 0; !this.stopped && (!this.o.times || i < this.o.times); i++) {
       const question = this.o.questions[i % this.o.questions.length];
       // {{vars.run}} and {{vars.seed}} differ per run, so prompts can vary.
-      const runId = this.o.start(question, { ...this.o.vars, run: String(i + 1), seed: String(Number(this.o.vars.seed ?? 1) + i) });
+      let runId: string;
+      try {
+        runId = this.o.start(question, { ...this.o.vars, run: String(i + 1), seed: String(Number(this.o.vars.seed ?? 1) + i) });
+      } catch (err) {
+        // A run that can't start (e.g. the admin took a model out of this user's access meanwhile) ends the batch.
+        this.status.failed++;
+        this.status.lastError = (err as Error).message;
+        break;
+      }
       this.status.current = { runId, question };
       const ok = await finished(runId, this.o.ownerId);
       this.status.current = undefined;

@@ -37,6 +37,8 @@ export interface ProviderConfig {
   preset: string;
   baseUrl: string;
   apiKey?: string;
+  /** ComfyUI: save pictures in its output folder too (SaveImage); off, they only pass through its temp folder (PreviewImage). */
+  keepImages?: boolean;
 }
 
 export interface ProviderAdapter {

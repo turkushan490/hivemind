@@ -254,6 +254,40 @@ export interface ProviderInfo {
   shared: boolean;
 }
 
+/** One provider in an access profile: which of its models and LoRAs may be used ("dnd/*" globs, only * is special). */
+export interface ProviderAccess {
+  models: 'all' | string[];
+  /** Default "none". */
+  loras?: 'none' | 'all' | string[];
+}
+
+/**
+ * Settings → Access: what a user (or an API token on top of its user) may use. A provider that is not listed may
+ * not be used. "everything" is built in: admins always have it.
+ */
+export interface AccessProfile {
+  id: string;
+  name: string;
+  /** Built in, not editable or deletable ("Everything"). */
+  builtin?: boolean;
+  providers: Record<string, ProviderAccess>;
+}
+
+export const EVERYTHING_PROFILE = 'everything';
+export const BASIC_PROFILE = 'basic';
+
+/** GET /api/access (admins): the profiles, who has which, and the options. */
+export interface AccessOverview {
+  profiles: AccessProfile[];
+  users: { id: string; username: string; role: 'admin' | 'user' | 'viewer'; profileId: string }[];
+  /** profileId undefined: the token has what its user has. */
+  tokens: { id: string; name: string; prefix: string; userId: string; username: string; profileId?: string }[];
+  /** The profile new users get. */
+  newUsers: string;
+  /** Image blocks keep a copy in ComfyUI's output folder (off: ComfyUI only holds it in temp). */
+  keepComfyCopy: boolean;
+}
+
 export interface ModelInfo {
   providerId: string;
   model: string;

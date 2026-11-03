@@ -9,6 +9,8 @@ import { isOllamaDecisionModel, SPAM_TEST, SPAM_TEST_STATE } from '../providers/
 import { logError } from '../errors.js';
 import { requireUser, type User } from './auth.js';
 import { canvasAllowed, datasetAllowed, trainingAllowed } from './scope.js';
+import { mayUseFile } from '../services/files.js';
+import { addToBasic, allowedFor, keepComfyCopy, type Access } from '../services/access.js';
 
 interface ProviderRow {
   id: string;
@@ -47,8 +49,33 @@ export function rowFor(user: User, id: string): ProviderRow | undefined {
 
 export const canEdit = (user: User, row: ProviderRow) => (row.owner_id === null ? user.role === 'admin' : row.owner_id === user.id);
 
+/** Providers this user may use something of (Settings → Access); the others don't show anywhere. */
+export function usableRows(user: User, access: Access = allowedFor(user)): ProviderRow[] {
+  return visibleRows(user).filter((r) => access.provider(r.id));
+}
+
+/** One provider, when the user may see it and use something of it. */
+export function usableRow(user: User, id: string, access: Access = allowedFor(user)): ProviderRow | undefined {
+  const row = rowFor(user, id);
+  return row && access.provider(row.id) ? row : undefined;
+}
+
 export function adapterFor(row: ProviderRow) {
-  return createAdapter({ id: row.id, kind: row.kind, preset: row.preset, baseUrl: row.base_url, apiKey: row.api_key_enc ? decrypt(row.api_key_enc) : undefined });
+  return createAdapter({
+    id: row.id,
+    kind: row.kind,
+    preset: row.preset,
+    baseUrl: row.base_url,
+    apiKey: row.api_key_enc ? decrypt(row.api_key_enc) : undefined,
+    // ComfyUI: pictures pass through its temp folder unless the admin keeps a copy (Settings → Access).
+    ...(row.kind === 'comfyui' && { keepImages: keepComfyCopy() }),
+  });
+}
+
+/** The models of a provider this user may use (Settings → Access). */
+export async function allowedModelsOf(row: ProviderRow, access: Access, fresh = false): Promise<ModelInfo[]> {
+  const list = await modelsOf(row, fresh);
+  return access.everything ? list : list.filter((m) => access.model(row.id, m.model));
 }
 
 // Model lists are cached briefly: OpenRouter's catalog is large and changes rarely.
@@ -134,16 +161,19 @@ export function gpuFreerFor(user: User) {
   };
 }
 
-/** What training jobs of this user need: their providers, the GPU freer, and where new models go (an Ollama server). */
+/**
+ * What training jobs of this user need: their providers, the GPU freer, and where new models go (an Ollama server).
+ * Only providers the user may use (Settings → Access) can be a training target.
+ */
 export function trainDepsFor(user: User) {
-  const ollamas = () => visibleRows(user).filter((r) => r.kind === 'ollama' && r.enabled);
+  const ollamas = () => usableRows(user).filter((r) => r.kind === 'ollama' && r.enabled);
   return {
     resolve: resolverFor(user),
     freeGpu: gpuFreerFor(user),
     ollamaUrl: (id: string) => ollamas().find((r) => r.id === id)?.base_url,
-    comfyUrl: (id: string) => visibleRows(user).find((r) => r.id === id && r.kind === 'comfyui' && r.enabled)?.base_url,
+    comfyUrl: (id: string) => usableRows(user).find((r) => r.id === id && r.kind === 'comfyui' && r.enabled)?.base_url,
     defaultTarget: () => ollamas()[0]?.id,
-    defaultComfy: () => visibleRows(user).find((r) => r.kind === 'comfyui' && r.enabled)?.id,
+    defaultComfy: () => usableRows(user).find((r) => r.kind === 'comfyui' && r.enabled)?.id,
   };
 }
 
@@ -157,6 +187,7 @@ export function trainingFor(user: User | undefined, opts: { scheduled?: boolean 
   return trainingServices(user.id, trainDepsFor(user), {
     nightly: !!opts.scheduled,
     tokenId: user.tokenId,
+    allowFile: (path: string) => mayUseFile(user, path),
     ...(user.scope && { allowDataset: (name: string) => datasetAllowed(user, name), allowCanvas: (id: string) => canvasAllowed(user, id) }),
   });
 }
@@ -182,7 +213,7 @@ export function seedProviders(ollamaUrl: string, comfyUrl?: string, typesafeKey?
 export function providerRoutes(app: FastifyInstance) {
   app.get('/api/providers/presets', async () => PROVIDER_PRESETS);
 
-  app.get('/api/providers', { preHandler: requireUser }, async (req) => visibleRows(req.user!).map(toInfo));
+  app.get('/api/providers', { preHandler: requireUser }, async (req) => usableRows(req.user!).map(toInfo));
 
   app.post('/api/providers', { preHandler: requireUser }, async (req, reply) => {
     const body = (req.body ?? {}) as { preset?: string; name?: string; baseUrl?: string; apiKey?: string; shared?: boolean };
@@ -207,6 +238,8 @@ export function providerRoutes(app: FastifyInstance) {
       shared ? null : req.user!.id,
       preset.local ? 1 : 0,
     );
+    // Basic follows the cloud: a new shared cloud provider is in it (Settings → Access).
+    if (shared && !preset.local && !['decision', 'comfyui', 'ollama'].includes(preset.kind)) addToBasic(id);
     return toInfo(rowFor(req.user!, id)!);
   });
 
@@ -238,10 +271,11 @@ export function providerRoutes(app: FastifyInstance) {
   });
 
   app.get('/api/providers/:id/models', { preHandler: requireUser }, async (req, reply) => {
-    const row = rowFor(req.user!, (req.params as { id: string }).id);
+    const access = allowedFor(req.user!);
+    const row = usableRow(req.user!, (req.params as { id: string }).id, access);
     if (!row) return reply.code(404).send({ error: 'Not found' });
     try {
-      return await modelsOf(row, (req.query as { fresh?: string }).fresh === '1');
+      return await allowedModelsOf(row, access, (req.query as { fresh?: string }).fresh === '1');
     } catch (err) {
       return reply.code(502).send({ error: (err as Error).message });
     }
@@ -249,12 +283,15 @@ export function providerRoutes(app: FastifyInstance) {
 
   /** Decision providers: asks the spam example from the Jev guide, so a wrong key shows up right away. */
   app.post('/api/providers/:id/test-decision', { preHandler: requireUser }, async (req, reply) => {
-    const row = rowFor(req.user!, (req.params as { id: string }).id);
+    const access = allowedFor(req.user!);
+    const row = usableRow(req.user!, (req.params as { id: string }).id, access);
     if (!row) return reply.code(404).send({ error: 'Not found' });
     const adapter = adapterFor(row);
     if (!adapter.decide) return reply.code(400).send({ error: `${row.name} is not a decision provider` });
+    const asked = (req.body as { model?: string } | undefined)?.model;
+    if (asked && !access.model(row.id, asked)) return reply.code(403).send({ error: `You can't use ${asked} (ask the admin to add it to your access)` });
     try {
-      const model = (req.body as { model?: string } | undefined)?.model || (await modelsOf(row, true))[0]?.model;
+      const model = asked || (await allowedModelsOf(row, access, true))[0]?.model;
       if (!model) throw new Error('No decision model found on this provider (Ollama: ollama pull nimble)');
       return { state: SPAM_TEST_STATE, ...(await adapter.decide({ model, state: SPAM_TEST_STATE, questions: SPAM_TEST })) };
     } catch (err) {
@@ -264,20 +301,23 @@ export function providerRoutes(app: FastifyInstance) {
     }
   });
 
-  /** LoRAs a ComfyUI provider offers (for Image blocks). */
+  /** LoRAs a ComfyUI provider offers (for Image blocks): only the ones this user may use. */
   app.get('/api/providers/:id/loras', { preHandler: requireUser }, async (req, reply) => {
-    const row = rowFor(req.user!, (req.params as { id: string }).id);
+    const access = allowedFor(req.user!);
+    const row = usableRow(req.user!, (req.params as { id: string }).id, access);
     if (!row) return reply.code(404).send({ error: 'Not found' });
     const adapter = adapterFor(row) as ReturnType<typeof adapterFor> & { loras?: () => Promise<string[]> };
-    return adapter.loras ? adapter.loras().catch(() => []) : [];
+    const all = adapter.loras ? await adapter.loras().catch(() => []) : [];
+    return access.everything ? all : all.filter((l) => access.lora(row.id, l));
   });
 
-  /** Every model of every enabled provider; providers that fail are reported, not fatal. */
+  /** Every model of every enabled provider this user may use; providers that fail are reported, not fatal. */
   app.get('/api/models', { preHandler: requireUser }, async (req) => {
-    const rows = visibleRows(req.user!).filter((r) => r.enabled);
+    const access = allowedFor(req.user!);
+    const rows = usableRows(req.user!, access).filter((r) => r.enabled);
     // Decision models pulled into Ollama can't chat: model pickers get them only through a Decisions provider
     // (the Models page, which lists one server's models, still shows them to manage).
-    const results = await Promise.allSettled(rows.map((r) => modelsOf(r).then((list) => (r.kind === 'ollama' ? list.filter((m) => !isOllamaDecisionModel(m.model)) : list))));
+    const results = await Promise.allSettled(rows.map((r) => allowedModelsOf(r, access).then((list) => (r.kind === 'ollama' ? list.filter((m) => !isOllamaDecisionModel(m.model)) : list))));
     return {
       models: results.flatMap((r) => (r.status === 'fulfilled' ? r.value : [])),
       errors: results.flatMap((r, i) => (r.status === 'rejected' ? [{ providerId: rows[i].id, error: (r.reason as Error).message }] : [])),

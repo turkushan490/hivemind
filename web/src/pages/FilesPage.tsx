@@ -8,15 +8,21 @@ interface FileEntry {
   size: number;
   modified: string;
   kind: 'image' | 'text' | 'html' | 'pdf' | 'other';
+  /** Admins: who it belongs to (none: put in the folder by hand, admins only). */
+  owner?: string;
 }
 
 const ICON: Record<FileEntry['kind'], string> = { image: '🖼️', text: '📄', html: '🌐', pdf: '📕', other: '📦' };
 const size = (b: number) => (b >= 1e6 ? `${(b / 1e6).toFixed(1)} MB` : `${Math.max(1, Math.round(b / 1e3))} KB`);
 
-/** The files folder (appdata/hivemind/files): drop files in for your canvases, get what blocks saved. */
-export function FilesPage({ active }: { active: boolean }) {
+/**
+ * The files folder (appdata/hivemind/files): drop files in for your canvases, get what blocks saved. Everyone sees
+ * only their own files; an admin sees all of them, with the owner and a filter.
+ */
+export function FilesPage({ active, isAdmin = false }: { active: boolean; isAdmin?: boolean }) {
   const [files, setFiles] = useState<FileEntry[]>([]);
   const [q, setQ] = useState('');
+  const [owner, setOwner] = useState('');
   const [open, setOpen] = useState<FileEntry | null>(null);
   const [text, setText] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
@@ -54,7 +60,8 @@ export function FilesPage({ active }: { active: boolean }) {
     if (e.dataTransfer.files.length) upload(e.dataTransfer.files);
   };
 
-  const shown = files.filter((f) => f.path.toLowerCase().includes(q.toLowerCase()));
+  const owners = [...new Set(files.map((f) => f.owner ?? ''))].sort();
+  const shown = files.filter((f) => f.path.toLowerCase().includes(q.toLowerCase()) && (!isAdmin || !owner || (owner === '-' ? !f.owner : f.owner === owner)));
 
   return (
     <div className="grid gap-4 lg:grid-cols-[1fr_1.2fr]">
@@ -71,9 +78,21 @@ export function FilesPage({ active }: { active: boolean }) {
           <input type="file" multiple className="hidden" onChange={(e) => e.target.files && upload(e.target.files)} />
           <span className="text-2xl">⬆️</span>
           {uploading ? `Uploading ${uploading}…` : 'Drop files here or click to upload'}
-          <span className="mt-1 text-xs text-slate-500">Stored in appdata/hivemind/files · what blocks save goes to outputs/</span>
+          <span className="mt-1 text-xs text-slate-500">Stored in appdata/hivemind/files · what blocks save goes to outputs/ · only you see your files{isAdmin ? ' (admins see all)' : ''}</span>
         </label>
-        <input className="input" placeholder={`Search ${files.length} files…`} value={q} onChange={(e) => setQ(e.target.value)} />
+        <div className="flex gap-2">
+          <input className="input" placeholder={`Search ${files.length} files…`} value={q} onChange={(e) => setQ(e.target.value)} />
+          {isAdmin && (
+            <select className="input w-auto" value={owner} onChange={(e) => setOwner(e.target.value)} title="Owner">
+              <option value="">Everyone</option>
+              {owners.map((o) => (
+                <option key={o || '-'} value={o || '-'}>
+                  {o || 'No owner'}
+                </option>
+              ))}
+            </select>
+          )}
+        </div>
         <div className="card max-h-[60vh] space-y-0.5 overflow-y-auto p-1">
           {shown.length === 0 && <p className="p-3 text-sm text-slate-500">No files yet.</p>}
           {shown.map((f) => (
@@ -86,6 +105,7 @@ export function FilesPage({ active }: { active: boolean }) {
               <span className="min-w-0 flex-1 truncate" title={f.path}>
                 {f.path}
               </span>
+              {isAdmin && <span className="w-20 shrink-0 truncate text-xs text-slate-400" title="Owner">{f.owner ?? '—'}</span>}
               <span className="shrink-0 text-xs text-slate-500">{size(f.size)}</span>
               <span className="hidden shrink-0 text-xs text-slate-600 sm:inline">{new Date(f.modified).toLocaleDateString()}</span>
             </button>

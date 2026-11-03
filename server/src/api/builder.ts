@@ -5,7 +5,8 @@ import { getSetting, setSetting } from '../db/index.js';
 import { describe, logError } from '../errors.js';
 import type { ChatMessage } from '../providers/types.js';
 import { requireUser, type User } from './auth.js';
-import { resolverFor, visibleRows, adapterFor } from './providers.js';
+import { allowedModelsOf, resolverFor, usableRows } from './providers.js';
+import { allowedFor, notAllowed } from '../services/access.js';
 import { canvasesFor } from './runs.js';
 import { routeCanvas } from '../services/canvasRouter.js';
 
@@ -26,9 +27,11 @@ export function getPrefs(u: User): Prefs {
   }
 }
 
+/** The models this user may use (Settings → Access): the Builder only proposes these. */
 async function allModels(user: User): Promise<ModelInfo[]> {
-  const rows = visibleRows(user).filter((r) => r.enabled);
-  const lists = await Promise.allSettled(rows.map((r) => adapterFor(r).listModels()));
+  const access = allowedFor(user);
+  const rows = usableRows(user, access).filter((r) => r.enabled);
+  const lists = await Promise.allSettled(rows.map((r) => allowedModelsOf(r, access, true)));
   return lists.flatMap((l) => (l.status === 'fulfilled' ? l.value : []));
 }
 
@@ -51,6 +54,7 @@ export function builderRoutes(app: FastifyInstance) {
     if (!text) return reply.code(400).send({ error: 'Send the text to route' });
     const decider = getPrefs(req.user!).canvasRouter;
     if (!decider) return reply.code(400).send({ error: 'Turn on the canvas router first (Settings → Voice)' });
+    if (!allowedFor(req.user!).model(decider.providerId, decider.model)) return reply.code(403).send({ error: notAllowed(decider.model).message });
     try {
       return await routeCanvas(text, canvasesFor(req.user!), decider, resolverFor(req.user!));
     } catch (err) {
@@ -70,6 +74,7 @@ export function builderRoutes(app: FastifyInstance) {
     if (!message) return reply.code(400).send({ error: 'Tell the Builder what you need' });
     const model = getPrefs(req.user!).builderModel;
     if (!model) return reply.code(409).send({ error: 'Pick a model for the Builder first (Settings → Builder AI)' });
+    if (!allowedFor(req.user!).model(model.providerId, model.model)) return reply.code(403).send({ error: notAllowed(model.model).message });
 
     const models = await allModels(req.user!);
     const provider = await resolverFor(req.user!)(model.providerId).catch((err) => {

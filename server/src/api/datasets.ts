@@ -18,6 +18,8 @@ import {
 import { importJob, previewImport, startImport, stopImport } from '../lab/hfImport.js';
 import { captionPictures, picturesFromFolder } from '../lab/imageLora.js';
 import { requireUser } from './auth.js';
+import { mayUseFile } from '../services/files.js';
+import { allowedFor, notAllowed } from '../services/access.js';
 import { trainDepsFor } from './providers.js';
 import { datasetAllowed } from './scope.js';
 
@@ -55,7 +57,12 @@ export function datasetRoutes(app: FastifyInstance) {
     const items = b.text !== undefined ? parseUpload(String(b.text), b.format) : Array.isArray(b.items) ? b.items : [];
     if (!items.length) return reply.code(400).send({ error: 'No examples found in what was sent' });
     if (items.length > 50_000) return reply.code(413).send({ error: 'At most 50 000 examples at once' });
-    return { added: addItems(ds.id, b.text !== undefined ? 'upload' : 'manual', items), dataset: getDataset(req.user!.id, ds.id) };
+    // Pictures only from this user's own files (an admin's: all).
+    const own = items.map((it) => {
+      const files = (it as { files?: unknown }).files;
+      return Array.isArray(files) ? { ...it, files: files.filter((f): f is string => typeof f === 'string' && mayUseFile(req.user!, f)) } : it;
+    });
+    return { added: addItems(ds.id, b.text !== undefined ? 'upload' : 'manual', own), dataset: getDataset(req.user!.id, ds.id) };
   });
 
   /** Image datasets: every picture in a Files folder (a same-named .txt is its caption). */
@@ -63,7 +70,8 @@ export function datasetRoutes(app: FastifyInstance) {
     const ds = getDataset(req.user!.id, (req.params as { id: string }).id);
     if (!ds) return reply.code(404).send({ error: 'Dataset not found' });
     if (ds.kind !== 'image') return reply.code(400).send({ error: 'Pictures go into an image dataset' });
-    const pics = picturesFromFolder(String((req.body as { folder?: string } | undefined)?.folder ?? ''));
+    // Only pictures this user may use (their own files; an admin's: all).
+    const pics = picturesFromFolder(String((req.body as { folder?: string } | undefined)?.folder ?? '')).filter((p) => mayUseFile(req.user!, p.file));
     if (!pics.length) return reply.code(400).send({ error: 'No pictures (.png, .jpg, .webp) in that folder' });
     return { added: addItems(ds.id, 'upload', pics.map((p) => ({ input: '', output: p.caption, files: [p.file], ref: `file:${p.file}` }))), dataset: getDataset(req.user!.id, ds.id) };
   });
@@ -75,6 +83,7 @@ export function datasetRoutes(app: FastifyInstance) {
     const b = (req.body ?? {}) as { providerId?: string; model?: string };
     const ollamaUrl = trainDepsFor(req.user!).ollamaUrl(String(b.providerId ?? ''));
     if (!ollamaUrl || !b.model) return reply.code(400).send({ error: 'Pick an Ollama model that can see pictures' });
+    if (!allowedFor(req.user!).model(String(b.providerId), String(b.model))) return reply.code(403).send({ error: notAllowed(String(b.model)).message });
     return captionPictures(ds.id, { ollamaUrl, model: String(b.model) });
   });
 

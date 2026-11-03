@@ -32,6 +32,9 @@ const SCOPED_ROUTES = new Set([
   'POST /api/memory/keys/:key/import',
   'POST /api/memory/keys/:key/search',
   'GET /api/files/raw',
+  // What it may use (Settings → Access): DungeonMind shows players only these.
+  'GET /api/models',
+  'GET /api/providers/:id/loras',
   'GET /v1/models',
   'POST /v1/chat/completions',
   'GET /api/workflows/:id/schedule',
@@ -112,7 +115,7 @@ export async function scopeGuard(req: FastifyRequest, reply: FastifyReply) {
     if (run && !canvasAllowed(user, run.canvas_id)) return deny('see this run');
   }
   if (params.key !== undefined && !memoryAllowed(user, params.key)) return deny(`use memory "${params.key}"`);
-  // Files: only what blocks made (outputs/…), never the rest of the shared files folder.
+  // Files: only what blocks made (outputs/…), and of those only its user's own (services/files.ts).
   if (url === '/api/files/raw') {
     const path = String((req.query as { path?: string }).path ?? '').replace(/\\/g, '/').replace(/^\/+/, '');
     if (!path.startsWith('outputs/')) return deny('read files outside outputs/');

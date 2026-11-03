@@ -152,7 +152,7 @@ export function App() {
         )}
         {opened.has('files') && (
           <div hidden={tab !== 'files'}>
-            <FilesPage active={tab === 'files'} />
+            <FilesPage isAdmin={me.role === 'admin'} active={tab === 'files'} />
           </div>
         )}
         {opened.has('run') && (

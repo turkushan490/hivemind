@@ -1,6 +1,6 @@
 # HiveMind changes for DungeonMind
 
-**Status:** Part 1 (M0 §1–§10) is built (HiveMind milestone 7), and so is **M9** (milestone 9: HiveMind as DungeonMind's training engine — schedules, the training window, training with limited tokens, per-run models, block inputs, live training events; see [M9](#m9--hivemind-as-dungeonminds-training-engine)), and **M10** (run limits, `cancelWhenAlone`, an Unload that checks, the Activity page; see [M10](#m10--runs-that-stop-unload-that-unloads-and-the-activity-page)). Part 2 (the D&D Lab) was built as L1–L4 and has **moved to DungeonMind** in M9: HiveMind keeps only the generic datasets and training. Notes on how it was built are marked *Built:*. User guides: [lab.md](lab.md), [decisions.md](decisions.md).
+**Status:** Part 1 (M0 §1–§10) is built (HiveMind milestone 7), and so is **M9** (milestone 9: HiveMind as DungeonMind's training engine — schedules, the training window, training with limited tokens, per-run models, block inputs, live training events; see [M9](#m9--hivemind-as-dungeonminds-training-engine)), and **M10** (run limits, `cancelWhenAlone`, an Unload that checks, the Activity page; see [M10](#m10--runs-that-stop-unload-that-unloads-and-the-activity-page)), and **M11** (access profiles per user and per API token, private files, no pulling pictures from ComfyUI; see [M11](#m11--access-profiles-and-private-files)). Part 2 (the D&D Lab) was built as L1–L4 and has **moved to DungeonMind** in M9: HiveMind keeps only the generic datasets and training. Notes on how it was built are marked *Built:*. User guides: [lab.md](lab.md), [decisions.md](decisions.md).
 ## Why
 
 **DungeonMind** (`github.com/turkushan490/dungeonmind`, separate repo, AGPL-3.0) is a self-hostable website where groups play D&D 5e together with an **AI Dungeon Master**. DungeonMind owns the game: sheets, dice, rules math, saves. It uses **HiveMind for all AI**: LLMs, ComfyUI images and memory.
@@ -564,6 +564,110 @@ become `error`, with `Stopped by a restart` stored as an error event (`closeStal
 - `server/src/api/memory.ts`, `server/src/api/activity.ts`, `server/src/services/activity.ts`.
 - `web/src/pages/ActivityPage.tsx`, `web/src/components/MemoryButton.tsx`, Settings → Run limits, Block settings → Time limit.
 - Tests: `server/test/runLimits.test.ts`, `server/test/activity.test.ts`.
+
+---
+
+## M11 — Access profiles and private files
+
+*Built (milestone 11).* Before this, every user saw and could use every model of every shared provider (all
+ComfyUI checkpoints and LoRAs too), nothing on the server checked which model or LoRA a run used, the Files tab
+showed everyone's files, and a Webhook block could ask ComfyUI on the LAN for every picture it ever made. Now the
+admin chooses per user and per API token what may be used, and files belong to whoever made them.
+
+### Health flags
+
+`GET /api/health` → `features` also lists `accessProfiles` and `privateFiles`.
+
+### Access profiles (Settings → Access, admins)
+
+A profile says, per provider, which models and LoRAs may be used:
+
+```json
+{ "id": "…", "name": "DungeonMind",
+  "providers": {
+    "<providerId>": { "models": "all" | ["model", "glob*"], "loras": "none" | "all" | ["lora.safetensors", "dnd/*"] } } }
+```
+
+- A provider that isn't listed can't be used at all, and a provider with nothing allowed doesn't show anywhere.
+- Globs only know `*` (`dnd/*` = everything in that folder and below). Matching ignores case, treats `\` as `/`
+  (ComfyUI on Windows) and `llama3` as `llama3:latest`. `loras` defaults to `"none"`.
+- **Everything** (`everything`) is built in and can't be changed or deleted. Admins always have it.
+- **Basic** (`basic`) starts with every shared cloud provider (not Ollama, ComfyUI or decision providers), all
+  models, no LoRAs. A shared cloud provider an admin adds later is put into Basic too. The admin changes it freely.
+- Providers a user added with their own key are always theirs to use (a token profile can still leave them out).
+
+Who has what:
+
+- **Users:** `users.profile_id`. New users get the "New users get" profile (`access.newUsers`, Basic by default);
+  an admin always has Everything, whatever is stored.
+- **API tokens:** `api_tokens.profile_id`, optional. A token with a profile gets only what **both** its user and
+  that profile allow; without one it has what its user has. Every user may give their own new token a profile
+  (`POST /api/tokens {profileId}`), because it can only narrow; admins set it on any token.
+- The migration (17) gives existing non-admin users Basic, and the tokens of admins `everything` (they keep what
+  they had); other tokens get none.
+
+Routes (admins): `GET /api/access` (profiles, users with their profile, all tokens, `newUsers`,
+`keepComfyCopy`), `POST /api/access/profiles {name, providers}`, `PUT /api/access/profiles/:id`,
+`DELETE /api/access/profiles/:id` (not Everything, not the "New users get" one; its users go to that one, its
+tokens to none), `PUT /api/access/settings {newUsers?, keepComfyCopy?}`, `PUT /api/access/users/:id {profileId}`,
+`PUT /api/access/tokens/:id {profileId | null}`. `GET /api/users` returns `profileId`, `POST /api/users` and
+`PATCH /api/users/:id` take it.
+
+### Enforced on the server
+
+One function, `allowedFor(user)` in `server/src/services/access.ts` (the token is part of `req.user`), answers
+`provider(id)`, `model(id, name)` and `lora(id, name)`.
+
+- **Lists:** `GET /api/providers`, `GET /api/models`, `GET /api/providers/:id/models`, `GET /api/providers/:id/loras`
+  and `GET /api/memory` show only what is allowed (another provider is 404 on the per-provider routes). DungeonMind
+  reads its list from the same `GET /api/models` and `/loras`, so it shows players only those; limited (scoped)
+  tokens may call these two.
+- **Start of a run:** `startRun` checks every block's `model`, `models`, `decider`, `jevScore`, `auto.decider`, the
+  Image block's `lora`, and needs one allowed Auto size, after the `models` override is applied. Anything else is
+  refused with **403** `You can't use <model> (ask the admin to add it to your access)` (`the LoRA <name>` for a
+  LoRA). That covers `POST /api/runs`, `/v1/chat/completions` (OpenAI error format, `model_not_allowed`), batch
+  (`POST /api/batch` refuses up front) and schedules (the run doesn't start; Problems shows why).
+- **Shared canvases:** a shared canvas of someone else still runs with its owner's providers (`runSetup`), but
+  the **caller's** access is checked, so sharing is no way around it.
+- **During the run:** `callModel`, `decide` and `generateImage` check again, because Routers and Auto model
+  pick models while the run goes. Auto model only offers the decision model the sizes the caller may use. An Image
+  block with a LoRA that isn't allowed fails.
+- **Elsewhere:** the Builder AI lists (and so proposes) only allowed models and refuses a Builder model that isn't;
+  the canvas router (voice, `/v1` model `auto`), the decision test and dataset captioning check their model;
+  training targets (Ollama / ComfyUI) are limited to providers the user may use.
+
+### Private files
+
+- Table `files (path, owner_id, created_at)`, filled on every write: uploads, the Save file and Image blocks,
+  task imports. Paths stay as they are; the check uses the table. A path without a row is admin-only.
+- At the first start after the migration, every file already in the folder goes to the first admin (once; files
+  copied into the folder by hand later have no owner).
+- Non-admins see, open, use in blocks and delete only their own files: `GET /api/files`, `GET /api/files/raw`,
+  `DELETE /api/files`, the run's `readFile` (Decide image input), task exports, pictures added to datasets.
+  Someone else's file is "not found", like a missing one. A limited token reaches only its user's files.
+- Admins see every file, with an Owner column and an owner filter in Files.
+- Run outputs belong to whoever runs the run: a shared canvas run by user B saves into B's files.
+
+### No pulling pictures from ComfyUI
+
+- **Webhook / HTTP block:** in a run of a non-admin, private (LAN) addresses are always refused, whatever
+  `BLOCK_PRIVATE_ADDRESSES` says; loopback (including any `localhost` name), link-local and cloud metadata were
+  already refused for everyone. Admins keep the old behaviour.
+- **Image workflow:** the last node is `PreviewImage` (ComfyUI's `temp` folder, which it clears on its own restart)
+  instead of `SaveImage`. HiveMind downloads the picture right away into the owner's Files. **Settings → Access →
+  "Keep a copy in ComfyUI's output folder"** (`access.keepComfyCopy`, off by default) brings back `SaveImage`.
+- **Don't publish ComfyUI's own port** outside your LAN. Anyone who reaches it can list and download every picture
+  through `/history` and `/view`, and HiveMind can't protect that.
+
+### Code
+
+- `server/src/services/access.ts`, `server/src/api/access.ts`, migration 17 in `server/src/db/index.ts`.
+- `server/src/api/providers.ts` (`usableRows`, `allowedModelsOf`), `server/src/events/runs.ts` (check at start),
+  `server/src/engine/run.ts` (`deps.access`, checks per call), `server/src/nodes/index.ts` (Auto model).
+- `server/src/services/files.ts` (owners), `server/src/services/net.ts`, `server/src/providers/comfyui.ts`.
+- `web/src/pages/Access.tsx`, the profile dropdowns in Settings → Users and API tokens, the Owner column in Files.
+- Tests: `server/test/access.test.ts`, `server/test/privateFiles.test.ts`, `server/test/accessMigration.test.ts`,
+  `server/test/comfyui.test.ts`, `server/test/actions.test.ts`.
 
 ---
 

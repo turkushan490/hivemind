@@ -59,7 +59,15 @@ export interface EngineDeps {
   limits?: RunLimits;
   /** Who this run is, for "Waiting for the GPU behind …" ("DungeonMind", a workflow name); the block's name is added. */
   lockLabel?: string;
+  /**
+   * Settings → Access: what the person who started the run may use. Checked again on every call, because Auto
+   * model blocks and Routers pick models while the run goes. Left out: everything (engine tests).
+   */
+  access?: { model(providerId: string, model: string): boolean; lora(providerId: string, name: string): boolean };
 }
+
+/** The message a refused model or LoRA gives (the same as at the start of a run). */
+const refused = (what: string) => Object.assign(new Error(`You can't use ${what} (ask the admin to add it to your access)`), { statusCode: 403 });
 
 export interface RunResult {
   status: RunStatus;
@@ -190,6 +198,10 @@ export async function runGraph(
   let cost = 0;
 
   deps.emit({ type: 'run_start', graph, question });
+  const allowed = (ref: ModelRef) => !deps.access || deps.access.model(ref.providerId, ref.model);
+  const mayUse = (ref: ModelRef) => {
+    if (!allowed(ref)) throw refused(ref.model);
+  };
 
   const runNode = async (node: CanvasNode): Promise<void> => {
     const def = NODES[node.type];
@@ -346,6 +358,7 @@ export async function runGraph(
           const m = ref ?? primary;
           const json = opts?.json;
           if (!m) throw new Error('This block has no model');
+          mayUse(m);
           const p = await deps.resolve(m.providerId);
           // Another AI server on the same GPU (ComfyUI) gives its memory back before a local model loads.
           if (p.local && p.exclusive !== false) await deps.services?.freeGpu?.(p.hostKey, m.providerId).catch(() => {});
@@ -357,6 +370,7 @@ export async function runGraph(
         decide: async (req, ref) => {
           const m = ref ?? primary;
           if (!m) throw new Error('Pick a decision model for this block');
+          mayUse(m);
           const p = await deps.resolve(m.providerId);
           if (!p.adapter.decide) throw new Error(`${m.model} is not a decision model — pick one from a decision provider (Settings → Providers → Decisions)`);
           const ask = async (): Promise<DecisionResult> => {
@@ -387,6 +401,7 @@ export async function runGraph(
           if (p.local && p.exclusive !== false && p.hostKey !== heldHost) return withHostLock(p.hostKey, ask, { signal, label: lockLabel });
           return ask();
         },
+        allowedModel: allowed,
         choose: (ids) => {
           for (const c of children.get(node.id)!) if (!ids.includes(c)) blocked.add(`${node.id}->${c}`);
         },
@@ -415,6 +430,9 @@ export async function runGraph(
         },
         generateImage: async (prompt) => {
           if (!primary) throw new Error('Pick an image model for this block');
+          mayUse(primary);
+          // A LoRA that isn't allowed fails the block (ComfyUI would load any name it has).
+          if (node.config.lora && deps.access && !deps.access.lora(primary.providerId, node.config.lora)) throw refused(`the LoRA ${node.config.lora}`);
           const p = await deps.resolve(primary.providerId);
           if (!p.adapter.image) throw new Error(`${primary.model} cannot make images — pick an image model (ComfyUI or an image API)`);
           if (!deps.services?.saveFile) throw new Error('Saving images is not available here');

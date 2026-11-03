@@ -1,3 +1,4 @@
+import type { AccessOverview } from '@hivemind/shared';
 import { useEffect, useState } from 'react';
 import { api } from '../api';
 
@@ -8,6 +9,8 @@ interface Token {
   createdAt: string;
   lastUsedAt?: string;
   scope?: { canvases: string[]; memory: string[]; training?: boolean; datasets?: string[] };
+  /** Settings → Access: a profile of its own (it gets only what both it and its user allow). */
+  profileId?: string;
 }
 
 const list = (s: string) =>
@@ -16,8 +19,10 @@ const list = (s: string) =>
     .map((x) => x.trim())
     .filter(Boolean);
 
-export function Tokens() {
+export function Tokens({ isAdmin = false }: { isAdmin?: boolean }) {
   const [tokens, setTokens] = useState<Token[]>([]);
+  const [profiles, setProfiles] = useState<AccessOverview['profiles']>([]);
+  const [profileId, setProfileId] = useState('');
   const [name, setName] = useState('');
   const [fresh, setFresh] = useState('');
   const [limit, setLimit] = useState(false);
@@ -29,7 +34,19 @@ export function Tokens() {
   const load = async () => setTokens(await api('/api/tokens'));
   useEffect(() => {
     load();
-  }, []);
+    if (isAdmin) api<AccessOverview>('/api/access', { quiet: true }).then((a) => setProfiles(a.profiles)).catch(() => {});
+  }, [isAdmin]);
+  const profileSelect = (value: string, onChange: (v: string) => void, cls = '') =>
+    profiles.length > 0 && (
+      <select className={`input w-auto py-1 text-xs ${cls}`} value={value} title="Access profile: which models and LoRAs this token may use" onChange={(e) => onChange(e.target.value)}>
+        <option value="">Access: same as its user</option>
+        {profiles.map((p) => (
+          <option key={p.id} value={p.id}>
+            Access: {p.name}
+          </option>
+        ))}
+      </select>
+    );
 
   return (
     <div className="card max-w-2xl space-y-3">
@@ -43,16 +60,22 @@ export function Tokens() {
           className="btn"
           onClick={async () => {
             const t = await api<{ token: string }>('/api/tokens', {
-              body: { name, ...(limit && { canvases: list(canvases), memory: list(memory), training, ...(list(datasets).length && { datasets: list(datasets) }) }) },
+              body: {
+                name,
+                ...(profileId && { profileId }),
+                ...(limit && { canvases: list(canvases), memory: list(memory), training, ...(list(datasets).length && { datasets: list(datasets) }) }),
+              },
             });
             setFresh(t.token);
             setName('');
+            setProfileId('');
             setLimit(false);
             load();
           }}
         >
           Create
         </button>
+        {profileSelect(profileId, setProfileId)}
       </div>
       <label className="flex items-center gap-2 text-sm text-slate-300">
         <input type="checkbox" checked={limit} onChange={(e) => setLimit(e.target.checked)} />
@@ -102,8 +125,12 @@ export function Tokens() {
             </span>
           )}
           <span className="text-xs text-slate-500">last used: {t.lastUsedAt ?? 'never'}</span>
+          {profileSelect(t.profileId ?? '', async (v) => {
+            await api(`/api/access/tokens/${t.id}`, { method: 'PUT', body: { profileId: v || null } });
+            load();
+          }, 'ml-auto')}
           <button
-            className="btn-ghost ml-auto text-red-400"
+            className={`btn-ghost text-red-400 ${profiles.length ? '' : 'ml-auto'}`}
             onClick={async () => {
               await api(`/api/tokens/${t.id}`, { method: 'DELETE' });
               load();

@@ -11,6 +11,7 @@ import { logError } from '../errors.js';
 import { gpuFreerFor, resolverFor, trainingFor } from './providers.js';
 import { canvasesFor, runSetup, sourceOf } from './runs.js';
 import { noteRun } from '../services/activity.js';
+import { allowedFor, notAllowed } from '../services/access.js';
 
 
 /** Bearer API token (or the web session), answered in OpenAI's error format. */
@@ -52,6 +53,7 @@ export function v1Routes(app: FastifyInstance) {
     let row = findCanvas(all, body.model);
     const router = getPrefs(req.user!).canvasRouter;
     if (!row && /^(hivemind[/:])?auto$/i.test(body.model.trim()) && router) {
+      if (!allowedFor(req.user!).model(router.providerId, router.model)) return reply.code(403).send(apiError(notAllowed(router.model).message, 'permission_error', 'model_not_allowed'));
       try {
         const picked = await routeCanvas(question, all, router, resolverFor(req.user!));
         row = all.find((r) => r.id === picked.canvasId);
@@ -70,19 +72,27 @@ export function v1Routes(app: FastifyInstance) {
     }
 
     const user = req.user!;
-    const runId = startRun({
-      ownerId: user.id,
-      user,
-      canvasId: row.id,
-      graph,
-      question,
-      vars,
-      chat,
-      resolve: resolverFor(providerUser),
-      freeGpu: gpuFreerFor(providerUser),
-      training: trainingFor(user),
-      source: sourceOf(user, '/v1'),
-    });
+    let runId: string;
+    try {
+      // The caller's access counts (Settings → Access), also on a shared canvas that runs with its owner's providers.
+      runId = startRun({
+        ownerId: user.id,
+        user,
+        canvasId: row.id,
+        graph,
+        question,
+        vars,
+        chat,
+        resolve: resolverFor(providerUser),
+        freeGpu: gpuFreerFor(providerUser),
+        training: trainingFor(user),
+        source: sourceOf(user, '/v1'),
+      });
+    } catch (err) {
+      const code = (err as { statusCode?: number }).statusCode;
+      if (code !== 403) throw err;
+      return reply.code(403).send(apiError((err as Error).message, 'permission_error', 'model_not_allowed'));
+    }
     noteRun(req, runId, row.name);
     const model = body.model;
     const live = streamSource(graph);

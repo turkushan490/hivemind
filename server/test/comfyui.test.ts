@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
-import { txt2imgWorkflow } from '../src/providers/comfyui.js';
+import { describe, expect, it, vi } from 'vitest';
+import { comfyAdapter, txt2imgWorkflow } from '../src/providers/comfyui.js';
 
 describe('ComfyUI workflow', () => {
   it('uses SDXL defaults, and few steps for turbo / Z-Image models', () => {
@@ -16,5 +16,31 @@ describe('ComfyUI workflow', () => {
     expect(w['10'].inputs).toMatchObject({ lora_name: 'style.safetensors', strength_model: 0.7 });
     expect(w['3'].inputs.model).toEqual(['10', 0]);
     expect(w['6'].inputs.clip).toEqual(['10', 1]);
+  });
+
+  it('uses PreviewImage (ComfyUI temp) unless the keep-a-copy option is on', () => {
+    const req = { model: 'm.safetensors', prompt: 'x', width: 512, height: 512 };
+    expect((txt2imgWorkflow(req, 1) as any)['9']).toEqual({ class_type: 'PreviewImage', inputs: { images: ['8', 0] } });
+    expect((txt2imgWorkflow(req, 1, true) as any)['9']).toEqual({ class_type: 'SaveImage', inputs: { filename_prefix: 'hivemind', images: ['8', 0] } });
+  });
+
+  it('the adapter sends PreviewImage, and SaveImage when the provider keeps images', async () => {
+    const jobs: any[] = [];
+    vi.stubGlobal('WebSocket', class { close() {} } as any);
+    vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
+      if (url.endsWith('/prompt')) {
+        jobs.push(JSON.parse(String(init!.body)).prompt);
+        return Response.json({ prompt_id: 'p1' });
+      }
+      if (url.includes('/history/p1')) return Response.json({ p1: { status: { status_str: 'success' }, outputs: { '9': { images: [{ filename: 'hm_1.png', subfolder: '', type: 'temp' }] } } } });
+      if (url.includes('/view?')) return new Response(Buffer.from('png'));
+      return new Response('', { status: 404 });
+    });
+    const make = (keepImages?: boolean) =>
+      comfyAdapter({ id: 'c', kind: 'comfyui', preset: 'comfyui', baseUrl: 'http://comfy.test', keepImages }).image!({ model: 'm', prompt: 'x', width: 512, height: 512 }, new AbortController().signal, () => {});
+    expect(await make()).toHaveLength(1);
+    await make(true);
+    expect(jobs.map((j) => j['9'].class_type)).toEqual(['PreviewImage', 'SaveImage']);
+    vi.unstubAllGlobals();
   });
 });

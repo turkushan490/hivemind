@@ -133,14 +133,25 @@ describe('Webhook block', () => {
 
   it('never calls cloud metadata or loopback, and the LAN only when allowed', async () => {
     const fetch = mockFetch(new Response('ok'), new Response('ok'));
-    await expect(NODES.webhook.execute(ctx('webhook', { url: 'http://169.254.169.254/latest/meta-data' }).c)).rejects.toThrow(/cloud-metadata/);
-    await expect(NODES.webhook.execute(ctx('webhook', { url: 'http://[::1]:4820/api' }).c)).rejects.toThrow(/loopback/);
-    await expect(NODES.webhook.execute(ctx('webhook', { url: 'http://me.loop/api' }).c)).rejects.toThrow(/loopback/);
-    expect(await NODES.webhook.execute(ctx('webhook', { url: 'http://nas.internal/hook', method: 'GET' }).c)).toBe('ok');
+    // An admin's run (lanAllowed): today's behaviour.
+    const admin = { services: { lanAllowed: true } };
+    await expect(NODES.webhook.execute(ctx('webhook', { url: 'http://169.254.169.254/latest/meta-data' }, admin).c)).rejects.toThrow(/cloud-metadata/);
+    await expect(NODES.webhook.execute(ctx('webhook', { url: 'http://[::1]:4820/api' }, admin).c)).rejects.toThrow(/loopback/);
+    await expect(NODES.webhook.execute(ctx('webhook', { url: 'http://me.loop/api' }, admin).c)).rejects.toThrow(/loopback/);
+    expect(await NODES.webhook.execute(ctx('webhook', { url: 'http://nas.internal/hook', method: 'GET' }, admin).c)).toBe('ok');
     process.env.BLOCK_PRIVATE_ADDRESSES = 'true';
-    await expect(NODES.webhook.execute(ctx('webhook', { url: 'http://nas.internal/hook', method: 'GET' }).c)).rejects.toThrow(/private network/);
-    await expect(NODES.webhook.execute(ctx('webhook', { url: 'http://10.0.0.1/', method: 'GET' }).c)).rejects.toThrow(/private network/);
+    await expect(NODES.webhook.execute(ctx('webhook', { url: 'http://nas.internal/hook', method: 'GET' }, admin).c)).rejects.toThrow(/private network/);
+    await expect(NODES.webhook.execute(ctx('webhook', { url: 'http://10.0.0.1/', method: 'GET' }, admin).c)).rejects.toThrow(/private network/);
     expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('a non-admin run never reaches the LAN or loopback, whatever BLOCK_PRIVATE_ADDRESSES says', async () => {
+    delete process.env.BLOCK_PRIVATE_ADDRESSES;
+    const fetch = mockFetch(new Response('ok'));
+    await expect(NODES.webhook.execute(ctx('webhook', { url: 'http://192.168.1.20:8188/history', method: 'GET' }).c)).rejects.toThrow(/private network.*admin/);
+    await expect(NODES.webhook.execute(ctx('webhook', { url: 'http://localhost:8188/view?filename=x.png', method: 'GET' }).c)).rejects.toThrow(/loopback/);
+    await expect(NODES.webhook.execute(ctx('webhook', { url: 'http://nas.internal/hook', method: 'GET' }).c)).rejects.toThrow(/private network/);
+    expect(fetch).not.toHaveBeenCalled();
   });
 
   it('refuses huge answers and redirects', async () => {

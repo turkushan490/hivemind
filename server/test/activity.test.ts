@@ -94,6 +94,8 @@ beforeAll(async () => {
   activity = await import('../src/services/activity.js');
   settings = await import('../src/db/index.js');
   db.prepare("UPDATE api_tokens SET name = 'DungeonMind' WHERE id = 't-u1'").run();
+  // These users may use the shared Ollama (Settings → Access).
+  db.prepare("UPDATE users SET profile_id = 'everything' WHERE role != 'admin'").run();
   db.prepare("INSERT INTO providers (id, preset, kind, name, base_url, local) VALUES ('ollama', 'ollama', 'ollama', 'Ollama', 'http://gpu.test:11434', 1)").run();
   // u2's own Ollama (on the same GPU), used by a canvas u2 shares.
   db.prepare("INSERT INTO providers (id, preset, kind, name, base_url, local, owner_id) VALUES ('own', 'ollama', 'ollama', 'My Ollama', 'http://gpu.test:11434', 1, 'u2')").run();

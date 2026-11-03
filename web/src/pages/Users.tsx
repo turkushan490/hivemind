@@ -1,3 +1,4 @@
+import type { AccessOverview } from '@hivemind/shared';
 import { useEffect, useState } from 'react';
 import { api } from '../api';
 import { toast } from '../notify';
@@ -8,6 +9,7 @@ interface UserRow {
   username: string;
   role: Role;
   createdAt: string;
+  profileId: string;
 }
 
 const ROLE_INFO: Record<Role, string> = {
@@ -22,7 +24,11 @@ export function Users({ meId, active }: { meId: string; active: boolean }) {
   const [name, setName] = useState('');
   const [password, setPassword] = useState('');
   const [role, setRole] = useState<Role>('user');
-  const load = () => api<UserRow[]>('/api/users', { quiet: true }).then(setUsers).catch((err) => toast(`Could not load users: ${(err as Error).message}`));
+  const [profiles, setProfiles] = useState<AccessOverview['profiles']>([]);
+  const load = () => {
+    api<UserRow[]>('/api/users', { quiet: true }).then(setUsers).catch((err) => toast(`Could not load users: ${(err as Error).message}`));
+    api<AccessOverview>('/api/access', { quiet: true }).then((a) => setProfiles(a.profiles)).catch(() => {});
+  };
   useEffect(() => {
     if (active) load();
   }, [active]);
@@ -51,6 +57,23 @@ export function Users({ meId, active }: { meId: string; active: boolean }) {
           {u.id === meId && <span className="text-xs text-slate-500">(you)</span>}
           <select
             className="input ml-auto w-auto py-1 text-xs"
+            value={u.profileId}
+            disabled={u.role === 'admin'}
+            title={u.role === 'admin' ? 'Admins always have Everything' : 'Access profile (Settings → Access): which models and LoRAs they may use'}
+            onChange={async (e) => {
+              await api(`/api/users/${u.id}`, { method: 'PATCH', body: { profileId: e.target.value } });
+              toast(`${u.username} now has ${profiles.find((p) => p.id === e.target.value)?.name ?? e.target.value}`, 'ok');
+              load();
+            }}
+          >
+            {profiles.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+              </option>
+            ))}
+          </select>
+          <select
+            className="input w-auto py-1 text-xs"
             value={u.role}
             disabled={u.id === meId}
             title={u.id === meId ? "You can't change your own role" : 'Role'}

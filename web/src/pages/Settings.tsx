@@ -5,6 +5,7 @@ import { Providers } from './Providers';
 import { BuilderSettings, HomeAssistantPanel, HuggingFacePanel, VoicePanel, MemorySettings, OpenAIApiSettings, SearchSettingsPanel, TrainingPanel, RunLimitsPanel } from './SettingsExtra';
 import { Tokens } from './Tokens';
 import { Users } from './Users';
+import { Access } from './Access';
 
 type Role = 'admin' | 'user' | 'viewer';
 
@@ -20,13 +21,14 @@ const SECTIONS = {
   training: 'Training',
   limits: 'Run limits',
   users: 'Users',
+  access: 'Access',
   tokens: 'API tokens',
   api: 'OpenAI API',
 } as const;
 type Section = keyof typeof SECTIONS;
 
-/** Viewers only get their API tokens; users everything but Users. */
-const shown = (role: Role, s: Section) => (role === 'viewer' ? s === 'tokens' || s === 'api' : s !== 'users' || role === 'admin');
+/** Viewers only get their API tokens; users everything but Users and Access. */
+const shown = (role: Role, s: Section) => (role === 'viewer' ? s === 'tokens' || s === 'api' : (s !== 'users' && s !== 'access') || role === 'admin');
 
 export function Settings({ role, meId, active, onWizard }: { role: Role; meId: string; active: boolean; onWizard: () => void }) {
   const [stored, setSection] = useStored<Section>('settings.section', 'providers');
@@ -61,7 +63,8 @@ export function Settings({ role, meId, active, onWizard }: { role: Role; meId: s
         {panel('training', <TrainingPanel isAdmin={isAdmin} active={active && section === 'training'} />)}
         {panel('limits', <RunLimitsPanel isAdmin={isAdmin} active={active && section === 'limits'} />)}
         {panel('users', <Users meId={meId} active={active && section === 'users'} />)}
-        {panel('tokens', <Tokens />)}
+        {panel('access', <Access active={active && section === 'access'} />)}
+        {panel('tokens', <Tokens isAdmin={isAdmin} />)}
         {panel('api', <OpenAIApiSettings active={active && section === 'api'} onTokens={() => setSection('tokens')} />)}
       </div>
     </div>

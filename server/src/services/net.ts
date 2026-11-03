@@ -5,7 +5,9 @@ import { BlockList, isIP } from 'node:net';
  * Guards for addresses that blocks call on their own (Webhook block, image URLs an image API hands back).
  * Cloud metadata, link-local and loopback addresses are always refused; other private addresses (your LAN:
  * Home Assistant, routers, NAS) are allowed unless BLOCK_PRIVATE_ADDRESSES=true, for HiveMind servers that
- * other people can use and that should not reach into the local network.
+ * other people can use and that should not reach into the local network. Runs of non-admins never reach the LAN,
+ * whatever BLOCK_PRIVATE_ADDRESSES says: otherwise a Webhook block could ask ComfyUI (/history, /view) for every
+ * picture it ever made, or reach anything else on the owner's network.
  */
 
 const ALWAYS = new BlockList();
@@ -26,16 +28,19 @@ PRIVATE.addSubnet('fc00::', 7, 'ipv6');
 export const blockPrivate = () => /^(1|true|yes)$/i.test(process.env.BLOCK_PRIVATE_ADDRESSES ?? '');
 
 /** Why this IP may not be called, or undefined when it may. */
-export function blockedReason(ip: string, allowPrivate = !blockPrivate()): string | undefined {
+export function blockedReason(ip: string, allowPrivate = !blockPrivate(), why = 'BLOCK_PRIVATE_ADDRESSES is on'): string | undefined {
   const v4 = ip.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/i)?.[1];
   const addr = v4 ?? ip;
   const type = isIP(addr) === 6 ? 'ipv6' : 'ipv4';
   if (ALWAYS.check(addr, type)) return 'a loopback, link-local or cloud-metadata address';
-  if (!allowPrivate && PRIVATE.check(addr, type)) return 'a private network address (BLOCK_PRIVATE_ADDRESSES is on)';
+  if (!allowPrivate && PRIVATE.check(addr, type)) return `a private network address (${why})`;
 }
 
-/** Throws a readable error when the URL is not http(s) or its host resolves to an address that may not be called. */
-export async function checkUrl(url: string, what = 'This address'): Promise<URL> {
+/**
+ * Throws a readable error when the URL is not http(s) or its host resolves to an address that may not be called.
+ * noPrivate: never the LAN (runs of non-admins), whatever BLOCK_PRIVATE_ADDRESSES says.
+ */
+export async function checkUrl(url: string, what = 'This address', opts: { noPrivate?: boolean } = {}): Promise<URL> {
   let u: URL;
   try {
     u = new URL(url);
@@ -44,10 +49,12 @@ export async function checkUrl(url: string, what = 'This address'): Promise<URL>
   }
   if (u.protocol !== 'http:' && u.protocol !== 'https:') throw new Error(`${what} must be http(s)`);
   const host = u.hostname.replace(/^\[|\]$/g, '');
+  // "localhost" is loopback whatever a resolver says (RFC 6761).
+  if (/(^|\.)localhost\.?$/i.test(host)) throw new Error(`${what} (${u.host}) points to a loopback, link-local or cloud-metadata address, which blocks may not call`);
   const ips = isIP(host) ? [host] : (await lookup(host, { all: true }).catch(() => [])).map((a) => a.address);
   if (ips.length === 0) throw new Error(`Can't find the host ${u.host}`);
   for (const ip of ips) {
-    const why = blockedReason(ip);
+    const why = opts.noPrivate ? blockedReason(ip, false, 'only workflows of an admin may call the local network') : blockedReason(ip);
     if (why) throw new Error(`${what} (${u.host}) points to ${why}, which blocks may not call`);
   }
   return u;

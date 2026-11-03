@@ -11,6 +11,7 @@ import { requireUser, type User } from './auth.js';
 import { canvasAllowed } from './scope.js';
 import { gpuFreerFor, resolverFor, trainingFor } from './providers.js';
 import { batchStatus, startBatch, stopBatch } from '../services/batch.js';
+import { allowedFor, checkGraph } from '../services/access.js';
 
 export interface CanvasRow {
   id: string;
@@ -53,7 +54,8 @@ const userById = (id: string) => db.prepare('SELECT id, username, role FROM user
 
 /**
  * What a run of this canvas may use: a canvas shared by someone else runs as stored, with its owner's AI providers
- * (their keys pay); your own canvas can run what is on screen.
+ * (their keys pay); your own canvas can run what is on screen. Either way the caller's access (Settings → Access)
+ * is what startRun checks, so a shared canvas is no way around it.
  */
 export function runSetup(user: User, row: CanvasRow | undefined, bodyGraph: CanvasGraph | undefined): { graph?: CanvasGraph; providerUser: User } {
   if (!row) return { graph: user.role === 'viewer' ? undefined : bodyGraph, providerUser: user };
@@ -197,6 +199,12 @@ export function runRoutes(app: FastifyInstance) {
       return reply.code(400).send({ error: (err as Error).message });
     }
     const user = req.user!;
+    // Refused right away rather than on every run (Settings → Access); each run checks again.
+    try {
+      checkGraph(graph!, allowedFor(user));
+    } catch (err) {
+      return reply.code(403).send({ error: (err as Error).message });
+    }
     return startBatch({
       ownerId: user.id,
       canvasId: row.id,

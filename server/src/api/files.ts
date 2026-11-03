@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { createReadStream, statSync } from 'node:fs';
 import { basename, extname } from 'node:path';
-import { cleanName, deleteFile, listFiles, safePath, writeUnique } from '../services/files.js';
+import { cleanName, deleteFile, listFiles, ownPath, writeUnique } from '../services/files.js';
 import { requireUser } from './auth.js';
 
 const MIME: Record<string, string> = {
@@ -14,20 +14,24 @@ export function fileRoutes(app: FastifyInstance) {
   // Uploads arrive as the raw file body.
   app.addContentTypeParser('application/octet-stream', { parseAs: 'buffer', bodyLimit: 200 * 1024 * 1024 }, (_req, body, done) => done(null, body));
 
-  app.get('/api/files', { preHandler: requireUser }, async () => listFiles());
+  /** Your own files; an admin gets every file, with its owner. */
+  app.get('/api/files', { preHandler: requireUser }, async (req) => listFiles(req.user!));
 
   /** Body: the file. ?name=folder/file.ext — an existing name gets " (2)" added. */
   app.post('/api/files', { preHandler: requireUser, bodyLimit: 200 * 1024 * 1024 }, async (req, reply) => {
     const name = String((req.query as { name?: string }).name ?? '');
     if (!Buffer.isBuffer(req.body)) return reply.code(415).send({ error: 'Send the file as application/octet-stream' });
     const parts = name.split('/').map(cleanName);
-    return { path: writeUnique(parts.join('/'), req.body) };
+    return { path: writeUnique(parts.join('/'), req.body, req.user!.id) };
   });
 
-  /** Download (or ?inline=1 to show in the browser: images, PDFs, previews). HTML is always served as a download here. */
+  /**
+   * Download (or ?inline=1 to show in the browser: images, PDFs, previews). HTML is always served as a download here.
+   * Someone else's file is "not found", like a missing one.
+   */
   app.get('/api/files/raw', { preHandler: requireUser }, async (req, reply) => {
     const { path, inline } = req.query as { path?: string; inline?: string };
-    const full = safePath(path ?? '');
+    const full = ownPath(req.user!, path ?? '');
     let size: number;
     try {
       size = statSync(full).size;
@@ -49,7 +53,7 @@ export function fileRoutes(app: FastifyInstance) {
   });
 
   app.delete('/api/files', { preHandler: requireUser }, async (req) => {
-    deleteFile(String((req.query as { path?: string }).path ?? ''));
+    deleteFile(req.user!, String((req.query as { path?: string }).path ?? ''));
     return { ok: true };
   });
 }

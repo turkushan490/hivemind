@@ -44,6 +44,8 @@ export function trainingServices(
     /** A limited token: the datasets (by name) and canvases it may use. */
     allowDataset?(name: string): boolean;
     allowCanvas?(id: string): boolean;
+    /** Pictures in examples: only files this user may use (their own; an admin's: all). */
+    allowFile?(path: string): boolean;
   } = {},
 ): TrainingServices {
   const check = (name: string) => {
@@ -56,7 +58,8 @@ export function trainingServices(
       // A decision dataset made by a block gets the block's question (an existing question is kept).
       if (ds.kind === 'decision' && o.question && !parseDecisionSpec(ds.system)) updateDataset(ownerId, ds.id, { system: JSON.stringify(o.question) });
       if (ds.kind === 'image' && items.some((it) => !it.files?.length)) throw new Error(`"${ds.name}" is a picture dataset: wire in a block that makes pictures (Image)`);
-      const added = addItems(ds.id, o.source, items.map((it) => ({ ...it, ...(o.review && { review: 'pending' as const }) })));
+      const own = opts.allowFile ? items.map((it) => (it.files ? { ...it, files: it.files.filter((f) => opts.allowFile!(f)) } : it)).filter((it) => ds.kind !== 'image' || it.files?.length) : items;
+      const added = addItems(ds.id, o.source, own.map((it) => ({ ...it, ...(o.review && { review: 'pending' as const }) })));
       const now = findDataset(ownerId, ds.id)!;
       return { name: now.name, added, items: now.items, pending: now.pending, kind: now.kind };
     },

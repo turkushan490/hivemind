@@ -2,6 +2,7 @@ import cookie from '@fastify/cookie';
 import staticFiles from '@fastify/static';
 import Fastify, { type FastifyInstance, type RouteOptions } from 'fastify';
 import { existsSync } from 'node:fs';
+import { accessRoutes } from './api/access.js';
 import { activityRoutes } from './api/activity.js';
 import { authRoutes, viewerGuard } from './api/auth.js';
 import { builderRoutes } from './api/builder.js';
@@ -24,9 +25,12 @@ import { config } from './config.js';
 import { logError } from './errors.js';
 import { FEATURES } from './features.js';
 import { logApiCall } from './services/activity.js';
+import { claimExistingFiles } from './services/files.js';
 
 /** The whole web app without listening: main.ts starts it, tests inject requests into it. */
 export async function buildApp(opts: { logger?: boolean; web?: boolean; onRoute?: (r: RouteOptions) => void } = {}): Promise<FastifyInstance> {
+  // Files that were in the folder before files had owners go to the first admin (once).
+  claimExistingFiles();
   const app = Fastify({ logger: opts.logger === false ? false : { level: process.env.LOG_LEVEL || 'info' }, trustProxy: process.env.TRUST_PROXY || 'loopback, linklocal, uniquelocal', bodyLimit: 5 * 1024 * 1024 });
 
   if (opts.onRoute) app.addHook('onRoute', opts.onRoute);
@@ -100,6 +104,7 @@ export async function buildApp(opts: { logger?: boolean; web?: boolean; onRoute?
   datasetRoutes(app);
   scheduleRoutes(app);
   activityRoutes(app);
+  accessRoutes(app);
 
   if (opts.web !== false && existsSync(config.webDir)) {
     await app.register(staticFiles, {

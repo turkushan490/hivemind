@@ -64,3 +64,4 @@ Paste a channel webhook URL (Discord: Edit channel → Integrations → Webhooks
 
 - **Saved with the canvas:** Webhook headers and Discord webhook URLs are stored in the canvas, so they also end up in canvas exports. Only the Home Assistant token is kept separately and encrypted.
 - **Network access:** the HiveMind server makes these calls, not your browser, so the server must be able to reach the address.
+- **Local network:** loopback (`localhost`, `127.0.0.1`), link-local and cloud-metadata addresses are always refused. Private (LAN) addresses work only in workflows run by an admin, and not at all when `BLOCK_PRIVATE_ADDRESSES=true`. Workflows of other users can never call the LAN, so nobody can ask your ComfyUI (`/history`, `/view`) or other home servers for their data through a Webhook block.

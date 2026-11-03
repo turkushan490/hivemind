@@ -55,8 +55,10 @@ export interface NodeServices {
     waitTrain(id: string, signal: AbortSignal, onProgress: (note: string) => void): Promise<{ state: string; error?: string; lora?: string }>;
     deploy(pattern: string, model: ModelRef): { canvases: number; blocks: number };
   };
-  /** Reads a file from the files folder (images for box questions). */
+  /** Reads a file from the files folder (images for box questions): only files of whoever runs it. */
   readFile?(path: string): Buffer;
+  /** Webhook: may call addresses in the local network (runs of an admin; BLOCK_PRIVATE_ADDRESSES can still say no). */
+  lanAllowed?: boolean;
 }
 
 /** A chat sent through /v1: its system messages and the turns before the last question. */
@@ -77,6 +79,8 @@ export interface NodeContext {
   outgoing: { id: string; label: string; type: NodeType }[];
   /** Streams one model call; token events are emitted by the engine. Defaults to the block's own model. */
   callModel(messages: ChatMessage[], model?: ModelRef, opts?: { json?: boolean }): Promise<string>;
+  /** Settings → Access: may the person who runs this use that model? (Auto model only picks allowed ones.) */
+  allowedModel?(model: ModelRef): boolean;
   /** Router: only these outgoing blocks run; the others are skipped. */
   choose(targetIds: string[]): void;
   /** A short status line shown on the block while it works (with a decision: the probability bars). */
@@ -221,8 +225,11 @@ const modelLabel = (m: ModelRef) => m.model.split('/').pop()!.replace(/:latest$/
  */
 export async function autoModel(ctx: NodeContext, state: string): Promise<ModelRef> {
   const a = ctx.node.config.auto ?? {};
-  const tiers = AUTO_TIERS.filter((t) => a[t]);
-  if (!tiers.length) throw new Error('Auto model: fill in at least one size (small / medium / large / local)');
+  const filled = AUTO_TIERS.filter((t) => a[t]);
+  if (!filled.length) throw new Error('Auto model: fill in at least one size (small / medium / large / local)');
+  // Only sizes whose model the person may use (Settings → Access) take part.
+  const tiers = filled.filter((t) => !ctx.allowedModel || ctx.allowedModel(a[t]!));
+  if (!tiers.length) throw new Error(`You can't use ${a[filled[0]]!.model} (ask the admin to add it to your access)`);
   if (tiers.length === 1) return a[tiers[0]]!;
   if (!a.decider) throw new Error('Auto model: pick the decision model that chooses the size');
   const criteria = Object.fromEntries(tiers.map((t) => [t, AUTO_TIER_TEXT[t]]));

@@ -189,7 +189,9 @@ async function decideOn(ctx: NodeContext, questions: DecideQuestion[]): Promise<
     const { name, ...rest } = v;
     out[name] = { ...rest, ...(picked[name] && { decision: picked[name] }) };
     const plain = picked[name] ?? v.pick;
-    if (plain) decided[name] = plain;
+    // A choice it wasn't sure about (under the threshold) is left open rather than passed on as decided.
+    const unsure = v.type === 'choice' && (v.probabilities?.[v.pick ?? ''] ?? 0) < threshold;
+    if (plain && !unsure) decided[name] = plain;
   }
   return JSON.stringify({ answers: out, decided, ...(route && { decision: route }), summary, model: result.model, ms: result.ms });
 }

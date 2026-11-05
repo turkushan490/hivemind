@@ -800,14 +800,14 @@ export const TEMPLATES: Template[] = [
       const fast = m.text[0] ?? m.judge;
       const strong = m.judge ?? m.text[0];
       const read = node('readProject', 300, 160, 'Read project', {});
-      const coder = node('llm', 600, 160, 'Coder', { ...(fast && { model: fast }), system: CODER_SYSTEM, prompt: QUICK_PROMPT, skillMode: 'auto', ...FAST_ANSWER });
+      const coder = node('llm', 600, 160, 'Coder', { ...(strong && { model: strong }), system: CODER_SYSTEM, prompt: QUICK_PROMPT, skillMode: 'auto', ...CODE_ANSWER });
       const g = chain(
         node('input', 0, 160, 'What to change'),
         read,
         coder,
         node('writeFiles', 900, 160, 'Write files', {}),
         node('readProject', 1200, 160, 'Read the site', {}),
-        node('llm', 1500, 160, 'Checker', { ...(strong && { model: strong }), system: CHECK_SYSTEM, prompt: CHECK_PROMPT, ...BIG_ANSWER }),
+        node('llm', 1500, 160, 'Checker', { ...(strong && { model: strong }), system: CHECK_SYSTEM, prompt: CHECK_PROMPT, ...CODE_ANSWER }),
         node('writeFiles', 1800, 160, 'Write fixes', { optionalWrite: true }),
         node('pause', 2100, 160, 'Check the changes', { title: 'Check the changes', prompt: 'Look at the changed files and the preview, then press Continue.' }),
         node('updateNotes', 2400, 160, 'Update PROJECT.md', { ...(fast && { model: fast }), think: false }),
@@ -850,10 +850,13 @@ export const TEMPLATES: Template[] = [
 
 // ---- Site builder: a project that grows run after run ----
 
-/** Long answers for local models: one whole file per call (the strong model that checks). */
-const BIG_ANSWER: NodeConfig = { maxTokens: 16384, numCtx: 32768, maxSeconds: 3600 };
 /** The fast model: no thinking (small thinking models can loop), room for one whole file, a shorter time limit. */
 const FAST_ANSWER: NodeConfig = { think: false, maxTokens: 16384, numCtx: 32768, maxSeconds: 900 };
+/**
+ * The strong model writing code: without thinking it answers several times faster, and a plan or one file needs no
+ * long reasoning. (A 1B model can't write whole files: it gets the small jobs, the strong one the code.)
+ */
+const CODE_ANSWER: NodeConfig = { think: false, maxTokens: 16384, numCtx: 32768, maxSeconds: 1800 };
 
 /** How a request changes a site that already exists: the part every model that writes needs to know. */
 const EDIT_RULES =
@@ -866,7 +869,7 @@ const PLANNER_SYSTEM =
   'You plan changes to a website project. Read PROJECT.md (the notes: what the site is, its style, pages and earlier decisions) and the files, then plan which files to create, change or delete for the request. ' +
   `${EDIT_RULES} Keep the plan small: only the files that really need to change (a colour change is often only the CSS). Use relative links between pages.`;
 
-const PLAN_SCHEMA = '{"files": [{"path": "folder/name.html", "action": "create | change | delete", "reason": "what changes in it, one line"}]}';
+const PLAN_SCHEMA = '{"files": [{"path": "about.html", "action": "change", "reason": "add a dogs section under the pandas section"}]} — action is one of create, change, delete';
 
 const CODER_SYSTEM =
   `You are a web developer working on a project of several files. ${EDIT_RULES} Write complete files, never parts or "…". ` +
@@ -912,15 +915,15 @@ function siteBuilder(m: TemplateModels): CanvasGraph {
   const strong = m.judge ?? m.text[0];
   const q = node('input', 0, 240, 'What to build or change');
   const read = node('readProject', 300, 240, 'Read project', {});
-  const plan = node('llm', 600, 240, 'Planner', { ...(fast && { model: fast }), system: PLANNER_SYSTEM, prompt: 'The request: {{question}}\n\n{{inputs}}', json: true, jsonSchema: PLAN_SCHEMA, ...FAST_ANSWER, maxTokens: 4096 });
+  const plan = node('llm', 600, 240, 'Planner', { ...(strong && { model: strong }), system: PLANNER_SYSTEM, prompt: 'The request: {{question}}\n\n{{inputs}}', json: true, jsonSchema: PLAN_SCHEMA, ...CODE_ANSWER, maxTokens: 4096 });
   const checkPlan = node('pause', 900, 240, 'Check the plan', { title: 'Check the plan', prompt: 'These files will be written. Edit the plan if you like, then press Continue.' });
   const each = node('foreach', 1200, 240, 'For each file', { maxItems: 30 });
   const readOne = node('readProject', 1500, 80, 'Read this file', { onlyNamed: true });
-  const coder = node('llm', 1800, 240, 'Coder', { ...(fast && { model: fast }), system: CODER_SYSTEM, prompt: CODER_PROMPT, skillMode: 'auto', ...FAST_ANSWER });
+  const coder = node('llm', 1800, 240, 'Coder', { ...(strong && { model: strong }), system: CODER_SYSTEM, prompt: CODER_PROMPT, skillMode: 'auto', ...CODE_ANSWER });
   const write = node('writeFiles', 2100, 240, 'Write file', {});
   const all = node('collect', 2400, 240, 'All files written');
   const readSite = node('readProject', 2700, 240, 'Read the site', {});
-  const check = node('llm', 3000, 240, 'Checker', { ...(strong && { model: strong }), system: CHECK_SYSTEM, prompt: CHECK_PROMPT, ...BIG_ANSWER });
+  const check = node('llm', 3000, 240, 'Checker', { ...(strong && { model: strong }), system: CHECK_SYSTEM, prompt: CHECK_PROMPT, ...CODE_ANSWER });
   const fixes = node('writeFiles', 3300, 240, 'Write fixes', { optionalWrite: true });
   const checkSite = node('pause', 3600, 240, 'Check the site', { title: 'Check the site', prompt: 'Look at the changed files and the preview. Continue saves PROJECT.md (the memory for the next run).' });
   const notes = node('updateNotes', 3900, 240, 'Update PROJECT.md', { ...(fast && { model: fast }), think: false });
@@ -971,7 +974,7 @@ const SW_RESEARCH_SYSTEM =
   'Write at most 4 short web search queries, one per line, nothing else. If nothing needs looking up, write only: NONE';
 
 const SW_PLAN_SCHEMA =
-  '{"files": [{"path": "src/index.js", "action": "create | change | delete", "reason": "what changes in it, one line"}]}';
+  '{"files": [{"path": "src/index.js", "action": "create", "reason": "the command-line entry point"}]} — action is one of create, change, delete';
 
 const SW_CODER_SYSTEM =
   `You are a software developer working on a project of several files. ${SW_EDIT_RULES} ${SW_TOOLING} ` +
@@ -1003,18 +1006,18 @@ function softwareBuilder(m: TemplateModels): CanvasGraph {
   const strong = m.judge ?? m.text[0];
   const q = node('input', 0, 240, 'What to build or change');
   const read = node('readProject', 300, 240, 'Read project', { globs: CODE_GLOBS });
-  const plan = node('llm', 600, 240, 'Planner', { ...(fast && { model: fast }), system: SW_PLANNER_SYSTEM, prompt: 'The request: {{question}}\n\n{{inputs}}', json: true, jsonSchema: SW_PLAN_SCHEMA, ...FAST_ANSWER, maxTokens: 4096 });
+  const plan = node('llm', 600, 240, 'Planner', { ...(strong && { model: strong }), system: SW_PLANNER_SYSTEM, prompt: 'The request: {{question}}\n\n{{inputs}}', json: true, jsonSchema: SW_PLAN_SCHEMA, ...CODE_ANSWER, maxTokens: 4096 });
   const checkPlan = node('pause', 900, 240, 'Check the plan', { title: 'Check the plan', prompt: 'These files will be written. Edit the plan if you like, then press Continue.' });
   const toLookUp = node('llm', 300, 0, 'What to look up', { ...(fast && { model: fast }), system: SW_RESEARCH_SYSTEM, prompt: 'The request: {{question}}\n\n{{inputs}}', ...FAST_ANSWER, maxTokens: 512 });
   const research = node('search', 600, 0, 'Look it up online', { source: 'duckduckgo', searchList: true, readPages: 1, count: 4 });
   const each = node('foreach', 1500, 240, 'For each file', { maxItems: 30 });
   const readOne = node('readProject', 1800, 60, 'Read this file', { onlyNamed: true });
-  const coder = node('llm', 2100, 240, 'Coder', { ...(fast && { model: fast }), system: SW_CODER_SYSTEM, prompt: SW_CODER_PROMPT, skillMode: 'auto', ...FAST_ANSWER });
+  const coder = node('llm', 2100, 240, 'Coder', { ...(strong && { model: strong }), system: SW_CODER_SYSTEM, prompt: SW_CODER_PROMPT, skillMode: 'auto', ...CODE_ANSWER });
   const write = node('writeFiles', 2400, 240, 'Write file', {});
   const all = node('collect', 2700, 240, 'All files written');
   const build = node('build', 3000, 240, 'Build', { buildFailOk: true, buildOptional: true });
   const readCode = node('readProject', 4800, 240, 'Read the code', { globs: CODE_GLOBS });
-  const check = node('llm', 5100, 240, 'Checker', { ...(strong && { model: strong }), system: SW_CHECK_SYSTEM, prompt: 'The request was: {{question}}\n\n{{inputs}}', ...BIG_ANSWER });
+  const check = node('llm', 5100, 240, 'Checker', { ...(strong && { model: strong }), system: SW_CHECK_SYSTEM, prompt: 'The request was: {{question}}\n\n{{inputs}}', ...CODE_ANSWER });
   const fixes = node('writeFiles', 5400, 240, 'Write fixes', { optionalWrite: true });
   const checkDone = node('pause', 5700, 240, 'Check the program', { title: 'Check the program', prompt: 'Look at the changed files (and the build in dist/). Continue saves PROJECT.md (the memory for the next run).' });
   const notes = node('updateNotes', 6000, 240, 'Update PROJECT.md', { ...(fast && { model: fast }), think: false });
@@ -1055,7 +1058,7 @@ function softwareBuilder(m: TemplateModels): CanvasGraph {
     const lookup = node('llm', 3600, 60, 'failed: yes', { ...(fast && { model: fast }), system: SW_LOOKUP_SYSTEM, prompt: '{{inputs}}', ...FAST_ANSWER, maxTokens: 512 });
     const errSearch = node('search', 3900, 60, 'Look up the error', { source: 'duckduckgo', searchList: true, readPages: 1, count: 4 });
     const readForFix = node('readProject', 3900, 420, 'Read the code to fix', { globs: CODE_GLOBS });
-    const fixer = node('llm', 4200, 240, 'Fixer', { ...(strong && { model: strong }), system: SW_FIX_SYSTEM, prompt: 'The request was: {{question}}\n\n{{inputs}}', ...BIG_ANSWER });
+    const fixer = node('llm', 4200, 240, 'Fixer', { ...(strong && { model: strong }), system: SW_FIX_SYSTEM, prompt: 'The request was: {{question}}\n\n{{inputs}}', ...CODE_ANSWER });
     const writeFix = node('writeFiles', 4500, 240, 'Write the fix', { optionalWrite: true });
     const rebuild = node('build', 4500, 420, 'Build again', { buildFailOk: true, buildOptional: true });
     nodes.push(failed, lookup, errSearch, readForFix, fixer, writeFix, rebuild);

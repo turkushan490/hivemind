@@ -433,6 +433,8 @@ function Editor({ active, onProblem }: { active: boolean; onProblem: () => void 
         <select
           className="input w-auto py-1"
           value=""
+          // Workflows saved elsewhere (another tab, the API, DungeonMind) show without reloading the page.
+          onFocus={() => api<Canvas[]>('/api/canvases', { quiet: true }).then(setCanvases, () => {})}
           onChange={(e) => {
             const c = canvases.find((x) => x.id === e.target.value);
             if (c) openCanvas(c);

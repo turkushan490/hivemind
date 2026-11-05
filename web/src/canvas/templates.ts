@@ -837,6 +837,11 @@ const REVIEW_SYSTEM_SITE =
   'You review a website project after changes: check that links between pages point to files that exist, that every page loads its CSS and scripts, and that the HTML is complete and valid. ' +
   'If something is broken, answer with the fixed files, complete, each in a ```<lang> path=<path> block. If everything is fine, answer only: All good.';
 
+const DESIGNER_SYSTEM =
+  'You are a senior web designer. You make websites look polished and modern: clear hierarchy, generous spacing, a consistent colour palette and type scale, good contrast, smooth hover states, and a layout that works on phones. ' +
+  'Follow the style and decisions in PROJECT.md. Keep all content, links and pages; only improve how they look. Prefer improving the shared CSS over changing every page. ' +
+  'Answer with only the files you change, each complete, in a code block whose first line names the path, like ```css path=css/site.css. If everything already looks good, answer only: Looks good.';
+
 function siteBuilder(m: TemplateModels): CanvasGraph {
   const strong = m.judge ?? m.text[0];
   const coderModel = m.text[0] ?? strong;
@@ -852,12 +857,15 @@ function siteBuilder(m: TemplateModels): CanvasGraph {
   const readSite = node('readProject', 2700, 240, 'Read the site', {});
   const review = node('llm', 3000, 240, 'Reviewer', { ...(strong && { model: strong }), system: REVIEW_SYSTEM_SITE, prompt: 'The request was: {{question}}\n\n{{inputs}}', ...BIG_ANSWER });
   const fixes = node('writeFiles', 3300, 240, 'Write fixes', { optionalWrite: true });
-  const checkSite = node('pause', 3600, 240, 'Check the site', { title: 'Check the site', prompt: 'Look at the changed files and the preview. Continue pushes to GitHub (when the project is connected) and updates PROJECT.md.' });
-  const git = node('git', 3900, 240, 'Push to GitHub', { gitAction: 'commitPush', message: '{{question}}' });
-  const notes = node('updateNotes', 4200, 240, 'Update PROJECT.md', strong ? { model: strong } : {});
-  const out = node('output', 4500, 240, 'Result');
+  const readLook = node('readProject', 3600, 240, 'Read pages and styles', { globs: '*.html, *.css' });
+  const designer = node('llm', 3900, 240, 'Designer', { ...(coderModel && { model: coderModel }), system: DESIGNER_SYSTEM, prompt: 'The request was: {{question}}\n\nThe site as it is now:\n\n{{inputs}}\n\nPolish the design.', skillMode: 'auto', ...BIG_ANSWER });
+  const design = node('writeFiles', 4200, 240, 'Write design', { optionalWrite: true });
+  const checkSite = node('pause', 4500, 240, 'Check the site', { title: 'Check the site', prompt: 'Look at the changed files and the preview. Continue pushes to GitHub (when the project is connected) and updates PROJECT.md.' });
+  const git = node('git', 4800, 240, 'Push to GitHub', { gitAction: 'commitPush', message: '{{question}}' });
+  const notes = node('updateNotes', 5100, 240, 'Update PROJECT.md', strong ? { model: strong } : {});
+  const out = node('output', 5400, 240, 'Result');
   return {
-    nodes: [q, read, plan, checkPlan, each, readOne, coder, write, all, readSite, review, fixes, checkSite, git, notes, out],
+    nodes: [q, read, plan, checkPlan, each, readOne, coder, write, all, readSite, review, fixes, readLook, designer, design, checkSite, git, notes, out],
     edges: [
       wire(q, read),
       wire(read, plan),
@@ -872,7 +880,10 @@ function siteBuilder(m: TemplateModels): CanvasGraph {
       wire(all, readSite),
       wire(readSite, review),
       wire(review, fixes),
-      wire(fixes, checkSite),
+      wire(fixes, readLook),
+      wire(readLook, designer),
+      wire(designer, design),
+      wire(design, checkSite),
       wire(checkSite, git),
       wire(git, notes),
       wire(all, notes),

@@ -242,6 +242,7 @@ describe('project blocks', () => {
       if (/PROJECT\.md, the notes/.test(system)) return `# Builder\n## Decisions\n- ${/blog/.test(user) ? 'Added a blog. ' : ''}Started.`;
       if (/plan/i.test(system)) return /blog/.test(user) ? '{"files":[{"path":"blog.html","action":"create","reason":"blog"}]}' : '{"files":[{"path":"index.html","action":"create","reason":"home"}]}';
       if (/review/i.test(system)) return 'All good.';
+      if (/web designer/i.test(system)) return 'Looks good.';
       const path = user.match(/"path":"([^"]+)"/)?.[1] ?? 'index.html';
       return `\`\`\`html path=${path}\n<h1>${path}</h1>\n\`\`\``;
     };

@@ -787,23 +787,42 @@ export const TEMPLATES: Template[] = [
     id: 'site-builder',
     group: 'Website',
     name: 'Site builder (project)',
-    description: 'Keeps building one site in a project, run after run: plans the files, you check the plan, writes them one by one, reviews, you check the site, pushes to GitHub and updates PROJECT.md.',
+    description:
+      'Keeps building one site in a project, run after run: a fast model plans and writes the files one by one (you check the plan), a strong model checks and polishes them, you check the site, and PROJECT.md remembers what was decided. Push to GitHub is its own workflow.',
     build: siteBuilder,
   },
   {
     id: 'site-quick',
     group: 'Website',
     name: 'Site: quick change',
-    description: 'A small change to a project: one model edits the files, you check them, then they are pushed to GitHub.',
-    build: (m) =>
-      chain(
+    description: 'A small change to a project: a fast model edits the files, a strong model checks them, you look at the result, and PROJECT.md remembers it.',
+    build: (m) => {
+      const fast = m.text[0] ?? m.judge;
+      const strong = m.judge ?? m.text[0];
+      return chain(
         node('input', 0, 160, 'What to change'),
-        node('readProject', 320, 160, 'Read project', {}),
-        node('llm', 640, 160, 'Coder', { ...(m.judge ?? m.text[0] ? { model: (m.judge ?? m.text[0])! } : {}), system: CODER_SYSTEM, prompt: QUICK_PROMPT, skillMode: 'auto', ...BIG_ANSWER }),
-        node('writeFiles', 960, 160, 'Write files', {}),
-        node('pause', 1280, 160, 'Check the changes', { title: 'Check the changes', prompt: 'Look at the changed files and the preview. Continue pushes them to GitHub.' }),
-        node('git', 1600, 160, 'Push to GitHub', { gitAction: 'commitPush', message: '{{question}}' }),
-        node('output', 1920, 160, 'Result'),
+        node('readProject', 300, 160, 'Read project', {}),
+        node('llm', 600, 160, 'Coder', { ...(fast && { model: fast }), system: CODER_SYSTEM, prompt: QUICK_PROMPT, skillMode: 'auto', ...FAST_ANSWER }),
+        node('writeFiles', 900, 160, 'Write files', {}),
+        node('readProject', 1200, 160, 'Read the site', {}),
+        node('llm', 1500, 160, 'Checker', { ...(strong && { model: strong }), system: CHECK_SYSTEM, prompt: CHECK_PROMPT, ...BIG_ANSWER }),
+        node('writeFiles', 1800, 160, 'Write fixes', { optionalWrite: true }),
+        node('pause', 2100, 160, 'Check the changes', { title: 'Check the changes', prompt: 'Look at the changed files and the preview, then press Continue.' }),
+        node('updateNotes', 2400, 160, 'Update PROJECT.md', { ...(fast && { model: fast }), think: false }),
+        node('output', 2700, 160, 'Result'),
+      );
+    },
+  },
+  {
+    id: 'site-push',
+    group: 'Website',
+    name: 'Site: push to GitHub',
+    description: 'Commits everything in the project and pushes it to its GitHub repo (connect the project first on the Projects page). The question is the commit message.',
+    build: () =>
+      chain(
+        node('input', 0, 160, 'Commit message'),
+        node('git', 320, 160, 'Commit and push', { gitAction: 'commitPush', message: '{{question}}' }),
+        node('output', 640, 160, 'Result'),
       ),
   },
   ...VOICE,
@@ -814,58 +833,65 @@ export const TEMPLATES: Template[] = [
 
 // ---- Site builder: a project that grows run after run ----
 
-/** Long answers for local models: one whole file per call. */
+/** Long answers for local models: one whole file per call (the strong model that checks). */
 const BIG_ANSWER: NodeConfig = { maxTokens: 16384, numCtx: 32768, maxSeconds: 3600 };
+/** The fast model: no thinking (small thinking models can loop), room for one whole file, a shorter time limit. */
+const FAST_ANSWER: NodeConfig = { think: false, maxTokens: 16384, numCtx: 32768, maxSeconds: 900 };
+
+/** How a request changes a site that already exists: the part every model that writes needs to know. */
+const EDIT_RULES =
+  'The site already exists: you change it, you never start over. Keep everything the request does not mention: pages, text, sections, colours, links. ' +
+  '"Make it about pandas and dogs" (when it is about pandas) means: keep all the panda content and add dogs next to it. ' +
+  '"Instead of the purple block, a blue one" or "red letters instead of green" means: change only that colour or that part, everywhere it is used, and nothing else. ' +
+  'PROJECT.md says what the site is and what was decided before; it wins over your own taste unless the request changes it.';
 
 const PLANNER_SYSTEM =
-  'You plan changes to a website project. Read PROJECT.md (the notes: style, pages, earlier decisions) and the files, then plan which files to create, change or delete for the request. ' +
-  'Follow the style and decisions in PROJECT.md. Keep the plan small: only files that really need to change. Use relative links between pages.';
+  'You plan changes to a website project. Read PROJECT.md (the notes: what the site is, its style, pages and earlier decisions) and the files, then plan which files to create, change or delete for the request. ' +
+  `${EDIT_RULES} Keep the plan small: only the files that really need to change (a colour change is often only the CSS). Use relative links between pages.`;
 
-const PLAN_SCHEMA = '{"files": [{"path": "folder/name.html", "action": "create | change | delete", "reason": "one line"}]}';
+const PLAN_SCHEMA = '{"files": [{"path": "folder/name.html", "action": "create | change | delete", "reason": "what changes in it, one line"}]}';
 
 const CODER_SYSTEM =
-  'You are a web developer working on a project of several files. Follow the style and decisions in PROJECT.md. Write complete files, never parts or "…". ' +
+  `You are a web developer working on a project of several files. ${EDIT_RULES} Write complete files, never parts or "…". ` +
   'Answer with each file in a code block whose first line names the path, like ```html path=pages/about.html — and nothing after the last block.';
 
 const CODER_PROMPT =
-  'The request: {{question}}\n\nThe file to write now (from the plan) and the project as it is:\n\n{{inputs}}\n\n' +
-  'Write the complete new content of that one file. If its action is "delete", answer with only {"delete": ["<its path>"]}.';
+  'The request: {{question}}\n\nThe file to write now (from the plan), PROJECT.md and the file as it is:\n\n{{inputs}}\n\n' +
+  'Write the complete new content of that one file: the current file with the change made. If its action is "delete", answer with only {"delete": ["<its path>"]}.';
 
-const QUICK_PROMPT = 'The request: {{question}}\n\nThe project as it is:\n\n{{inputs}}\n\nMake the change. Answer with every file you change or add, complete, each in its own ```<lang> path=<path> block.';
+const QUICK_PROMPT =
+  'The request: {{question}}\n\nThe project as it is:\n\n{{inputs}}\n\nMake the change. Answer with every file you change or add, complete, each in its own ```<lang> path=<path> block.';
 
-const REVIEW_SYSTEM_SITE =
-  'You review a website project after changes: check that links between pages point to files that exist, that every page loads its CSS and scripts, and that the HTML is complete and valid. ' +
-  'If something is broken, answer with the fixed files, complete, each in a ```<lang> path=<path> block. If everything is fine, answer only: All good.';
+const CHECK_SYSTEM =
+  'You check a website project after a fast model changed it, and you are the last step before the owner looks at it. ' +
+  '1. It works: links between pages point to files that exist, every page loads its CSS and scripts, the HTML is complete and valid. ' +
+  '2. It did what was asked, and kept everything else (PROJECT.md says what the site is and what was decided). ' +
+  '3. It looks polished: clear hierarchy, good spacing, a consistent colour palette and type scale, good contrast, hover states, and a layout that works on phones; prefer fixing the shared CSS. ' +
+  'If something needs fixing, answer with only the fixed files, complete, each in a ```<lang> path=<path> block. If everything is fine, answer only: All good.';
 
-const DESIGNER_SYSTEM =
-  'You are a senior web designer. You make websites look polished and modern: clear hierarchy, generous spacing, a consistent colour palette and type scale, good contrast, smooth hover states, and a layout that works on phones. ' +
-  'Follow the style and decisions in PROJECT.md. Keep all content, links and pages; only improve how they look. Prefer improving the shared CSS over changing every page. ' +
-  'Answer with only the files you change, each complete, in a code block whose first line names the path, like ```css path=css/site.css. If everything already looks good, answer only: Looks good.';
+const CHECK_PROMPT = 'The request was: {{question}}\n\nThe site after the change:\n\n{{inputs}}\n\nCheck it and fix what needs fixing.';
 
 function siteBuilder(m: TemplateModels): CanvasGraph {
+  // A fast model does the work (plan, files, notes); the strong one checks and polishes at the end.
+  const fast = m.text[0] ?? m.judge;
   const strong = m.judge ?? m.text[0];
-  const coderModel = m.text[0] ?? strong;
   const q = node('input', 0, 240, 'What to build or change');
   const read = node('readProject', 300, 240, 'Read project', {});
-  const plan = node('llm', 600, 240, 'Planner', { ...(strong && { model: strong }), system: PLANNER_SYSTEM, prompt: 'The request: {{question}}\n\n{{inputs}}', json: true, jsonSchema: PLAN_SCHEMA, ...BIG_ANSWER, maxTokens: 4096 });
+  const plan = node('llm', 600, 240, 'Planner', { ...(fast && { model: fast }), system: PLANNER_SYSTEM, prompt: 'The request: {{question}}\n\n{{inputs}}', json: true, jsonSchema: PLAN_SCHEMA, ...FAST_ANSWER, maxTokens: 4096 });
   const checkPlan = node('pause', 900, 240, 'Check the plan', { title: 'Check the plan', prompt: 'These files will be written. Edit the plan if you like, then press Continue.' });
   const each = node('foreach', 1200, 240, 'For each file', { maxItems: 30 });
   const readOne = node('readProject', 1500, 80, 'Read this file', { onlyNamed: true });
-  const coder = node('llm', 1800, 240, 'Coder', { ...(coderModel && { model: coderModel }), system: CODER_SYSTEM, prompt: CODER_PROMPT, skillMode: 'auto', ...BIG_ANSWER });
+  const coder = node('llm', 1800, 240, 'Coder', { ...(fast && { model: fast }), system: CODER_SYSTEM, prompt: CODER_PROMPT, skillMode: 'auto', ...FAST_ANSWER });
   const write = node('writeFiles', 2100, 240, 'Write file', {});
   const all = node('collect', 2400, 240, 'All files written');
   const readSite = node('readProject', 2700, 240, 'Read the site', {});
-  const review = node('llm', 3000, 240, 'Reviewer', { ...(strong && { model: strong }), system: REVIEW_SYSTEM_SITE, prompt: 'The request was: {{question}}\n\n{{inputs}}', ...BIG_ANSWER });
+  const check = node('llm', 3000, 240, 'Checker', { ...(strong && { model: strong }), system: CHECK_SYSTEM, prompt: CHECK_PROMPT, ...BIG_ANSWER });
   const fixes = node('writeFiles', 3300, 240, 'Write fixes', { optionalWrite: true });
-  const readLook = node('readProject', 3600, 240, 'Read pages and styles', { globs: '*.html, *.css' });
-  const designer = node('llm', 3900, 240, 'Designer', { ...(coderModel && { model: coderModel }), system: DESIGNER_SYSTEM, prompt: 'The request was: {{question}}\n\nThe site as it is now:\n\n{{inputs}}\n\nPolish the design.', skillMode: 'auto', ...BIG_ANSWER });
-  const design = node('writeFiles', 4200, 240, 'Write design', { optionalWrite: true });
-  const checkSite = node('pause', 4500, 240, 'Check the site', { title: 'Check the site', prompt: 'Look at the changed files and the preview. Continue pushes to GitHub (when the project is connected) and updates PROJECT.md.' });
-  const git = node('git', 4800, 240, 'Push to GitHub', { gitAction: 'commitPush', message: '{{question}}' });
-  const notes = node('updateNotes', 5100, 240, 'Update PROJECT.md', strong ? { model: strong } : {});
-  const out = node('output', 5400, 240, 'Result');
+  const checkSite = node('pause', 3600, 240, 'Check the site', { title: 'Check the site', prompt: 'Look at the changed files and the preview. Continue saves PROJECT.md (the memory for the next run).' });
+  const notes = node('updateNotes', 3900, 240, 'Update PROJECT.md', { ...(fast && { model: fast }), think: false });
+  const out = node('output', 4200, 240, 'Result');
   return {
-    nodes: [q, read, plan, checkPlan, each, readOne, coder, write, all, readSite, review, fixes, readLook, designer, design, checkSite, git, notes, out],
+    nodes: [q, read, plan, checkPlan, each, readOne, coder, write, all, readSite, check, fixes, checkSite, notes, out],
     edges: [
       wire(q, read),
       wire(read, plan),
@@ -878,14 +904,10 @@ function siteBuilder(m: TemplateModels): CanvasGraph {
       wire(coder, write),
       wire(write, all),
       wire(all, readSite),
-      wire(readSite, review),
-      wire(review, fixes),
-      wire(fixes, readLook),
-      wire(readLook, designer),
-      wire(designer, design),
-      wire(design, checkSite),
-      wire(checkSite, git),
-      wire(git, notes),
+      wire(readSite, check),
+      wire(check, fixes),
+      wire(fixes, checkSite),
+      wire(checkSite, notes),
       wire(all, notes),
       wire(notes, out),
     ],

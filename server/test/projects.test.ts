@@ -228,7 +228,7 @@ describe('project blocks', () => {
     const id = await site('Builder');
     const { TEMPLATES } = await import('../../web/src/canvas/templates.js');
     const t = TEMPLATES.find((x) => x.id === 'site-builder')!;
-    const graph = t.build({ text: [M, M, M], judge: M, image: [], decision: [] } as never);
+    const graph = t.build({ text: [M, M, M], judge: M });
     // Pause blocks (the template's checks) are taken out here: Pause has its own tests.
     const pauses = graph.nodes.filter((n) => n.type === 'pause').map((n) => n.id);
     for (const pid of pauses) {

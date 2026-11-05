@@ -44,6 +44,8 @@ export interface NodeConfig {
   state?: string;
   /** Decide: the typed questions. */
   questions?: DecideQuestion[];
+  /** Decide: the questions come from the text wired in (a model writes them as {"questions": [...]}), not from the block. */
+  questionsFromInput?: boolean;
   /** Decide / Auto / Jev router: how sure the model must be (default 0.6). Under it: no, the fallback, or one size up. */
   threshold?: number;
   /** LLM: "Auto (Jev router)": a decision model picks the size of model per question. */

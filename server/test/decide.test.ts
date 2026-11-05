@@ -104,3 +104,37 @@ describe('Decide block', () => {
     expect(events.find((e) => e.decision)?.decision?.image).toBe('outputs/kitchen.png');
   });
 });
+
+describe('Decide with questions written by a model (questionsFromInput)', () => {
+  const graph = (asked: string): CanvasGraph => ({
+    nodes: [
+      node('q', 'input'),
+      node('ask', 'template', { prompt: asked }),
+      node('d', 'decide', { model: jev, questionsFromInput: true, state: 'The owner asked: {{question}}' }),
+      node('o', 'output'),
+    ],
+    edges: [edge('q', 'ask'), edge('ask', 'd'), edge('d', 'o')],
+  });
+
+  it('answers the questions the model wrote and says plainly what was decided', async () => {
+    const asked = JSON.stringify({
+      questions: [
+        { name: 'which_red', type: 'choice', instructions: 'The site is dark navy. Which red fits the headings?', options: ['#b91c1c dark red', '#ef4444 bright red'] },
+        { name: 'bigger', instructions: 'Should the header be bigger?' },
+        { name: 'broken', type: 'choice', instructions: 'Only one option', options: ['x'] },
+      ],
+    });
+    const p = fakeDecider(() => ({ which_red: { type: 'choice', choice: '#b91c1c dark red', probabilities: { '#b91c1c dark red': 0.9, '#ef4444 bright red': 0.1 }, confidence: 0.9 }, bigger: { type: 'noul', p: 0.2 } }));
+    const r = await run(graph(asked), p, 'Make the headings red');
+    expect(Object.keys(p.calls[0].questions)).toEqual(['which_red', 'bigger']);
+    expect(p.calls[0].state).toBe('The owner asked: Make the headings red');
+    expect(JSON.parse(r.result.final!).decided).toEqual({ which_red: '#b91c1c dark red', bigger: 'no' });
+  });
+
+  it('passes at once without calling the model when nothing was asked', async () => {
+    const p = fakeDecider(() => ({}));
+    const r = await run(graph('{"questions": []}'), p);
+    expect(p.calls).toHaveLength(0);
+    expect(JSON.parse(r.result.final!).summary).toBe('No questions to decide');
+  });
+});

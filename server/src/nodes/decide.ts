@@ -1,6 +1,6 @@
 import type { DecideQuestion, DecisionView } from '@hivemind/shared';
 import type { DecisionAnswer, DecisionQuestionSpec, DecisionResult } from '../providers/decisions.js';
-import { answers, fill, labelled, type NodeContext, type NodeDefinition } from './index.js';
+import { answers, fill, labelled, parseJson, type NodeContext, type NodeDefinition } from './index.js';
 
 /**
  * Decide block: a decision model (Jev, OpenAI Decisions, Nimble…) answers typed questions about the text wired in.
@@ -102,42 +102,94 @@ export function branches(questions: DecideQuestion[], outgoing: { id: string; la
 /** Pictures in the text wired in: ![image](hm-file:outputs/x.png) */
 const imageLinks = (text: string) => [...text.matchAll(/hm-file:([^)\s]+\.(?:png|jpe?g|webp))/gi)].map((m) => m[1]);
 
+/**
+ * Questions an AI model wrote (questionsFromInput): {"questions": [{"name", "type", "instructions", "options" |
+ * "levels"}]} or the list itself, in the text wired in. Options may be strings or {name, description}. At most 8;
+ * broken ones are left out.
+ */
+export function questionsFromText(text: string): DecideQuestion[] {
+  let raw: unknown;
+  try {
+    raw = parseJson(text);
+  } catch {
+    return [];
+  }
+  const list = Array.isArray(raw) ? raw : raw && typeof raw === 'object' ? (raw as { questions?: unknown }).questions : undefined;
+  if (!Array.isArray(list)) return [];
+  const out: DecideQuestion[] = [];
+  for (const q of list) {
+    if (!q || typeof q !== 'object') continue;
+    const o = q as Record<string, unknown>;
+    const name = typeof o.name === 'string' ? o.name.trim() : '';
+    const instructions = typeof o.instructions === 'string' ? o.instructions.trim() : typeof o.question === 'string' ? o.question.trim() : '';
+    const type = (['noul', 'choice', 'score'] as const).find((t) => t === o.type) ?? (Array.isArray(o.options) ? 'choice' : 'noul');
+    if (!name || !instructions || out.some((x) => x.name === name)) continue;
+    const options = (Array.isArray(o.options) ? o.options : [])
+      .map((x) => (typeof x === 'string' ? { name: x } : x && typeof x === 'object' && typeof (x as { name?: unknown }).name === 'string' ? { name: (x as { name: string }).name, description: String((x as { description?: unknown }).description ?? '') } : undefined))
+      .filter((x): x is { name: string; description?: string } => !!x && !!x.name.trim());
+    const levels = (Array.isArray(o.levels) ? o.levels : []).filter((x): x is string => typeof x === 'string' && !!x.trim());
+    if (type === 'choice' && options.length < 2) continue;
+    if (type === 'score' && levels.length < 2) continue;
+    out.push({ name, type, instructions, ...(type === 'choice' && { options }), ...(type === 'score' && { levels }) });
+    if (out.length >= 8) break;
+  }
+  return out;
+}
+
 export const DECIDE_NODE: NodeDefinition = {
   usesModel: true,
   async execute(ctx: NodeContext) {
     const c = ctx.node.config;
+    if (c.questionsFromInput) {
+      // The questions come from a model before it; the rest of what is wired in is what they are about.
+      const asked = answers(ctx.inputs).flatMap((p) => questionsFromText(p.text));
+      if (!asked.length) {
+        ctx.progress('No questions to decide');
+        return JSON.stringify({ answers: {}, decided: {}, summary: 'No questions to decide' });
+      }
+      return decideOn(ctx, asked);
+    }
     const questions = (c.questions ?? []).filter((q) => q.name?.trim() && q.instructions?.trim());
     if (!questions.length) throw new Error('Add at least one question to this Decide block');
-    for (const q of questions) {
-      if (q.type === 'choice' && (q.options ?? []).filter((o) => o.name.trim()).length < 2) throw new Error(`"${q.name}" needs at least 2 options`);
-      if (q.type === 'score' && (q.levels ?? []).filter((l) => l.trim()).length < 2) throw new Error(`"${q.name}" needs at least 2 levels`);
-    }
-    const prev = answers(ctx.inputs);
-    const wired = prev.map((p) => p.text).join('\n\n');
-    let state = (c.state ? fill(c.state, ctx, labelled(prev)) : wired || ctx.question).trim();
-    // Box questions judge the picture the block before made (or found).
-    const image = questions.some((q) => q.type === 'box') ? imageLinks(wired)[0] : undefined;
-    let images: { data: Buffer; ext: string }[] | undefined;
-    if (image) {
-      if (!ctx.services.readFile) throw new Error('Reading images is not available here');
-      images = [{ data: ctx.services.readFile(image), ext: image.split('.').pop()! }];
-      state = state.replace(/!\[[^\]]*\]\(hm-file:[^)]+\)/g, '').trim() || 'An image.';
-    }
-    if (!state) throw new Error('Nothing to decide on: the state is empty');
-    const threshold = c.threshold ?? DEFAULT_THRESHOLD;
-    const specs = Object.fromEntries(questions.map((q) => [questionKey(q.name), questionSpec(q)]));
-    ctx.progress('Deciding…');
-    const result = await ctx.decide({ state: state.slice(0, 200_000), questions: specs, ...(images && { images }) });
-    const views = questions.map((q) => toView(q.name, result.answers[questionKey(q.name)] ?? { type: 'refusal' }, specs[questionKey(q.name)]));
-    const { runs, picked, route, branched } = branches(questions, ctx.outgoing, (hasFallback) => picks(questions, result, threshold, hasFallback));
-    if (branched) ctx.choose(runs);
-    const summary = summaryLine(views);
-    ctx.progress(route ? `${summary} → ${route}` : summary, { model: result.model, ms: result.ms, answers: views, threshold, ...(route && { route }), ...(image && { image }) });
-    const out: Record<string, unknown> = {};
-    for (const v of views) {
-      const { name, ...rest } = v;
-      out[name] = { ...rest, ...(picked[name] && { decision: picked[name] }) };
-    }
-    return JSON.stringify({ answers: out, ...(route && { decision: route }), summary, model: result.model, ms: result.ms });
+    return decideOn(ctx, questions);
   },
 };
+
+async function decideOn(ctx: NodeContext, questions: DecideQuestion[]): Promise<string> {
+  const c = ctx.node.config;
+  for (const q of questions) {
+    if (q.type === 'choice' && (q.options ?? []).filter((o) => o.name.trim()).length < 2) throw new Error(`"${q.name}" needs at least 2 options`);
+    if (q.type === 'score' && (q.levels ?? []).filter((l) => l.trim()).length < 2) throw new Error(`"${q.name}" needs at least 2 levels`);
+  }
+  const prev = answers(ctx.inputs);
+  const wired = prev.map((p) => p.text).join('\n\n');
+  let state = (c.state ? fill(c.state, ctx, labelled(prev)) : wired || ctx.question).trim();
+  // Box questions judge the picture the block before made (or found).
+  const image = questions.some((q) => q.type === 'box') ? imageLinks(wired)[0] : undefined;
+  let images: { data: Buffer; ext: string }[] | undefined;
+  if (image) {
+    if (!ctx.services.readFile) throw new Error('Reading images is not available here');
+    images = [{ data: ctx.services.readFile(image), ext: image.split('.').pop()! }];
+    state = state.replace(/!\[[^\]]*\]\(hm-file:[^)]+\)/g, '').trim() || 'An image.';
+  }
+  if (!state) throw new Error('Nothing to decide on: the state is empty');
+  const threshold = c.threshold ?? DEFAULT_THRESHOLD;
+  const specs = Object.fromEntries(questions.map((q) => [questionKey(q.name), questionSpec(q)]));
+  ctx.progress('Deciding…');
+  const result = await ctx.decide({ state: state.slice(0, 200_000), questions: specs, ...(images && { images }) });
+  const views = questions.map((q) => toView(q.name, result.answers[questionKey(q.name)] ?? { type: 'refusal' }, specs[questionKey(q.name)]));
+  const { runs, picked, route, branched } = branches(questions, ctx.outgoing, (hasFallback) => picks(questions, result, threshold, hasFallback));
+  if (branched) ctx.choose(runs);
+  const summary = summaryLine(views);
+  ctx.progress(route ? `${summary} → ${route}` : summary, { model: result.model, ms: result.ms, answers: views, threshold, ...(route && { route }), ...(image && { image }) });
+  const out: Record<string, unknown> = {};
+  // What was decided, plainly, for the models after it: {"which_red": "dark red"}.
+  const decided: Record<string, string> = {};
+  for (const v of views) {
+    const { name, ...rest } = v;
+    out[name] = { ...rest, ...(picked[name] && { decision: picked[name] }) };
+    const plain = picked[name] ?? v.pick;
+    if (plain) decided[name] = plain;
+  }
+  return JSON.stringify({ answers: out, decided, ...(route && { decision: route }), summary, model: result.model, ms: result.ms });
+}

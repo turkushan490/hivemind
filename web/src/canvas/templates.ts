@@ -799,10 +799,12 @@ export const TEMPLATES: Template[] = [
     build: (m) => {
       const fast = m.text[0] ?? m.judge;
       const strong = m.judge ?? m.text[0];
-      return chain(
+      const read = node('readProject', 300, 160, 'Read project', {});
+      const coder = node('llm', 600, 160, 'Coder', { ...(fast && { model: fast }), system: CODER_SYSTEM, prompt: QUICK_PROMPT, skillMode: 'auto', ...FAST_ANSWER });
+      const g = chain(
         node('input', 0, 160, 'What to change'),
-        node('readProject', 300, 160, 'Read project', {}),
-        node('llm', 600, 160, 'Coder', { ...(fast && { model: fast }), system: CODER_SYSTEM, prompt: QUICK_PROMPT, skillMode: 'auto', ...FAST_ANSWER }),
+        read,
+        coder,
         node('writeFiles', 900, 160, 'Write files', {}),
         node('readProject', 1200, 160, 'Read the site', {}),
         node('llm', 1500, 160, 'Checker', { ...(strong && { model: strong }), system: CHECK_SYSTEM, prompt: CHECK_PROMPT, ...BIG_ANSWER }),
@@ -811,6 +813,13 @@ export const TEMPLATES: Template[] = [
         node('updateNotes', 2400, 160, 'Update PROJECT.md', { ...(fast && { model: fast }), think: false }),
         node('output', 2700, 160, 'Result'),
       );
+      // With a decision model, Jev makes the small choices first.
+      if (m.decision) {
+        const d = quickDecisions(m, fast, 300, 400);
+        g.nodes.push(d.ask, d.jev);
+        g.edges.push(wire(read, d.ask), wire(d.ask, d.jev), wire(d.jev, coder));
+      }
+      return g;
     },
   },
   {
@@ -871,6 +880,24 @@ const CHECK_SYSTEM =
 
 const CHECK_PROMPT = 'The request was: {{question}}\n\nThe site after the change:\n\n{{inputs}}\n\nCheck it and fix what needs fixing.';
 
+const ASK_SYSTEM =
+  'You find the small choices a website change request leaves open, so a fast decision model can make them: the exact shade of a colour, a size, which font, where something goes, which existing page to change. ' +
+  'Read the request, PROJECT.md and the site. Write at most 5 questions, each with 2 to 5 concrete options (real values like "#b91c1c dark red" or "Georgia (serif)"), and say in the instructions what the site looks like now so the question can be answered on its own. ' +
+  'Only ask what the request really leaves open; never ask about things PROJECT.md or the request already decide. Nothing open: {"questions": []}.';
+
+const ASK_SCHEMA = '{"questions": [{"name": "which_red", "type": "choice", "instructions": "The site is dark navy with white text. Which red fits the headings best?", "options": ["#b91c1c dark red", "#ef4444 bright red", "#f87171 soft red"]}]}';
+
+/** A fast model writes the open questions, the decision model answers them in a moment; the rest of the run follows the answers. */
+function quickDecisions(m: TemplateModels, fast: ModelRef | undefined, x: number, y: number) {
+  const ask = node('llm', x, y, 'Questions for Jev', { ...(fast && { model: fast }), system: ASK_SYSTEM, prompt: 'The request: {{question}}\n\n{{inputs}}', json: true, jsonSchema: ASK_SCHEMA, ...FAST_ANSWER, maxTokens: 2048 });
+  const jev = node('decide', x + 300, y, 'Jev decides', {
+    ...(m.decision && { model: m.decision }),
+    questionsFromInput: true,
+    state: 'The owner asked for this change to their website: {{question}}',
+  });
+  return { ask, jev };
+}
+
 function siteBuilder(m: TemplateModels): CanvasGraph {
   // A fast model does the work (plan, files, notes); the strong one checks and polishes at the end.
   const fast = m.text[0] ?? m.judge;
@@ -890,10 +917,13 @@ function siteBuilder(m: TemplateModels): CanvasGraph {
   const checkSite = node('pause', 3600, 240, 'Check the site', { title: 'Check the site', prompt: 'Look at the changed files and the preview. Continue saves PROJECT.md (the memory for the next run).' });
   const notes = node('updateNotes', 3900, 240, 'Update PROJECT.md', { ...(fast && { model: fast }), think: false });
   const out = node('output', 4200, 240, 'Result');
+  // With a decision model: small open choices ("which red?") are made by Jev before planning.
+  const d = m.decision ? quickDecisions(m, fast, 300, 480) : undefined;
   return {
-    nodes: [q, read, plan, checkPlan, each, readOne, coder, write, all, readSite, check, fixes, checkSite, notes, out],
+    nodes: [q, read, ...(d ? [d.ask, d.jev] : []), plan, checkPlan, each, readOne, coder, write, all, readSite, check, fixes, checkSite, notes, out],
     edges: [
       wire(q, read),
+      ...(d ? [wire(read, d.ask), wire(d.ask, d.jev), wire(d.jev, plan), wire(d.jev, coder)] : []),
       wire(read, plan),
       wire(plan, checkPlan),
       wire(checkPlan, each),

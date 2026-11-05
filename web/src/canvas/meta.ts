@@ -362,6 +362,7 @@ export function summary(kind: NodeType, c: import('@hivemind/shared').NodeConfig
       return c.url?.trim() ? { text: (c.body ?? '{{input}}').replace(/\s+/g, ' ').slice(0, 40) } : { text: 'Paste the webhook URL →', missing: true };
     case 'decide': {
       if (!c.model) return { text: 'Pick a decision model →', missing: true };
+      if (c.questionsFromInput) return { text: `questions from the block before · ${c.model.model}` };
       const qs = c.questions ?? [];
       return qs.length ? { text: `${qs.map((q) => q.name).join(', ')} · ${c.model.model}` } : { text: 'Add a question →', missing: true };
     }

@@ -783,7 +783,16 @@ function DecideSettings(p: Props) {
         </span>
         <input type="range" className="w-full" min={0.3} max={0.95} step={0.05} value={threshold} onChange={(e) => p.onChange({ threshold: Number(e.target.value) })} />
       </label>
-      <div className="space-y-2">
+      <label className="flex items-start gap-2 text-xs text-slate-300">
+        <input type="checkbox" className="mt-0.5" checked={!!c.questionsFromInput} onChange={(e) => p.onChange({ questionsFromInput: e.target.checked || undefined })} />
+        <span>
+          <span className="font-semibold">Questions written by the block before</span>
+          <span className="block text-slate-500">
+            An AI model wires in {'{"questions": [{"name", "type": "choice", "instructions", "options": [...]}]}'}; this block answers them. No questions: it passes at once.
+          </span>
+        </span>
+      </label>
+      <div className="space-y-2" hidden={!!c.questionsFromInput}>
         <Label>Questions</Label>
         {qs.map((q, i) => (
           <div key={i} className="hm-pop space-y-1.5 rounded-lg border border-indigo-900/60 bg-indigo-950/20 p-2">

@@ -81,3 +81,17 @@ describe('project builds', () => {
     expect(error).toContain('boom');
   }, 120_000);
 });
+
+describe('Build block options for workflows that fix their own build', () => {
+  it('a failed build passes its log on, and a project without package.json passes', async () => {
+    const p = (await api('POST', '/api/projects', { name: 'Fix me' })).json() as Project;
+    const graph = chain(node('q', 'input'), node('b', 'build', { project: p.id, buildFailOk: true, buildOptional: true }), node('o', 'output'));
+    const none = await runAndWait(app, { question: 'x', graph });
+    expect(none.final).toMatch(/^BUILD SKIPPED/);
+    await put(p.id, 'package.json', JSON.stringify({ name: 'f', version: '1.0.0', private: true, scripts: { build: 'node -e "console.error(\'Cannot find module x\'); process.exit(1)"' } }));
+    const failed = await runAndWait(app, { question: 'x', graph });
+    expect(failed.status).toBe('done');
+    expect(failed.final).toMatch(/^BUILD FAILED/);
+    expect(failed.final).toContain('Cannot find module x');
+  }, 120_000);
+});

@@ -65,6 +65,20 @@ export interface EngineDeps {
    * model blocks and Routers pick models while the run goes. Left out: everything (engine tests).
    */
   access?: { model(providerId: string, model: string): boolean; lora(providerId: string, name: string): boolean };
+  /** A run that goes on after a restart: what its blocks had already done. */
+  resume?: Checkpoint;
+  /** Called after every finished block (and every For each item), to store the run's progress. */
+  save?(cp: Checkpoint): void;
+}
+
+/** A run's progress, stored as it goes, so it can go on after a restart instead of starting over. */
+export interface Checkpoint {
+  outputs: Record<string, string>;
+  failed: string[];
+  skipped: string[];
+  blocked: string[];
+  /** For each blocks part-way through their items: the results so far. */
+  loops: Record<string, { results: string[]; ok: number }>;
 }
 
 /** The message a refused model or LoRA gives (the same as at the start of a run). */
@@ -194,10 +208,18 @@ export async function runGraph(
   const skipped = new Set<string>();
   /** Wires a Router did not choose ("source->target"). */
   const blocked = new Set<string>();
+  if (deps.resume) {
+    for (const [id, text] of Object.entries(deps.resume.outputs)) if (byId.has(id)) outputs.set(id, text);
+    for (const id of deps.resume.failed) failed.add(id);
+    for (const id of deps.resume.skipped) skipped.add(id);
+    for (const key of deps.resume.blocked) blocked.add(key);
+  }
+  const loopProgress = new Map<string, { results: string[]; ok: number }>(Object.entries(deps.resume?.loops ?? {}));
   const allFiles: OutputFile[] = [];
   let cost = 0;
 
-  deps.emit({ type: 'run_start', graph, question });
+  // A run going on after a restart already has its start in the stored events.
+  if (!deps.resume) deps.emit({ type: 'run_start', graph, question });
   const allowed = (ref: ModelRef) => !deps.access || deps.access.model(ref.providerId, ref.model);
   const mayUse = (ref: ModelRef) => {
     if (!allowed(ref)) throw refused(ref.model);
@@ -560,10 +582,14 @@ export async function runGraph(
       return;
     }
     if (all.length > max) deps.emit({ ...base, type: 'node_progress', note: `${all.length} items, only the first ${max} run (maxItems)` });
-    const results: string[] = [];
-    let ok = 0;
+    // After a restart, the items that were already done are not run again.
+    const progress = loopProgress.get(node.id) ?? { results: [], ok: 0 };
+    loopProgress.set(node.id, progress);
+    const results = progress.results;
+    let ok = progress.ok;
     const feeding = parents.get(collect.id)!.filter((p) => loop.body.has(p));
-    for (let i = 0; i < items.length; i++) {
+    if (results.length) deps.emit({ ...base, type: 'node_progress', note: `Going on after a restart at item ${results.length + 1} of ${items.length}` });
+    for (let i = results.length; i < items.length; i++) {
       if (signal.aborted) break;
       deps.emit({ ...base, type: 'node_progress', note: `Item ${i + 1} of ${items.length}: ${itemLabel(items[i])}` });
       // A fresh pass: the loop's blocks forget the last item.
@@ -579,7 +605,10 @@ export async function runGraph(
       const broke = feeding.filter((p) => failed.has(p));
       if (got.length) ok++;
       results.push(`### Item ${i + 1}: ${itemLabel(items[i])}\n${got.length ? got.join('\n\n') : broke.length ? '(failed)' : '(skipped)'}`);
+      progress.ok = ok;
+      save();
     }
+    loopProgress.delete(node.id);
     outputs.set(node.id, items.join('\n'));
     deps.emit({ ...base, type: 'node_done', label: node.label || node.id, text: `${items.length} item${items.length === 1 ? '' : 's'}`, elapsedMs: Date.now() - t0 });
     // The Collect block: every item's result, in order.
@@ -600,12 +629,29 @@ export async function runGraph(
   };
 
   const loopOf = new Map(loops.map((l) => [l.foreach, l]));
+  const bodies = new Set(loops.flatMap((l) => [...l.body]));
+  /** The run's progress without the blocks inside a loop (they are per item; the loop keeps its own results). */
+  function save() {
+    if (!deps.save) return;
+    const keep = (id: string) => !bodies.has(id);
+    try {
+      deps.save({
+        outputs: Object.fromEntries([...outputs].filter(([id]) => keep(id) && !loopProgress.has(id))),
+        failed: [...failed].filter(keep),
+        skipped: [...skipped].filter(keep),
+        blocked: [...blocked].filter((k) => keep(k.split('->')[0])),
+        loops: Object.fromEntries(loopProgress),
+      });
+    } catch {}
+  }
   await schedule(
-    graph.nodes.map((n) => n.id).filter((id) => !inLoop.has(id)),
+    // Blocks a restarted run already finished are not run again.
+    graph.nodes.map((n) => n.id).filter((id) => !inLoop.has(id) && !finished(id)),
     async (n) => {
       const loop = loopOf.get(n.id);
       if (loop) await runLoop(loop);
       else await runNode(n);
+      save();
     },
   );
 

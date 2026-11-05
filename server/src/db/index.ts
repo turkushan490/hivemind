@@ -317,6 +317,10 @@ export const MIGRATIONS: string[] = [
     UNIQUE (owner_id, name)
   );
   `,
+  `
+  -- A running run's progress (how it was started, what its blocks did, its events), so it can go on after a restart.
+  ALTER TABLE runs ADD COLUMN checkpoint TEXT;
+  `,
 ];
 
 export const db = new DatabaseSync(join(config.dataDir, 'hivemind.db'));

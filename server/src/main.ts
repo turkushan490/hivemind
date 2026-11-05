@@ -7,6 +7,7 @@ import { config } from './config.js';
 import { describe, logError } from './errors.js';
 import { startScheduler } from './services/schedules.js';
 import { closeStaleRuns } from './events/runs.js';
+import { resumeStoppedRuns } from './api/runs.js';
 import { lockDataDir } from './services/build.js';
 
 // A crash is never silent: it is stored, shown in the Problems tab after the restart, then the process exits so Docker restarts it.
@@ -64,6 +65,10 @@ const app = await buildApp();
 seedProviders(config.ollamaUrl, config.comfyUrl, config.typesafeKey);
 
 await app.listen({ port: config.port, host: config.host });
+
+// Runs a restart stopped (an update, a crash) go on where they were.
+const resumed = resumeStoppedRuns();
+if (resumed) console.log(`Went on with ${resumed} run${resumed === 1 ? '' : 's'} a restart had stopped`);
 
 // Scheduled workflows: every minute, the ones that are due run like POST /api/runs, as their owner (local time, TZ).
 startScheduler(runScheduled);

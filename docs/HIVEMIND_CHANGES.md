@@ -753,6 +753,22 @@ fields: `project` (id, name or a template; empty = `vars.project`), `globs`, `bu
   no provider adapter supports tool calls yet, so the `load_skill` / `read_skill_file` tools of the spec are left
   for when one does. The Builder AI doesn't use skills yet.
 
+### Later additions
+
+- **Runs go on after a restart:** `runs.checkpoint` (migration) holds how a run was started, what its blocks did and
+  its events (without tokens), updated after every block and For each item (`EngineDeps.save` / `resume`). At
+  start-up `resumeStoppedRuns()` (`server/src/api/runs.ts`) starts them again as the same user; runs that can't go on
+  are closed (`Stopped by a restart`). Not for limited API tokens, `/v1` chats or `cancelWhenAlone` runs.
+- **Decide → `questionsFromInput`:** the questions come from the text wired in (`{"questions": [...]}`, written by a
+  model); the output adds `decided: {name: answer}`. No questions: it passes without calling the model.
+- **Web search:** source `duckduckgo` (keyless HTML results), `readPages` (0-3: the text of the first pages found,
+  public addresses only, every redirect checked) and `searchList` (search each item of a list, at most 5).
+- **Build:** `buildFailOk` (a failed build passes `BUILD FAILED` and its log on) and `buildOptional` (no
+  `package.json`: passes).
+- Templates `software-builder` (Coding), `site-push`; the site templates use a fast model to work, a strong one to
+  check, and a decision model for the small choices.
+- `unraid/update.sh` takes a lock, so two updates never recreate the container at once.
+
 ### Templates
 
 `site-builder` (Site builder (project)) and `site-quick` (Site: quick change) in the Website group. Picking one asks

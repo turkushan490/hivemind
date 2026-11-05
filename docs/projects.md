@@ -116,6 +116,34 @@ call). Writing one file per call keeps each answer short enough for them.
 
 **Site: quick change** is the small version: Read project → Coder → Write files → Pause → Git.
 
+## Software builder
+
+**Workflow → Templates → Coding → Software builder (project)** builds a program in a project the same way, with
+`PROJECT.md` as its memory: Node.js programs, command-line tools, web apps, and Windows `.exe` files (a Node.js
+program packed with `@yao-pkg/pkg` in its `build` script; the build runs inside the container, so there are no
+Python, Go or .NET compilers).
+
+1. **Read project**, and with a decision model **Jev** makes the small choices.
+2. **What to look up** → **Look it up online**: what the request needs that a model may not know (a library's API,
+   packaging, a file format) is searched on DuckDuckGo, and the first page of each search is read.
+3. **Planner** (with what was found) → **Pause: Check the plan** → **For each file:** **Coder** (with the research).
+4. **Build** (npm). With a decision model: **Did the build fail?** — when it did, the error is turned into search
+   queries, looked up online, a strong model fixes it with what was found, and it is built once more.
+5. **Checker** (the strong model) → **Pause: Check the program** → **Update PROJECT.md**.
+
+## Looking things up online
+
+The **Web search** block can search **DuckDuckGo** (free, no key, the whole web), Wikipedia, Brave, Tavily or your
+own SearXNG. Options: **read the first pages found** (their text, not only the snippets) and **look up a list** (the
+text wired in lists what to search: a JSON list, `{"research": [...]}`, or one per line; `NONE` is nothing). Pages
+in your own network are never read, also not through a redirect. A search that fails once is tried again.
+
+## Runs go on after a restart
+
+A run saves its progress after every block (and every For each item). When HiveMind restarts in the middle of a run
+(an update, a crash), the run goes on where it was: finished blocks are not run again, a For each goes on at its next
+item, and a Pause asks again. Runs of limited API tokens and `/v1` chats are not picked up again.
+
 ## Skills
 
 A skill is a folder with a `SKILL.md`, the same format as Claude skills:

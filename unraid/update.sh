@@ -5,6 +5,10 @@
 set -euo pipefail
 
 NAME="${1:-hivemind}"
+
+# One update at a time: a second one waits for the first, so the container is never recreated twice at once.
+exec 9>"/tmp/update-${NAME}.lock"
+flock 9
 IMAGE="ghcr.io/turkushan490/hivemind:latest"
 REBUILD=/usr/local/emhttp/plugins/dynamix.docker.manager/scripts/rebuild_container
 

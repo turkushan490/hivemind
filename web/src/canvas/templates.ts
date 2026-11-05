@@ -834,6 +834,14 @@ export const TEMPLATES: Template[] = [
         node('output', 640, 160, 'Result'),
       ),
   },
+  {
+    id: 'software-builder',
+    group: 'Coding',
+    name: 'Software builder (project)',
+    description:
+      'Builds a program in a project, run after run (Node.js, also as a Windows .exe): a fast model plans and writes it, looks up online what it does not know, builds it, and when the build fails looks the error up and fixes it; a strong model checks it; PROJECT.md remembers it.',
+    build: softwareBuilder,
+  },
   ...VOICE,
   ...DECISIONS,
   ...TRAIN,
@@ -942,4 +950,132 @@ function siteBuilder(m: TemplateModels): CanvasGraph {
       wire(notes, out),
     ],
   };
+}
+
+// ---- Software builder: a program in a project, with web research and a fix-on-failure pass ----
+
+const SW_EDIT_RULES =
+  'The project already exists: you change it, you never start over. Keep everything the request does not mention: files, functions, options, behaviour. ' +
+  'PROJECT.md says what the program is and what was decided before; it wins over your own taste unless the request changes it.';
+
+const SW_TOOLING =
+  'It is built with npm inside a Linux container (Node.js 24; no Python, Go, Rust or .NET compilers). ' +
+  'A Windows .exe: a Node.js program with a package.json whose "build" script runs "npx --yes @yao-pkg/pkg . --targets node22-win-x64 --output dist/<name>.exe" (list the entry file in "bin"). ' +
+  'A web app: Vite or plain HTML. A command-line tool: Node.js with a "bin" entry.';
+
+const SW_PLANNER_SYSTEM =
+  `You plan changes to a software project. Read PROJECT.md, the files and what was looked up online, then plan which files to create, change or delete for the request. ${SW_EDIT_RULES} ${SW_TOOLING} Keep the plan small.`;
+
+const SW_RESEARCH_SYSTEM =
+  'Before a software change is planned, you decide what to look up online: the parts of the request you are not sure how to do (the API of a library, packaging as an .exe, a file format, an error). ' +
+  'Write at most 4 short web search queries, one per line, nothing else. If nothing needs looking up, write only: NONE';
+
+const SW_PLAN_SCHEMA =
+  '{"files": [{"path": "src/index.js", "action": "create | change | delete", "reason": "what changes in it, one line"}]}';
+
+const SW_CODER_SYSTEM =
+  `You are a software developer working on a project of several files. ${SW_EDIT_RULES} ${SW_TOOLING} ` +
+  'Use what was found online for exact APIs and options, not your memory. Write complete files, never parts or "…". ' +
+  'Answer with each file in a code block whose first line names the path, like ```js path=src/index.js — and nothing after the last block.';
+
+const SW_CODER_PROMPT =
+  'The request: {{question}}\n\nThe file to write now (from the plan), PROJECT.md, the file as it is, and what was looked up online:\n\n{{inputs}}\n\n' +
+  'Write the complete new content of that one file. If its action is "delete", answer with only {"delete": ["<its path>"]}.';
+
+const SW_LOOKUP_SYSTEM =
+  'A build failed. Read the end of the log and write 1 to 3 short web search queries that would find the fix (the exact error message, the tool and the package names). One per line, nothing else.';
+
+const SW_FIX_SYSTEM =
+  `The build of a software project failed. You get the log, the code and what was found online about the error. Find the cause and fix it. ${SW_EDIT_RULES} ${SW_TOOLING} ` +
+  'Answer with only the fixed files, each complete, in a ```<lang> path=<path> block.';
+
+const SW_CHECK_SYSTEM =
+  'You check a software project after a fast model changed it, and you are the last step before the owner looks at it. ' +
+  '1. It works: the files fit together (imports, file names, package.json scripts and dependencies), and the build log (if any) shows no errors. ' +
+  '2. It did what was asked, and kept everything else (PROJECT.md says what the program is and what was decided). ' +
+  '3. The code is clear and handles bad input. ' +
+  'If something needs fixing, answer with only the fixed files, complete, each in a ```<lang> path=<path> block. If everything is fine, answer only: All good.';
+
+const CODE_GLOBS = '*.js, *.mjs, *.cjs, *.ts, *.tsx, *.jsx, *.json, *.md, *.html, *.css, *.py';
+
+function softwareBuilder(m: TemplateModels): CanvasGraph {
+  const fast = m.text[0] ?? m.judge;
+  const strong = m.judge ?? m.text[0];
+  const q = node('input', 0, 240, 'What to build or change');
+  const read = node('readProject', 300, 240, 'Read project', { globs: CODE_GLOBS });
+  const plan = node('llm', 600, 240, 'Planner', { ...(fast && { model: fast }), system: SW_PLANNER_SYSTEM, prompt: 'The request: {{question}}\n\n{{inputs}}', json: true, jsonSchema: SW_PLAN_SCHEMA, ...FAST_ANSWER, maxTokens: 4096 });
+  const checkPlan = node('pause', 900, 240, 'Check the plan', { title: 'Check the plan', prompt: 'These files will be written. Edit the plan if you like, then press Continue.' });
+  const toLookUp = node('llm', 300, 0, 'What to look up', { ...(fast && { model: fast }), system: SW_RESEARCH_SYSTEM, prompt: 'The request: {{question}}\n\n{{inputs}}', ...FAST_ANSWER, maxTokens: 512 });
+  const research = node('search', 600, 0, 'Look it up online', { source: 'duckduckgo', searchList: true, readPages: 1, count: 4 });
+  const each = node('foreach', 1500, 240, 'For each file', { maxItems: 30 });
+  const readOne = node('readProject', 1800, 60, 'Read this file', { onlyNamed: true });
+  const coder = node('llm', 2100, 240, 'Coder', { ...(fast && { model: fast }), system: SW_CODER_SYSTEM, prompt: SW_CODER_PROMPT, skillMode: 'auto', ...FAST_ANSWER });
+  const write = node('writeFiles', 2400, 240, 'Write file', {});
+  const all = node('collect', 2700, 240, 'All files written');
+  const build = node('build', 3000, 240, 'Build', { buildFailOk: true, buildOptional: true });
+  const readCode = node('readProject', 4800, 240, 'Read the code', { globs: CODE_GLOBS });
+  const check = node('llm', 5100, 240, 'Checker', { ...(strong && { model: strong }), system: SW_CHECK_SYSTEM, prompt: 'The request was: {{question}}\n\n{{inputs}}', ...BIG_ANSWER });
+  const fixes = node('writeFiles', 5400, 240, 'Write fixes', { optionalWrite: true });
+  const checkDone = node('pause', 5700, 240, 'Check the program', { title: 'Check the program', prompt: 'Look at the changed files (and the build in dist/). Continue saves PROJECT.md (the memory for the next run).' });
+  const notes = node('updateNotes', 6000, 240, 'Update PROJECT.md', { ...(fast && { model: fast }), think: false });
+  const out = node('output', 6300, 240, 'Result');
+  const d = m.decision ? quickDecisions(m, fast, 300, 480) : undefined;
+  const nodes = [q, read, ...(d ? [d.ask, d.jev] : []), toLookUp, research, plan, checkPlan, each, readOne, coder, write, all, build, readCode, check, fixes, checkDone, notes, out];
+  const edges = [
+    wire(q, read),
+    ...(d ? [wire(read, d.ask), wire(d.ask, d.jev), wire(d.jev, plan), wire(d.jev, coder)] : []),
+    wire(read, toLookUp),
+    wire(toLookUp, research),
+    wire(research, plan),
+    wire(read, plan),
+    wire(plan, checkPlan),
+    wire(checkPlan, each),
+    wire(each, readOne),
+    wire(each, coder),
+    wire(readOne, coder),
+    wire(research, coder),
+    wire(each, write),
+    wire(coder, write),
+    wire(write, all),
+    wire(all, build),
+    wire(readCode, check),
+    wire(build, check),
+    wire(check, fixes),
+    wire(fixes, checkDone),
+    wire(checkDone, notes),
+    wire(all, notes),
+    wire(notes, out),
+  ];
+  if (m.decision) {
+    // The build failed? Jev says so; then the error is looked up online, fixed and built once more.
+    const failed = node('decide', 3300, 240, 'Did the build fail?', {
+      model: m.decision,
+      questions: [{ name: 'failed', type: 'noul', instructions: 'Did the build fail? It failed when the text says BUILD FAILED or shows errors; "Build OK" or "BUILD SKIPPED" is not a failure.' }],
+    });
+    const lookup = node('llm', 3600, 60, 'failed: yes', { ...(fast && { model: fast }), system: SW_LOOKUP_SYSTEM, prompt: '{{inputs}}', ...FAST_ANSWER, maxTokens: 512 });
+    const errSearch = node('search', 3900, 60, 'Look up the error', { source: 'duckduckgo', searchList: true, readPages: 1, count: 4 });
+    const readForFix = node('readProject', 3900, 420, 'Read the code to fix', { globs: CODE_GLOBS });
+    const fixer = node('llm', 4200, 240, 'Fixer', { ...(strong && { model: strong }), system: SW_FIX_SYSTEM, prompt: 'The request was: {{question}}\n\n{{inputs}}', ...BIG_ANSWER });
+    const writeFix = node('writeFiles', 4500, 240, 'Write the fix', { optionalWrite: true });
+    const rebuild = node('build', 4500, 420, 'Build again', { buildFailOk: true, buildOptional: true });
+    nodes.push(failed, lookup, errSearch, readForFix, fixer, writeFix, rebuild);
+    edges.push(
+      wire(build, failed),
+      wire(failed, lookup),
+      wire(build, lookup),
+      wire(lookup, errSearch),
+      wire(lookup, readForFix),
+      wire(errSearch, fixer),
+      wire(readForFix, fixer),
+      wire(build, fixer),
+      wire(fixer, writeFix),
+      wire(writeFix, rebuild),
+      wire(failed, readCode),
+      wire(rebuild, readCode),
+      wire(rebuild, check),
+    );
+  } else {
+    edges.push(wire(build, readCode));
+  }
+  return { nodes, edges };
 }

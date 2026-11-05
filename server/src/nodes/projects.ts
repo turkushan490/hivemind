@@ -297,6 +297,11 @@ const BUILD: NodeDefinition = {
   async execute(ctx) {
     const svc = needProjects(ctx);
     const p = projectOf(ctx);
+    const c = ctx.node.config;
+    if (c.buildOptional && !svc.tree(p.id).some((f) => f.path === 'package.json')) {
+      ctx.progress('No package.json: nothing to build');
+      return 'BUILD SKIPPED: this project has no package.json, so there is nothing to build.';
+    }
     ctx.progress(`Building ${p.name}…`);
     let last = 0;
     const r = await svc.build(p.id, {
@@ -312,6 +317,10 @@ const BUILD: NodeDefinition = {
       },
     });
     const tail = r.log.split('\n').slice(-40).join('\n');
+    if (!r.ok && c.buildFailOk) {
+      ctx.progress('The build failed: passing the error on');
+      return `BUILD FAILED after ${Math.round(r.ms / 1000)} s. The end of the log:\n\n${tail}`;
+    }
     if (!r.ok) throw err(`Build failed:\n${tail}`);
     ctx.progress(`Built in ${Math.round(r.ms / 1000)} s → ${r.outDir}/`);
     return `Build OK in ${Math.round(r.ms / 1000)} s. Output: ${r.outDir}/\nPreview: ${svc.previewUrl(p.id, `${r.outDir}/index.html`)}\n\n${tail}`;
@@ -375,7 +384,10 @@ const PAUSE: NodeDefinition = {
 export function listItems(text: string): string[] {
   try {
     const j = parseJson(text) as unknown;
-    const arr = Array.isArray(j) ? j : j && typeof j === 'object' ? Object.values(j as Record<string, unknown>).find(Array.isArray) : undefined;
+    // A plan with more lists ("files" and "research"): the files (or items) are what it goes through.
+    const obj = j && typeof j === 'object' && !Array.isArray(j) ? (j as Record<string, unknown>) : undefined;
+    const named = obj ? ['files', 'items', 'steps', 'list'].map((k) => obj[k]).find(Array.isArray) : undefined;
+    const arr = Array.isArray(j) ? j : (named ?? (obj ? Object.values(obj).find(Array.isArray) : undefined));
     if (Array.isArray(arr)) return arr.map((x) => (typeof x === 'string' ? x : JSON.stringify(x)));
   } catch {}
   return text

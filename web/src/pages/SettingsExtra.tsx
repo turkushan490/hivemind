@@ -43,6 +43,7 @@ export function BuilderSettings({ active, onWizard }: { active: boolean; onWizar
 
 const SOURCE_INFO: Record<SearchSource, string> = {
   wikipedia: 'Free, no key. Great for facts; not for news or shopping.',
+  duckduckgo: 'Free, no key: the whole web (docs, Stack Overflow, GitHub). Good for code and how-tos; may refuse when asked very often.',
   brave: 'Real web search. Free plan with a key from brave.com/search/api.',
   tavily: 'Search made for AI. Free monthly credits with a key from tavily.com.',
   searxng: 'Your own self-hosted meta search (e.g. a SearXNG container on Unraid). JSON output must be enabled.',

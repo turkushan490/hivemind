@@ -199,7 +199,7 @@ function KindSettings(p: Props) {
               <option value="">Default (Settings → Web search)</option>
               {SEARCH_SOURCES.map((s) => (
                 <option key={s} value={s}>
-                  {s === 'wikipedia' ? 'Wikipedia (free)' : s === 'searxng' ? 'SearXNG (self-hosted)' : `${s[0].toUpperCase()}${s.slice(1)} (API key)`}
+                  {s === 'wikipedia' ? 'Wikipedia (free)' : s === 'duckduckgo' ? 'DuckDuckGo (free, whole web)' : s === 'searxng' ? 'SearXNG (self-hosted)' : `${s[0].toUpperCase()}${s.slice(1)} (API key)`}
                 </option>
               ))}
             </select>
@@ -207,6 +207,17 @@ function KindSettings(p: Props) {
           <label className="block space-y-1">
             <span className="text-xs text-slate-400">Results: {p.config.count ?? 5}</span>
             <input type="range" className="w-full" min={1} max={10} value={p.config.count ?? 5} onChange={(e) => p.onChange({ count: Number(e.target.value) })} />
+          </label>
+          <label className="block space-y-1">
+            <span className="text-xs text-slate-400">Also read the first {p.config.readPages ?? 0} page{(p.config.readPages ?? 0) === 1 ? '' : 's'} found (real docs and examples, not only snippets)</span>
+            <input type="range" className="w-full" min={0} max={3} value={p.config.readPages ?? 0} onChange={(e) => p.onChange({ readPages: Number(e.target.value) || undefined })} />
+          </label>
+          <label className="flex items-start gap-2 text-xs text-slate-300">
+            <input type="checkbox" className="mt-0.5" checked={!!p.config.searchList} onChange={(e) => p.onChange({ searchList: e.target.checked || undefined })} />
+            <span>
+              <span className="font-semibold">Look up a list</span>
+              <span className="block text-slate-500">The text wired in lists what to look up (a plan's {'"research": [...]'}, or one per line): each is searched, at most 5.</span>
+            </span>
           </label>
           <p className="text-xs text-slate-500">Searches for the question, or for the text of the block wired before it (e.g. a model that turns the question into search words).</p>
         </div>

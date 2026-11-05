@@ -66,6 +66,10 @@ export interface NodeConfig {
   /** Web search: where to search, and how many results. Generate examples / Evaluate: how many examples. */
   source?: SearchSource;
   count?: number;
+  /** Web search: also read the first N pages found (0-3), not only their snippets. */
+  readPages?: number;
+  /** Web search: the text wired in is a list of things to look up (JSON {"research": [...]} or one per line): each is searched. */
+  searchList?: boolean;
   /** Generate examples, Add to dataset, Train, Evaluate: the dataset's name (made when it doesn't exist yet). */
   dataset?: string;
   /** Add to dataset: new examples wait in the review queue instead of being trained on right away. */
@@ -148,6 +152,10 @@ export interface NodeConfig {
   /** Build: the npm script to run (default "build") and the folder it writes (default dist, else build). */
   script?: string;
   outDir?: string;
+  /** Build: a failed build passes "BUILD FAILED" and its log on (so blocks after it can look the error up and fix it). */
+  buildFailOk?: boolean;
+  /** Build: a project without package.json passes ("nothing to build") instead of failing. */
+  buildOptional?: boolean;
   /** Pause: the title and message shown while it waits (templates), and what happens when nobody answers in time. */
   title?: string;
   timeoutMinutes?: number;
@@ -195,7 +203,7 @@ export interface OutputFile {
   kind: 'image' | 'text' | 'html' | 'pdf' | 'other';
 }
 
-export const SEARCH_SOURCES = ['wikipedia', 'brave', 'tavily', 'searxng'] as const;
+export const SEARCH_SOURCES = ['wikipedia', 'duckduckgo', 'brave', 'tavily', 'searxng'] as const;
 export type SearchSource = (typeof SEARCH_SOURCES)[number];
 
 /** Web search settings (GET/PUT /api/settings/search); keys are never sent back, only whether they exist. */

@@ -17,6 +17,8 @@ export interface NodeInput {
 /** Things outside the graph a block may use. Missing services make those blocks fail with a clear message. */
 export interface NodeServices {
   search?(query: string, opts: { source?: SearchSource; count?: number }): Promise<{ title: string; url: string; text: string }[]>;
+  /** The readable text of a public web page (Web search → read the pages found). */
+  readPage?(url: string, maxChars?: number): Promise<string>;
   memory?: {
     recall(key: string, limit: number): { text: string; at: string }[];
     save(key: string, text: string): void;
@@ -172,6 +174,25 @@ export async function jsonCall(ctx: NodeContext, messages: ChatMessage[], model?
       throw new Error('Invalid JSON after repair');
     }
   }
+}
+
+/**
+ * The things to look up in a text: a JSON list, or {"research" | "queries" | "search" | "lookup": [...]} (a plan),
+ * else one per line. Empty lines and bullets are left out.
+ */
+export function researchList(text: string): string[] {
+  try {
+    const j = parseJson(text) as unknown;
+    const list = Array.isArray(j) ? j : j && typeof j === 'object' ? ['research', 'queries', 'search', 'lookup'].map((k) => (j as Record<string, unknown>)[k]).find(Array.isArray) : undefined;
+    if (Array.isArray(list)) return list.map((x) => (typeof x === 'string' ? x : typeof x === 'object' && x ? String((x as { query?: unknown }).query ?? JSON.stringify(x)) : String(x))).map((x) => x.trim().slice(0, 300)).filter(Boolean);
+    if (j && typeof j === 'object') return [];
+  } catch {}
+  return text
+    .split('\n')
+    .map((l) => l.replace(/^\s*(?:[-*•]|\d+[.)])\s+/, '').trim())
+    // "NONE": a model that found nothing to look up.
+    .filter((l) => l && !/^(none|nothing|n\/a|-+)\.?$/i.test(l))
+    .map((l) => l.slice(0, 300));
 }
 
 /** Calls the block's model, in JSON mode when the block asks for it. */
@@ -568,13 +589,41 @@ export const NODES: Record<NodeType, NodeDefinition> = {
       if (!ctx.services.search) throw new Error('Web search is not available here');
       // Search for what an earlier block wrote (e.g. a model turning the question into search words), else the question.
       const prev = answers(ctx.inputs);
-      const query = (prev.length ? prev[prev.length - 1].text : ctx.question).slice(0, 300);
-      const source = ctx.node.config.source;
-      ctx.progress(`Searching${source ? ` ${source}` : ''}: ${query.slice(0, 60)}`);
-      const results = await ctx.services.search(query, { source, count: ctx.node.config.count ?? 5 });
-      if (results.length === 0) return `No search results for: ${query}`;
-      ctx.progress(`${results.length} results`);
-      return results.map((r, i) => `${i + 1}. ${r.title}\n${r.text}\n${r.url}`).join('\n\n');
+      const last = prev.length ? prev[prev.length - 1].text : ctx.question;
+      const c = ctx.node.config;
+      // A list of things to look up (a plan's "research"): each one is searched, at most 5.
+      const queries = c.searchList ? researchList(last).slice(0, 5) : [last.slice(0, 300)];
+      if (!queries.length) {
+        ctx.progress('Nothing to look up');
+        return 'Nothing needed to be looked up.';
+      }
+      const parts: string[] = [];
+      for (const query of queries) {
+        ctx.progress(`Searching${c.source ? ` ${c.source}` : ''}: ${query.slice(0, 60)}`);
+        // One more try after a moment: a search site that drops one request ("fetch failed") shouldn't stop the run.
+        const results = await ctx.services.search(query, { source: c.source, count: c.count ?? 5 }).catch(async (err: Error) => {
+          await new Promise((r) => setTimeout(r, 1500));
+          if (ctx.signal?.aborted) throw err;
+          return ctx.services.search!(query, { source: c.source, count: c.count ?? 5 });
+        });
+        if (!results.length) {
+          parts.push(`## ${query}\nNo search results.`);
+          continue;
+        }
+        let text = results.map((r, i) => `${i + 1}. ${r.title}\n${r.text}\n${r.url}`).join('\n\n');
+        // The first pages themselves, for real documentation and examples instead of snippets only.
+        const read = Math.max(0, Math.min(3, c.readPages ?? 0));
+        if (read && ctx.services.readPage) {
+          for (const r of results.slice(0, read)) {
+            ctx.progress(`Reading ${r.url.replace(/^https?:\/\//, '').slice(0, 60)}`);
+            const page = await ctx.services.readPage(r.url).catch((err: Error) => `(could not read it: ${err.message})`);
+            text += `\n\n### Page: ${r.title}\n${r.url}\n${page}`;
+          }
+        }
+        parts.push(queries.length > 1 ? `## ${query}\n${text}` : text);
+      }
+      ctx.progress(`Looked up ${queries.length} thing${queries.length === 1 ? '' : 's'}`);
+      return parts.join('\n\n');
     },
   },
 

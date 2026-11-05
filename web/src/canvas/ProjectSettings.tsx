@@ -140,6 +140,14 @@ export function ProjectBlockSettings(p: Props) {
             <Label>Output folder</Label>
             <input className="input font-mono text-xs" placeholder="dist (else build or out)" value={c.outDir ?? ''} onChange={(e) => p.onChange({ outDir: e.target.value || undefined })} />
           </label>
+          <label className="flex items-center gap-2 text-xs text-slate-300">
+            <input type="checkbox" checked={!!c.buildFailOk} onChange={(e) => p.onChange({ buildFailOk: e.target.checked || undefined })} />
+            A failed build passes its error on (to look it up and fix it)
+          </label>
+          <label className="flex items-center gap-2 text-xs text-slate-300">
+            <input type="checkbox" checked={!!c.buildOptional} onChange={(e) => p.onChange({ buildOptional: e.target.checked || undefined })} />
+            No package.json is fine (nothing to build)
+          </label>
           <p className="text-xs text-slate-500">Runs inside HiveMind on a copy of the project, with no access to HiveMind's keys, for at most 10 minutes.</p>
         </>
       )}

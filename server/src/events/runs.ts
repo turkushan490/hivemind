@@ -1,14 +1,14 @@
 import type { ActiveBlock, ActiveRun, CanvasGraph, PauseAction, PauseInfo, ResumeRequest, RunEvent, RunStatus } from '@hivemind/shared';
 import { newId } from '../crypto.js';
 import { db } from '../db/index.js';
-import { cancelText, hostHolder, runGraph, type EngineDeps } from '../engine/run.js';
+import { cancelText, hostHolder, runGraph, type Checkpoint, type EngineDeps } from '../engine/run.js';
 import { runLimits } from '../services/runLimits.js';
 import type { ChatContext, NodeServices } from '../nodes/index.js';
 import { logError } from '../errors.js';
 import { memoryFor } from '../services/memory.js';
 import type { User } from '../api/auth.js';
 import { scopedMemory } from '../api/scope.js';
-import { webSearch } from '../services/search.js';
+import { readPage, webSearch } from '../services/search.js';
 import { kindOf, readOwnFile, writeUnique } from '../services/files.js';
 import { allowedFor, checkGraph, type Access } from '../services/access.js';
 import { homeAssistantConnection } from '../services/homeassistant.js';
@@ -16,6 +16,24 @@ import { projectServicesFor } from '../services/projectRun.js';
 import { skillsForRun } from '../services/skills.js';
 
 type Listener = (ev: RunEvent) => void;
+
+/** How a run that may go on after a restart was started. */
+export interface ResumeMeta {
+  userId: string;
+  providerUserId: string;
+  graph: CanvasGraph;
+  canvasId?: string;
+  question: string;
+  vars: Record<string, string>;
+  source: string;
+}
+
+/** runs.checkpoint: how it was started, how far it got, and its events so far. */
+export interface StoredCheckpoint {
+  meta: ResumeMeta;
+  state: Checkpoint;
+  events: RunEvent[];
+}
 
 /** A block of a live run that waits for or uses a model (Activity page, Unload). */
 interface LiveBlock {
@@ -87,12 +105,19 @@ export function startRun(opts: {
    * canvas runs with its owner's providers. Checked here before the run starts (403), and on every model call.
    */
   access?: Access;
+  /**
+   * This run may go on after a restart (runs of a saved or sent workflow, not /v1 chats): who runs it and whose AI
+   * providers it uses, so it can be started again the same way.
+   */
+  resumable?: { userId: string; providerUserId: string };
+  /** Go on with a run that a restart stopped: its id, what its blocks had done, and its events so far. */
+  resume?: { runId: string; checkpoint: Checkpoint; events: RunEvent[]; startedAt: number };
 }): string {
   const access = opts.access ?? (opts.user ? allowedFor(opts.user) : undefined);
   if (access) checkGraph(opts.graph, access);
   // Files: what the run saves belongs to whoever runs it; it reads only their files (an admin's: all).
   const fileUser = opts.user ?? { id: opts.ownerId, role: 'user' as const };
-  const id = newId();
+  const id = opts.resume?.runId ?? newId();
   const source = opts.source ?? 'Screen';
   const canvasName = opts.canvasId
     ? (db.prepare('SELECT name FROM canvases WHERE id = ?').get(opts.canvasId) as { name: string } | undefined)?.name
@@ -105,9 +130,9 @@ export function startRun(opts: {
     canvasId: opts.canvasId,
     canvasName,
     source,
-    startedAt: Date.now(),
+    startedAt: opts.resume?.startedAt ?? Date.now(),
     question: opts.question,
-    events: [],
+    events: opts.resume?.events ?? [],
     listeners: new Set(),
     abort: new AbortController(),
     finished: false,
@@ -118,14 +143,29 @@ export function startRun(opts: {
     ...(opts.cancelWhenAlone && { alone: { followers: 0 } }),
   };
   live.set(id, run);
-  db.prepare("INSERT INTO runs (id, owner_id, canvas_id, question, status, vars, source) VALUES (?, ?, ?, ?, 'running', ?, ?)").run(
-    id,
-    opts.ownerId,
-    opts.canvasId ?? null,
-    opts.question,
-    opts.vars && Object.keys(opts.vars).length ? JSON.stringify(opts.vars) : null,
-    source,
-  );
+  // What it takes to start this run again after a restart; its progress is added as blocks finish.
+  const meta: ResumeMeta | undefined = opts.resumable && !opts.cancelWhenAlone && !opts.chat
+    ? { ...opts.resumable, graph: opts.graph, canvasId: opts.canvasId, question: opts.question, vars: opts.vars ?? {}, source }
+    : undefined;
+  if (opts.resume) {
+    db.prepare("UPDATE runs SET status = 'running' WHERE id = ?").run(id);
+  } else {
+    db.prepare("INSERT INTO runs (id, owner_id, canvas_id, question, status, vars, source) VALUES (?, ?, ?, ?, 'running', ?, ?)").run(
+      id,
+      opts.ownerId,
+      opts.canvasId ?? null,
+      opts.question,
+      opts.vars && Object.keys(opts.vars).length ? JSON.stringify(opts.vars) : null,
+      source,
+    );
+  }
+  const saveCheckpoint = (cp: Checkpoint) => {
+    if (!meta || run.finished) return;
+    // Live tokens and thinking are left out: the finished blocks' own events carry their text.
+    const events = run.events.filter((e) => e.type !== 'token' && e.type !== 'thinking');
+    db.prepare('UPDATE runs SET checkpoint = ? WHERE id = ?').run(JSON.stringify({ meta, state: cp, events } satisfies StoredCheckpoint), id);
+  };
+  if (meta && !opts.resume) saveCheckpoint({ outputs: {}, failed: [], skipped: [], blocked: [], loops: {} });
   // The client may never connect at all: the clock runs from the start.
   if (run.alone) watchAlone(run);
 
@@ -214,6 +254,8 @@ export function startRun(opts: {
       resolve: opts.resolve,
       emit,
       limits: runLimits(),
+      ...(opts.resume && { resume: opts.resume.checkpoint }),
+      save: saveCheckpoint,
       lockLabel: source.includes(': ') ? source.slice(source.indexOf(': ') + 2) : (canvasName ?? source),
       access,
       // Stats: every model call and every Judge/Vote pick, kept even when the run is deleted from History.
@@ -229,6 +271,7 @@ export function startRun(opts: {
       },
       services: {
         search: webSearch,
+        readPage,
         memory: opts.user ? scopedMemory(memoryFor(opts.ownerId), opts.user) : memoryFor(opts.ownerId),
         saveFile: (path, data) => {
           const saved = writeUnique(path, data, opts.ownerId);
@@ -263,7 +306,7 @@ function finish(run: LiveRun, status: RunStatus, final?: string, cost?: number) 
   run.pauses.clear();
   run.blocks.clear();
   if (run.alone?.timer) clearTimeout(run.alone.timer);
-  db.prepare("UPDATE runs SET status = ?, final = ?, cost = ?, finished_at = datetime('now'), events = ? WHERE id = ?").run(
+  db.prepare("UPDATE runs SET status = ?, final = ?, cost = ?, finished_at = datetime('now'), events = ?, checkpoint = NULL WHERE id = ?").run(
     status,
     final ?? null,
     cost ?? null,
@@ -483,7 +526,7 @@ export function activeRuns(user: Pick<User, 'id' | 'role' | 'scope'>): ActiveRun
  * finish. They become errors, with the reason stored in their events.
  */
 export function closeStaleRuns(): number {
-  const rows = db.prepare("SELECT id, events FROM runs WHERE status IN ('running', 'paused')").all() as { id: string; events: string | null }[];
+  const rows = db.prepare("SELECT id, events FROM runs WHERE status IN ('running', 'paused') AND checkpoint IS NULL").all() as { id: string; events: string | null }[];
   const now = Date.now();
   for (const r of rows) {
     let events: RunEvent[] = [];
@@ -495,4 +538,37 @@ export function closeStaleRuns(): number {
     db.prepare("UPDATE runs SET status = 'error', finished_at = datetime('now'), events = ? WHERE id = ?").run(JSON.stringify(events), r.id);
   }
   return rows.length;
+}
+
+/** Runs a restart stopped that can go on (their checkpoint), oldest first. */
+export function stoppedRuns(): { id: string; ownerId: string; startedAt: string; cp: StoredCheckpoint }[] {
+  const rows = db.prepare("SELECT id, owner_id, started_at, checkpoint FROM runs WHERE status IN ('running', 'paused') AND checkpoint IS NOT NULL ORDER BY started_at").all() as {
+    id: string;
+    owner_id: string;
+    started_at: string;
+    checkpoint: string;
+  }[];
+  const out: { id: string; ownerId: string; startedAt: string; cp: StoredCheckpoint }[] = [];
+  for (const r of rows) {
+    try {
+      out.push({ id: r.id, ownerId: r.owner_id, startedAt: r.started_at, cp: JSON.parse(r.checkpoint) as StoredCheckpoint });
+    } catch {
+      giveUp(r.id, 'Stopped by a restart');
+    }
+  }
+  return out;
+}
+
+/** Closes a stopped run that can't go on, the way closeStaleRuns does. */
+export function giveUp(runId: string, why: string) {
+  const row = db.prepare('SELECT events, checkpoint FROM runs WHERE id = ?').get(runId) as { events: string | null; checkpoint: string | null } | undefined;
+  if (!row) return;
+  let events: RunEvent[] = [];
+  try {
+    events = (JSON.parse(row.checkpoint ?? 'null') as StoredCheckpoint | null)?.events ?? (JSON.parse(row.events ?? '[]') as RunEvent[]);
+  } catch {}
+  const now = Date.now();
+  events.push({ type: 'error', runId, seq: events.length, ts: now, error: why } as RunEvent);
+  events.push({ type: 'run_done', runId, seq: events.length, ts: now, status: 'error' } as RunEvent);
+  db.prepare("UPDATE runs SET status = 'error', finished_at = datetime('now'), events = ?, checkpoint = NULL WHERE id = ?").run(JSON.stringify(events), runId);
 }

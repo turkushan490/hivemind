@@ -4,7 +4,7 @@ import { newId } from '../crypto.js';
 import { db } from '../db/index.js';
 import { validateGraph } from '../engine/graph.js';
 import { checkVars } from '../engine/vars.js';
-import { cancelRun, isFullAdmin, resumeRun, startRun, subscribe } from '../events/runs.js';
+import { cancelRun, giveUp, isFullAdmin, resumeRun, startRun, stoppedRuns, subscribe } from '../events/runs.js';
 import { noteRun } from '../services/activity.js';
 import { nodeOutputs, publicEvents } from '../services/runOutputs.js';
 import { requireUser, type User } from './auth.js';
@@ -127,7 +127,46 @@ export function startCanvasRun(user: User, body: RunRequest, opts: { scheduled?:
     training: trainingFor(user, opts),
     source: opts.source ?? (opts.scheduled ? 'Schedule' : sourceOf(user)),
     cancelWhenAlone: body.cancelWhenAlone === true,
+    // Runs of a limited API token are not picked up again (its scope isn't stored).
+    ...(!user.scope && { resumable: { userId: user.id, providerUserId: providerUser.id } }),
   });
+}
+
+/**
+ * At start-up: runs a restart stopped go on where they were, as the same user with the same AI providers. Blocks
+ * that had finished are not run again; a For each goes on at its next item; a Pause asks again.
+ */
+export function resumeStoppedRuns(): number {
+  let n = 0;
+  for (const r of stoppedRuns()) {
+    const { meta, state, events } = r.cp;
+    const user = userById(meta.userId);
+    const providerUser = userById(meta.providerUserId) ?? user;
+    if (!user || !providerUser) {
+      giveUp(r.id, 'Stopped by a restart');
+      continue;
+    }
+    try {
+      startRun({
+        ownerId: user.id,
+        user,
+        canvasId: meta.canvasId,
+        graph: meta.graph,
+        question: meta.question,
+        vars: meta.vars,
+        resolve: resolverFor(providerUser),
+        freeGpu: gpuFreerFor(providerUser),
+        training: trainingFor(user),
+        source: meta.source,
+        resumable: { userId: meta.userId, providerUserId: meta.providerUserId },
+        resume: { runId: r.id, checkpoint: state, events, startedAt: Date.parse(`${r.startedAt.replace(' ', 'T')}Z`) || Date.now() },
+      });
+      n++;
+    } catch (err) {
+      giveUp(r.id, `Stopped by a restart, and could not go on: ${(err as Error).message}`);
+    }
+  }
+  return n;
 }
 
 /** Where a request came from: the screen (session cookie) or an API token, by its name. */

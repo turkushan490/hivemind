@@ -41,14 +41,20 @@ const beat = () => {
   } catch {}
 };
 beat();
-setInterval(beat, 30_000).unref();
+const beating = setInterval(beat, 30_000);
+beating.unref();
 
 // Clean stop (docker stop, Unraid update, Ctrl+C): finish quickly and leave no crash marker.
 // Node as container PID 1 ignores SIGTERM unless handled, which would make Docker wait 10 s and kill it.
 const stop = async () => {
+  // No heartbeat may write the marker again while closing, or a clean stop would show as a crash.
+  clearInterval(beating);
   try {
     rmSync(marker, { force: true });
   } catch {}
+  // Open live streams (a browser following a run) keep the server from closing: never wait past Docker's limit.
+  // Running runs stop here and go on after the restart (their progress is stored after every block).
+  setTimeout(() => process.exit(0), 5000).unref();
   await app.close().catch(() => {});
   process.exit(0);
 };

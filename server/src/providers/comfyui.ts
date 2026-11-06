@@ -68,6 +68,13 @@ export function comfyAdapter(cfg: ProviderConfig): ProviderAdapter & { loras(): 
       throw new ProviderError('This is an image model: use it in an Image block');
     },
 
+    async vramFree() {
+      const res = await fetch(`${base}/system_stats`, { signal: AbortSignal.timeout(10_000) });
+      if (!res.ok) return undefined;
+      const data = (await res.json()) as { devices?: { vram_free?: number }[] };
+      return data.devices?.[0]?.vram_free;
+    },
+
     async freeMemory() {
       await fetch(`${base}/free`, { signal: AbortSignal.timeout(20_000), method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ unload_models: true, free_memory: true }) });
     },

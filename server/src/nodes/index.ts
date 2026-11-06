@@ -6,6 +6,14 @@ import { ACTION_NODES } from './actions.js';
 import { TRAINING_NODES } from './training.js';
 import { PROJECT_NODES, type PauseServices, type ProjectServices } from './projects.js';
 
+/** What a model about to load needs, so other AI servers on the GPU only give memory back when it doesn't fit. */
+export interface GpuNeed {
+  /** The model: when it is already loaded, nothing needs freeing. */
+  model?: string;
+  /** Its size on disk; it needs about that much GPU memory, plus room for its context. */
+  bytes?: number;
+}
+
 /** Output of an upstream node, as seen by the node that runs next. */
 export interface NodeInput {
   nodeId: string;
@@ -28,7 +36,7 @@ export interface NodeServices {
   /** Writes into the files folder without overwriting; returns the path used. */
   saveFile?(path: string, data: Buffer | string): OutputFile;
   /** Unloads idle models of the local AI servers on this GPU host (before an image model needs the memory). */
-  freeGpu?(hostKey: string, exceptProviderId?: string): Promise<void>;
+  freeGpu?(hostKey: string, exceptProviderId?: string, need?: GpuNeed): Promise<void>;
   /** Home Assistant address and token (Settings → Home Assistant), or undefined when not set up. */
   homeAssistant?(): { url: string; token: string } | undefined;
   /** Training blocks: datasets, training jobs and deploying models, for the user who runs the canvas (not viewers). */

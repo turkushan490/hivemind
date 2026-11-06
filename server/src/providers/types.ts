@@ -52,6 +52,8 @@ export interface ProviderAdapter {
   remove?(model: string): Promise<void>;
   /** Local only: give the GPU memory back (unload everything this server holds). */
   freeMemory?(): Promise<void>;
+  /** Local only: how much GPU memory is free right now (bytes), when the server can tell (ComfyUI). */
+  vramFree?(): Promise<number | undefined>;
   /** Decision models (TypeSafe Jev, OpenAI Decisions, Ollama decision models). */
   decide?(req: import('./decisions.js').DecisionRequest, signal?: AbortSignal): Promise<import('./decisions.js').DecisionResult>;
   /** Image models (ComfyUI, OpenAI-compatible image APIs). */

@@ -95,7 +95,7 @@ function prefillModels(all: ModelInfo[]): (ModelRef | undefined)[] {
   return [members[0], members[1] ?? members[0], members[2] ?? members[0], judge ?? members[0]].map(ref);
 }
 
-export function CanvasPage(props: { active: boolean; onProblem: () => void }) {
+export function CanvasPage(props: { active: boolean; onProblem: () => void; followRequest?: FollowRequest }) {
   return (
     <ReactFlowProvider>
       <Editor {...props} />
@@ -103,7 +103,14 @@ export function CanvasPage(props: { active: boolean; onProblem: () => void }) {
   );
 }
 
-function Editor({ active, onProblem }: { active: boolean; onProblem: () => void }) {
+/** A run to follow on the canvas (Activity → Follow on canvas); n changes on every click, also for the same run. */
+export interface FollowRequest {
+  runId: string;
+  title: string;
+  n: number;
+}
+
+function Editor({ active, onProblem, followRequest }: { active: boolean; onProblem: () => void; followRequest?: FollowRequest }) {
   const flow = useReactFlow<HiveFlowNode, Edge>();
   const initial = useRef(loadDraft());
   const [nodes, setNodes, onNodesChange] = useNodesState<HiveFlowNode>(initial.current ? toFlow(initial.current.graph).nodes : []);
@@ -123,6 +130,8 @@ function Editor({ active, onProblem }: { active: boolean; onProblem: () => void 
   // While replaying, the canvas shows the replayed run; your own canvas waits here untouched.
   const backup = useRef<{ nodes: HiveFlowNode[]; edges: Edge[]; doc: { id?: string; name: string }; saved?: string } | null>(null);
   const [showHistory, setShowHistory] = useState(false);
+  /** A run started elsewhere (the API, DungeonMind, a schedule) that the canvas shows live. */
+  const [watching, setWatching] = useState<{ runId: string; title: string }>();
   const [showFile, setShowFile] = useState(false);
   const [panel, setPanel] = useStored<'inspector' | 'builder'>('canvas.panel', 'inspector');
   /** Canvases before each Builder change, for Undo. */
@@ -160,11 +169,12 @@ function Editor({ active, onProblem }: { active: boolean; onProblem: () => void 
 
   // Every change is kept as a local draft, so nothing is lost on reload or tab switch.
   useEffect(() => {
-    if (replaying) return;
+    // A replayed or followed run is not your draft.
+    if (replaying || watching) return;
     try {
       localStorage.setItem(DRAFT_KEY, JSON.stringify({ id: doc.id, name: doc.name, graph: JSON.parse(graphJson), saved } satisfies Draft));
     } catch {}
-  }, [graphJson, doc, saved, replaying]);
+  }, [graphJson, doc, saved, replaying, watching]);
 
   const confirmDiscard = () => !dirty || nodes.length === 0 || confirm('You have unsaved changes on this workflow. Throw them away?');
 
@@ -193,6 +203,44 @@ function Editor({ active, onProblem }: { active: boolean; onProblem: () => void 
       setTimeout(() => replay.setPlaying(true), 700);
     } catch {}
   };
+
+  /** Shows a run that was started elsewhere, live, with its own workflow; your workflow waits untouched. */
+  const watchRun = (req: FollowRequest) => {
+    if (run.running && !watching) return toast('Wait until your own run is finished', 'info');
+    if (replaying) replay.close();
+    if (!backup.current) backup.current = { nodes, edges, doc, saved };
+    followed.current = '';
+    setWatching({ runId: req.runId, title: req.title });
+    // Saving now makes a new workflow (a copy), never overwrites yours.
+    setDoc({ name: `Copy of ${req.title}`.slice(0, 80) });
+    setSaved(undefined);
+    run.follow(req.runId, (g) => {
+      const f = toFlow(g);
+      setNodes(f.nodes);
+      setEdges(f.edges);
+      setTimeout(() => flow.fitView({ padding: 0.2, duration: 300 }), 50);
+    });
+  };
+
+  const stopWatching = () => {
+    run.reset();
+    setWatching(undefined);
+    const b = backup.current;
+    backup.current = null;
+    if (b) {
+      setNodes(b.nodes);
+      setEdges(b.edges);
+      setDoc(b.doc);
+      setSaved(b.saved);
+    }
+    setTimeout(() => flow.fitView({ padding: 0.2, duration: 400 }), 50);
+  };
+
+  useEffect(() => {
+    if (followRequest) watchRun(followRequest);
+    // Only a new request (n) opens a run; the rest of watchRun's inputs are read when it does.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [followRequest?.n]);
 
   const exitReplay = () => {
     replay.close();
@@ -559,7 +607,25 @@ function Editor({ active, onProblem }: { active: boolean; onProblem: () => void 
             Delete
           </button>
         )}
-        {replaying ? (
+        {watching && !replaying ? (
+          <div className="ml-auto flex min-w-[320px] flex-1 basis-[420px] items-center gap-2 overflow-hidden rounded-md border border-sky-700 bg-sky-950/40 px-3 py-1.5 text-sm">
+            <span className={`shrink-0 font-semibold ${run.running ? 'text-sky-200' : 'text-slate-300'}`}>{run.running ? '● Live' : 'Finished'}</span>
+            <span className="min-w-0 flex-1 truncate text-slate-300" title={watching.title}>
+              {watching.title}
+            </span>
+            <label className="flex shrink-0 items-center gap-1.5 text-xs text-slate-400" title="The view glides to the block that is working">
+              <input type="checkbox" checked={follow} onChange={(e) => setFollow(e.target.checked)} /> Follow
+            </label>
+            {run.running && (
+              <button className="btn shrink-0 bg-red-600 hover:bg-red-500" onClick={run.cancel}>
+                Stop
+              </button>
+            )}
+            <button className="btn-ghost shrink-0" onClick={stopWatching}>
+              Back to my workflow
+            </button>
+          </div>
+        ) : replaying ? (
           <div className="ml-auto flex min-w-[320px] flex-1 basis-[420px] items-center gap-2 overflow-hidden rounded-md border border-violet-700 bg-violet-950/40 px-3 py-1.5 text-sm">
             <span className="shrink-0 font-semibold text-violet-200">Replay</span>
             <span className="min-w-0 flex-1 truncate text-slate-300" title={replay.run!.question}>“{replay.run!.question}”</span>

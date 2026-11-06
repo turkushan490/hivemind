@@ -168,11 +168,23 @@ export function useRun(onProblem?: () => void) {
   }, [running]);
 
   const start = async (body: { question: string; graph: CanvasGraph; canvasId?: string }) => {
+    const { runId } = await api<{ runId: string }>('/api/runs', { body });
+    listen(runId, body.graph);
+  };
+
+  /**
+   * Follows a run that was started elsewhere (the API, DungeonMind, a schedule): the server sends everything that
+   * happened so far, then the live events, so the canvas animates as if it had been started here. onGraph gets
+   * the run's own workflow (from its run_start event) to show.
+   */
+  const follow = (runId: string, onGraph: (g: CanvasGraph) => void) => listen(runId, undefined, onGraph);
+
+  const listen = (runId: string, known?: CanvasGraph, onGraph?: (g: CanvasGraph) => void) => {
+    let graph = known;
     const label = (id?: string) => {
-      const n = body.graph.nodes.find((x) => x.id === id);
+      const n = graph?.nodes.find((x) => x.id === id);
       return n?.label || n?.config.model?.model || n?.type || 'Run';
     };
-    const { runId } = await api<{ runId: string }>('/api/runs', { body });
     setViews({});
     setFinal(null);
     setErrors([]);
@@ -198,6 +210,10 @@ export function useRun(onProblem?: () => void) {
     };
     es.onmessage = (m) => {
       const ev = JSON.parse(m.data) as RunEvent;
+      if (ev.type === 'run_start' && ev.graph && !graph) {
+        graph = ev.graph;
+        onGraph?.(ev.graph);
+      }
       setViews((v) => applyEvent(v, ev));
       if (ev.type === 'error' && ev.error !== 'Cancelled' && ev.error !== 'All inputs failed') {
         const msg = `${label(ev.nodeId)} failed: ${ev.error}`;
@@ -218,6 +234,15 @@ export function useRun(onProblem?: () => void) {
       es.close();
       setConnLost(false);
     });
+    // The server says it can't send this run (gone, or someone else's).
+    es.addEventListener('error', (m) => {
+      const data = (m as MessageEvent).data;
+      if (typeof data !== 'string') return;
+      es.close();
+      setConnLost(false);
+      setFinal({ status: 'error' });
+      toast(`Can't follow this run: ${(JSON.parse(data) as { error?: string }).error ?? 'not found'}`);
+    });
   };
 
   const cancel = () => runId && api(`/api/runs/${runId}/cancel`, { method: 'POST', quiet: true }).catch(() => {});
@@ -230,7 +255,7 @@ export function useRun(onProblem?: () => void) {
     setPaused([]);
   };
 
-  return { runId, views, final, errors, connLost, running, paused, start, cancel, reset };
+  return { runId, views, final, errors, connLost, running, paused, start, follow, cancel, reset };
 }
 
 /** Elapsed seconds of a node: final time when done, live time while running. */

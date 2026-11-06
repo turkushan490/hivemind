@@ -7,6 +7,8 @@ import { createAdapter } from '../providers/index.js';
 import { trainingServices } from '../lab/services.js';
 import { isOllamaDecisionModel, SPAM_TEST, SPAM_TEST_STATE } from '../providers/decisions.js';
 import { logError } from '../errors.js';
+import type { GpuNeed } from '../nodes/index.js';
+import { sameModel } from '../events/runs.js';
 import { requireUser, type User } from './auth.js';
 import { canvasAllowed, datasetAllowed, trainingAllowed } from './scope.js';
 import { mayUseFile } from '../services/files.js';
@@ -148,16 +150,39 @@ const originOf = (url: string) => {
   }
 };
 
-/** Gives back GPU memory on one machine: every enabled local AI server there except the one about to use it. */
+/** Room a loading model needs beyond its file size (its context and working memory). */
+const GPU_MARGIN = 1.5 * 1024 ** 3;
+
+/**
+ * Gives back GPU memory on one machine for the AI server about to use it: the other enabled local AI servers there
+ * unload their models. Not when nothing has to load (the model is already loaded), and ComfyUI keeps its models
+ * when the model fits in what is free: reloading a big image model costs most of a minute. After freeing, it waits
+ * (at most 20 s) until Ollama has really let its models go, so the next model doesn't start on a full GPU.
+ */
 export function gpuFreerFor(user: User) {
-  return async (hostKey: string, exceptProviderId?: string) => {
+  return async (hostKey: string, exceptProviderId?: string, need: GpuNeed = {}) => {
     // A provider on the same server (Ollama and its "decision models") shares that server's memory, which
     // Ollama manages itself: unloading it would reload the model on every call.
     const own = visibleRows(user).find((r) => r.id === exceptProviderId);
+    if (own && need.model) {
+      const loaded = await adapterFor(own).loaded?.().catch(() => undefined);
+      if (loaded?.some((m) => sameModel(m.model, need.model!))) return;
+    }
     const rows = visibleRows(user).filter(
       (r) => r.enabled && r.local && r.id !== exceptProviderId && hostOf(r.base_url) === hostKey && !(own && originOf(r.base_url) === originOf(own.base_url)),
     );
-    await Promise.allSettled(rows.map((r) => adapterFor(r).freeMemory?.()));
+    await Promise.allSettled(
+      rows.map(async (r) => {
+        const a = adapterFor(r);
+        if (need.bytes && a.vramFree) {
+          const free = await a.vramFree().catch(() => undefined);
+          if (free !== undefined && free >= need.bytes * 1.15 + GPU_MARGIN) return;
+        }
+        await a.freeMemory?.();
+        // Ollama answers at once but lets go of the memory a moment later.
+        if (a.loaded) for (const t = Date.now(); Date.now() - t < 20_000 && ((await a.loaded().catch(() => [])) ?? []).length; ) await new Promise((res) => setTimeout(res, 500));
+      }),
+    );
   };
 }
 

@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { api } from './api';
 import { MemoryButton } from './components/MemoryButton';
 import { Toasts } from './components/Toasts';
-import { CanvasPage } from './canvas/CanvasPage';
+import { CanvasPage, type FollowRequest } from './canvas/CanvasPage';
 import { ActivityPage } from './pages/ActivityPage';
 import { FilesPage } from './pages/FilesPage';
 import { Login } from './pages/Login';
@@ -38,6 +38,8 @@ export function App() {
   useEffect(() => setOpened((o) => (o.has(tab) ? o : new Set(o).add(tab))), [tab]);
   const [unseen, setUnseen] = useState(0);
   const [waiting, setWaiting] = useState(0);
+  // Activity → Follow on canvas: the Workflow tab shows that run live.
+  const [followRequest, setFollowRequest] = useState<FollowRequest>();
   const [serverDown, setServerDown] = useState(false);
   const [wizard, setWizard] = useState(false);
   const [build, setBuild] = useState<{ version: string; release: string }>();
@@ -157,7 +159,7 @@ export function App() {
         )}
         {opened.has('canvas') && (
           <div hidden={tab !== 'canvas'}>
-            <CanvasPage active={tab === 'canvas'} onProblem={() => setUnseen((n) => n + 1)} />
+            <CanvasPage active={tab === 'canvas'} onProblem={() => setUnseen((n) => n + 1)} followRequest={followRequest} />
           </div>
         )}
         {opened.has('projects') && (
@@ -187,7 +189,15 @@ export function App() {
         )}
         {opened.has('activity') && (
           <div hidden={tab !== 'activity'}>
-            <ActivityPage active={tab === 'activity'} isAdmin={me.role === 'admin'} onOpenLab={() => setTab('lab')} />
+            <ActivityPage
+              active={tab === 'activity'}
+              isAdmin={me.role === 'admin'}
+              onOpenLab={() => setTab('lab')}
+              onFollow={(runId, title) => {
+                setFollowRequest((f) => ({ runId, title, n: (f?.n ?? 0) + 1 }));
+                setTab('canvas');
+              }}
+            />
           </div>
         )}
         {opened.has('settings') && (

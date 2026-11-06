@@ -15,7 +15,7 @@ const since = (ms: number) => {
  * What is running now and what came in through the API. Polls every 3 seconds while open. An admin sees
  * everything, anyone else only their own.
  */
-export function ActivityPage({ active, isAdmin, onOpenLab }: { active: boolean; isAdmin: boolean; onOpenLab: () => void }) {
+export function ActivityPage({ active, isAdmin, onOpenLab, onFollow }: { active: boolean; isAdmin: boolean; onOpenLab: () => void; onFollow: (runId: string, title: string) => void }) {
   const [now, setNow] = useState<ActivityRunning | null>(null);
   const [calls, setCalls] = useState<ApiCall[]>([]);
   const [token, setToken] = useState('');
@@ -80,6 +80,9 @@ export function ActivityPage({ active, isAdmin, onOpenLab }: { active: boolean; 
               {!r.mine && <span className="text-xs text-slate-400">by {r.owner}</span>}
               <span className="text-xs text-slate-500">{since(r.startedAt)}</span>
               <span className="ml-auto" />
+              <button className="text-xs text-sky-400 hover:underline" title="Open it on the Workflow page, live, with its animations" onClick={() => onFollow(r.runId, `${r.canvasName ?? 'Workflow'} · ${r.source}`)}>
+                Follow on canvas
+              </button>
               <button className="text-xs text-indigo-400 hover:underline" onClick={() => setWatch(watch === r.runId ? null : r.runId)}>
                 {watch === r.runId ? 'Hide' : 'Open live run'}
               </button>
@@ -171,9 +174,14 @@ export function ActivityPage({ active, isAdmin, onOpenLab }: { active: boolean; 
                     <td className="px-2 py-1 text-right text-slate-400">{c.ms}</td>
                     <td className="px-2 py-1">
                       {c.runId && (
-                        <button className="text-indigo-400 hover:underline" onClick={() => setWatch(watch === c.runId ? null : c.runId!)}>
-                          {c.canvasName ?? 'run'}
-                        </button>
+                        <>
+                          <button className="text-indigo-400 hover:underline" onClick={() => setWatch(watch === c.runId ? null : c.runId!)}>
+                            {c.canvasName ?? 'run'}
+                          </button>
+                          <button className="ml-2 text-sky-400 hover:underline" title="Open it on the Workflow page, with its animations" onClick={() => onFollow(c.runId!, `${c.canvasName ?? 'Workflow'} · API: ${c.token}`)}>
+                            canvas
+                          </button>
+                        </>
                       )}
                     </td>
                   </tr>

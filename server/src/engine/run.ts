@@ -382,8 +382,8 @@ export async function runGraph(
           if (!m) throw new Error('This block has no model');
           mayUse(m);
           const p = await deps.resolve(m.providerId);
-          // Another AI server on the same GPU (ComfyUI) gives its memory back before a local model loads.
-          if (p.local && p.exclusive !== false) await deps.services?.freeGpu?.(p.hostKey, m.providerId).catch(() => {});
+          // Another AI server on the same GPU (ComfyUI) gives its memory back before a local model loads, when it wouldn't fit.
+          if (p.local && p.exclusive !== false) await deps.services?.freeGpu?.(p.hostKey, m.providerId, { model: m.model, bytes: (await p.modelInfo(m.model).catch(() => undefined))?.sizeBytes }).catch(() => {});
           // A different local GPU than the one this block holds: wait for that GPU too.
           if (p.local && p.exclusive !== false && p.hostKey !== heldHost)
             return withHostLock(p.hostKey, () => call(messages, m, node.config.think === false ? false : undefined, json), { signal, label: lockLabel });
@@ -397,7 +397,7 @@ export async function runGraph(
           if (!p.adapter.decide) throw new Error(`${m.model} is not a decision model — pick one from a decision provider (Settings → Providers → Decisions)`);
           const ask = async (): Promise<DecisionResult> => {
             // A local decision model (Ollama) shares the GPU like any other local model.
-            if (p.local && p.exclusive !== false) await deps.services?.freeGpu?.(p.hostKey, m.providerId).catch(() => {});
+            if (p.local && p.exclusive !== false) await deps.services?.freeGpu?.(p.hostKey, m.providerId, { model: m.model, bytes: (await p.modelInfo(m.model).catch(() => undefined))?.sizeBytes }).catch(() => {});
             const secs = maxSecondsOf(node, limits);
             const timer = callTimer(signal, secs);
             let r: DecisionResult;

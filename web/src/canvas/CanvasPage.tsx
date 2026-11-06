@@ -29,6 +29,7 @@ import { BuilderPanel } from './BuilderPanel';
 import { Inspector } from './Inspector';
 import { RepeatRun } from './RepeatRun';
 import { ScheduleButton } from './ScheduleButton';
+import { LiveRunsMenu } from './LiveRuns';
 import { COMING_SOON, NODE_META, PALETTE, projectNames } from './meta';
 import { newNodeId, TEMPLATE_GROUPS, TEMPLATES, type TemplateGroup } from './templates';
 
@@ -548,6 +549,7 @@ function Editor({ active, onProblem, followRequest }: { active: boolean; onProbl
             </div>
           )}
         </div>
+        <LiveRunsMenu followingId={watching?.runId} onFollow={(runId, title) => watchRun({ runId, title, n: Date.now() })} />
         <div className="relative">
           <button className="btn-ghost" onClick={() => setShowHistory((s) => !s)}>
             History ▾

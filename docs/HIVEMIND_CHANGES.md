@@ -785,6 +785,32 @@ which project it works on, and can make a new one.
 
 ---
 
+## M13 — Support for apps like HiveBot
+
+`GET /api/health` → `features` also lists `autoFallback`, `warm`, `ttsVoiceOverride`, `routeInfo`, `managedBy` and
+`hivebot` (all of them together).
+
+- **Auto model falls back** (`autoFallback`): when the size the decision model picked fails because the model is
+  gone (404, "no longer available"), rate-limited (429), its server fails (5xx) or the network does, the next size
+  down answers, then the ones up; each size once per run. The run shows `large failed (…) → medium: …` (with the new
+  route) and the Problems tab gets a line. Time limits, refusals and cancels don't fall back; a fixed model never does.
+- **Warm models** (`warm`): a block option `keepAlive` (`"30m"`, `"1h"`, …) is sent to Ollama as `keep_alive` on chat
+  calls and on Ollama decision models. `POST /api/canvases/:id/warm` loads a workflow's local models without answering
+  (Auto model: the decider, small and medium; else the fixed model) → `{warmed: [models], ms}`, or
+  `{warmed, busy: true}` at once when an image or training holds the GPU. Limited tokens may warm their own canvases.
+- **A voice per request** (`ttsVoiceOverride`): `POST /api/voice/speak {text, voice?, model?, speed?, format?: "mp3" |
+  "wav"}`. `voice` may be a name from Settings → Voice → **Voices for apps** (`jarvis = bm_george`), else a voice id
+  of the speech server. Callers with an API token use the speech server also when the screen is set to the browser
+  voice. Not set up: 502 with `code: "tts_not_configured"`.
+- **Which model answered** (`routeInfo`): `/v1/chat/completions` adds `"hivemind": {"route": "small: gemma4:e2b",
+  "decider_ms": 412}`; streaming sends it in one extra chunk (with `choices: []`) before `[DONE]`.
+- **Installed by an app** (`managedBy`): `PUT /api/canvases/:id {…, managedBy: "hivebot"}` marks a workflow; it stays
+  marked until a save sends `managedBy: null`. The editor shows "Installed by HiveBot — the app may update this", and
+  saving your own changes there asks first and then clears it (the app then leaves the workflow alone).
+- Tests: `server/test/hivebot.test.ts`, `server/test/hivebotApi.test.ts`.
+
+---
+
 ## The DungeonMind canvases (installed by DungeonMind, documented here)
 
 DungeonMind keeps the JSON in its repo under `hivemind/*.canvas.json` and installs it with `PUT /api/canvases/<id>`. The user picks the models per node in HiveMind afterwards. The defaults come from the Lab scoreboard (Part 2).

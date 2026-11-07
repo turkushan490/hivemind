@@ -46,6 +46,16 @@ export function ollamaAdapter(cfg: ProviderConfig): ProviderAdapter {
       }
     },
 
+    async warm(model: string, keep: string) {
+      const res = await fetch(`${base}/api/generate`, {
+        method: 'POST',
+        signal: AbortSignal.timeout(300_000),
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ model, prompt: '', keep_alive: keepAlive(keep) ?? '30m' }),
+      });
+      await checkResponse(res, `Ollama load ${model}`);
+    },
+
     async freeMemory(): Promise<void> {
       for (const m of await this.loaded!()) await this.unload!(m.model);
     },
@@ -100,6 +110,7 @@ export function ollamaAdapter(cfg: ProviderConfig): ProviderAdapter {
             stream: true,
             ...(req.json && { format: 'json' }),
             ...(req.think === false && { think: false }),
+            ...(keepAlive(req.keepAlive) && { keep_alive: keepAlive(req.keepAlive) }),
             options: {
               ...(req.temperature !== undefined && { temperature: req.temperature }),
               ...(req.maxTokens !== undefined && { num_predict: req.maxTokens }),
@@ -159,4 +170,10 @@ export function ollamaAdapter(cfg: ProviderConfig): ProviderAdapter {
       }
     },
   };
+}
+
+/** A keep_alive Ollama accepts: "30s", "30m", "2h", "0" or "-1" (forever); anything else is left out. */
+export function keepAlive(v: string | undefined): string | undefined {
+  const t = v?.trim();
+  return t && /^(-1|0|\d{1,5}(s|m|h))$/.test(t) ? t : undefined;
 }

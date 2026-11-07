@@ -486,11 +486,14 @@ function VoiceSettingsPanel({ isAdmin, active }: { isAdmin: boolean; active: boo
   const [s, setS] = useState<VoiceSettings | null>(null);
   const [draft, setDraft] = useState<Partial<VoiceSettings> & { sttKey?: string; ttsKey?: string }>({});
   const [heard, setHeard] = useState('');
+  /** Voices for apps as typed (lines), until saved. */
+  const [voicesText, setVoicesText] = useState<string>();
   useEffect(() => {
     if (!active) return;
     loadVoice(true).then((v) => {
       setS(v);
       setDraft({});
+      setVoicesText(undefined);
     });
   }, [active]);
   if (!s) return null;
@@ -501,6 +504,7 @@ function VoiceSettingsPanel({ isAdmin, active }: { isAdmin: boolean; active: boo
     const next = await api<VoiceSettings>('/api/settings/voice', { method: 'PUT', body: draft });
     setS(next);
     setDraft({});
+    setVoicesText(undefined);
     loadVoice(true);
     toast('Voice settings saved', 'ok');
   };
@@ -591,6 +595,29 @@ function VoiceSettingsPanel({ isAdmin, active }: { isAdmin: boolean; active: boo
             {keyField('ttsKey', s.hasTtsKey)}
           </>
         )}
+      </section>
+
+      <section className="space-y-2">
+        <h3 className="text-sm font-semibold">Voices for apps</h3>
+        <p className="text-xs text-slate-400">
+          Apps like HiveBot ask for a voice by name (<code>{'{"voice": "jarvis"}'}</code> on <code>/api/voice/speak</code>). One per line: <code>name = voice of the speech server</code>. Apps with an API
+          token use the speech server above even when the screen uses the browser voice.
+        </p>
+        <textarea
+          className="input min-h-20 font-mono text-xs"
+          disabled={!isAdmin}
+          placeholder={'jev = af_heart\njarvis = bm_george\nultron = am_onyx\nvision = bf_emma'}
+          value={voicesText ?? Object.entries(v.appVoices ?? {}).map(([n, id]) => `${n} = ${id}`).join('\n')}
+          onChange={(e) => {
+            setVoicesText(e.target.value);
+            const map: Record<string, string> = {};
+            for (const line of e.target.value.split('\n')) {
+              const m = line.match(/^\s*([^=:]+?)\s*[=:]\s*(.+?)\s*$/);
+              if (m) map[m[1].toLowerCase()] = m[2];
+            }
+            set({ appVoices: map });
+          }}
+        />
       </section>
 
       {isAdmin && (

@@ -286,6 +286,7 @@ export function startRun(opts: {
         ...(!opts.user?.scope && { projects: projectServicesFor(fileUser, { id, source: canvasName ? `Run: ${canvasName}` : `Run: ${source}` }) }),
         pause: { wait: (info, signal) => waitAtPause(run, info, emit, signal) },
         skills: skillsForRun(fileUser),
+        logProblem: (message) => logError({ source: 'run', message, userId: opts.ownerId, runId: id }),
       },
     }, run.abort.signal, opts.vars ?? {}, opts.chat)
     .then((r) => {

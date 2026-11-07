@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { logError } from '../errors.js';
-import { saveVoiceSettings, speak, speakable, transcribe, voiceSettings } from '../services/voice.js';
+import { saveVoiceSettings, speak, speakable, transcribe, TtsNotConfigured, voiceSettings } from '../services/voice.js';
 import { requireAdmin, requireUser } from './auth.js';
 
 const MAX_AUDIO = 25 * 1024 * 1024;
@@ -36,14 +36,23 @@ export function voiceRoutes(app: FastifyInstance) {
   });
 
   /** Body: { text }. Answers with the audio (mp3) from the text-to-speech server. */
+  /** Body: {text, voice?, model?, speed?, format?: "mp3" | "wav"}; voice may be a name from Settings → Voice → Voices for apps. */
   app.post('/api/voice/speak', { preHandler: requireUser }, async (req, reply) => {
-    const raw = String((req.body as { text?: string } | undefined)?.text ?? '');
-    const text = speakable(raw).slice(0, MAX_SPEAK);
+    const b = (req.body ?? {}) as { text?: unknown; voice?: unknown; model?: unknown; speed?: unknown; format?: unknown };
+    const text = speakable(String(b.text ?? '')).slice(0, MAX_SPEAK);
     if (!text) return reply.code(400).send({ error: 'Nothing to say' });
     try {
-      const { audio, type } = await speak(text, req.user!.id);
+      const { audio, type } = await speak(text, req.user!.id, {
+        ...(typeof b.voice === 'string' && { voice: b.voice.slice(0, 100) }),
+        ...(typeof b.model === 'string' && { model: b.model.slice(0, 100) }),
+        ...(typeof b.speed === 'number' && { speed: b.speed }),
+        format: b.format === 'wav' ? 'wav' : 'mp3',
+        // An app with an API token (a robot) has no browser to speak with.
+        app: !!req.user!.tokenId,
+      });
       return reply.header('content-type', type).header('cache-control', 'no-store').send(audio);
     } catch (err) {
+      if (err instanceof TtsNotConfigured) return reply.code(502).send({ error: err.message, code: err.code });
       const message = `Text to speech failed: ${(err as Error).message}`;
       const problemId = logError({ source: 'voice', message, userId: req.user!.id });
       return reply.code(502).send({ error: message, problemId });

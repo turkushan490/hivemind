@@ -36,6 +36,8 @@ export interface NodeConfig {
   maxSeconds?: number;
   /** false: thinking models answer straight away, without thinking first. */
   think?: boolean;
+  /** Local (Ollama) models: keep the model loaded this long after a call ("30m", "1h"), so the next answer starts warm. */
+  keepAlive?: string;
   /** LLM: send the chat history from /v1 as real messages instead of one prompt. */
   useMessages?: boolean;
   /** Image: how many pictures per run (1-8). */
@@ -186,6 +188,8 @@ export interface VoiceSettings {
   ttsModel?: string;
   ttsVoice?: string;
   hasTtsKey: boolean;
+  /** Voices for apps: a name an app asks for ("jarvis") → a voice of the speech server. */
+  appVoices: Record<string, string>;
 }
 
 /** Home Assistant connection (GET/PUT /api/settings/homeassistant); the token is never sent back. */
@@ -227,6 +231,8 @@ export interface CanvasGraph {
 }
 
 export interface Canvas extends CanvasGraph {
+  /** Installed (and kept up to date) by an app, e.g. "hivebot"; editing it here can stop that. */
+  managedBy?: string;
   id: string;
   name: string;
   description?: string;

@@ -74,6 +74,8 @@ export interface NodeServices {
   projects?: ProjectServices;
   /** Pause blocks: wait for a person. */
   pause?: PauseServices;
+  /** Puts a line in the Problems tab (something went wrong, but the run went on). */
+  logProblem?(message: string): void;
   /** Skills (Settings → Skills): your own and the shared ones, by name. */
   skills?: { list(): { name: string; description: string }[]; load(name: string): string | undefined };
 }
@@ -260,13 +262,18 @@ const modelLabel = (m: ModelRef) => m.model.split('/').pop()!.replace(/:latest$/
  * it moves up one size, because a too-small model is the costly mistake. Returns the model that answers.
  */
 export async function autoModel(ctx: NodeContext, state: string): Promise<ModelRef> {
+  return (await autoPick(ctx, state)).model;
+}
+
+/** The Auto model's pick: the size, its model, and every size that may be used (for falling back). */
+async function autoPick(ctx: NodeContext, state: string): Promise<{ tier: AutoTier; model: ModelRef; tiers: AutoTier[]; deciderMs?: number }> {
   const a = ctx.node.config.auto ?? {};
   const filled = AUTO_TIERS.filter((t) => a[t]);
   if (!filled.length) throw new Error('Auto model: fill in at least one size (small / medium / large / local)');
   // Only sizes whose model the person may use (Settings → Access) take part.
   const tiers = filled.filter((t) => !ctx.allowedModel || ctx.allowedModel(a[t]!));
   if (!tiers.length) throw new Error(`You can't use ${a[filled[0]]!.model} (ask the admin to add it to your access)`);
-  if (tiers.length === 1) return a[tiers[0]]!;
+  if (tiers.length === 1) return { tier: tiers[0], model: a[tiers[0]]!, tiers };
   if (!a.decider) throw new Error('Auto model: pick the decision model that chooses the size');
   const criteria = Object.fromEntries(tiers.map((t) => [t, AUTO_TIER_TEXT[t]]));
   const spec = { type: 'choice' as const, instructions: 'Which size of AI model does this request need to be answered correctly?', criteria };
@@ -285,7 +292,27 @@ export async function autoModel(ctx: NodeContext, state: string): Promise<ModelR
   const view = toView('route', ans ?? { type: 'refusal' }, spec);
   const route = `${pick}: ${modelLabel(model)}`;
   ctx.progress(`${moved ? `Only ${Math.round(top * 100)}% sure — one size up ` : ''}→ ${route}`, { model: r.model, ms: r.ms, answers: [view], threshold, route });
-  return model;
+  return { tier: pick, model, tiers, deciderMs: r.ms };
+}
+
+/**
+ * A model call that failed in a way another model may not: the model is gone (404, "not found"), a rate limit (429),
+ * the provider's server (5xx) or the network. Time limits, refusals and cancels are not.
+ */
+export function canFallBack(err: unknown): boolean {
+  const e = err as { status?: number; statusCode?: number; message?: string };
+  const status = e.status ?? e.statusCode;
+  const msg = String(e.message ?? '');
+  if (status === 403 || /You can't use|Cancelled|Stopped|was stopped after/i.test(msg)) return false;
+  if (status === 404 || status === 429 || (status !== undefined && status >= 500)) return true;
+  if (status === 400 && /model|not found|no longer available|does not exist|unknown/i.test(msg)) return true;
+  return /HTTP (404|429|5\d\d)\b|no longer available|model .*not found|not found.*model|fetch failed|ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|socket hang up|network/i.test(msg);
+}
+
+/** Sizes to try after one failed: the next ones down first (cheaper, usually faster), then the ones up. */
+export function fallbackOrder(tiers: AutoTier[], failed: AutoTier): AutoTier[] {
+  const i = tiers.indexOf(failed);
+  return [...tiers.slice(0, i).reverse(), ...tiers.slice(i + 1)];
 }
 
 /**
@@ -383,14 +410,36 @@ export const NODES: Record<NodeType, NodeDefinition> = {
       if (prompt) user = fill(prompt, ctx, labelled(prev));
       else if (prev.length === 0) user = ctx.question;
       else user = `Question: ${ctx.question}\n\nInput from previous steps:\n\n${labelled(prev)}\n\nUse this input to answer the question.`;
+      const messages =
+        ctx.node.config.useMessages && ctx.chat
+          ? // The real conversation: system prompts, the earlier turns, then this block's prompt.
+            (() => {
+              const sys = [system, ctx.chat!.system].filter(Boolean).join('\n\n');
+              return [...(sys ? [{ role: 'system' as const, content: sys }] : []), ...ctx.chat!.history, { role: 'user' as const, content: user }];
+            })()
+          : withSystem(system, user);
+      // A fixed model answers as it is (no fallback).
+      if (!ctx.node.config.auto) return ask(ctx, messages);
       // Auto: the decision model picks which model answers, from the question (and what is wired in).
-      const model = ctx.node.config.auto ? await autoModel(ctx, prev.length ? `${ctx.question}\n\n${labelled(prev)}` : ctx.question) : undefined;
-      if (ctx.node.config.useMessages && ctx.chat) {
-        // The real conversation: system prompts, the earlier turns, then this block's prompt.
-        const sys = [system, ctx.chat.system].filter(Boolean).join('\n\n');
-        return ask(ctx, [...(sys ? [{ role: 'system' as const, content: sys }] : []), ...ctx.chat.history, { role: 'user', content: user }], model);
+      const pick = await autoPick(ctx, prev.length ? `${ctx.question}\n\n${labelled(prev)}` : ctx.question);
+      const a = ctx.node.config.auto;
+      let tier = pick.tier;
+      const tried = new Set<AutoTier>();
+      for (;;) {
+        tried.add(tier);
+        try {
+          return await ask(ctx, messages, a[tier]!);
+        } catch (err) {
+          // A model that is gone, rate-limited or down: the answer still comes, from another size.
+          const next = canFallBack(err) && !ctx.signal?.aborted ? fallbackOrder(pick.tiers, pick.tier).find((t) => !tried.has(t)) : undefined;
+          if (!next) throw err;
+          const why = (err as Error).message.slice(0, 160);
+          const route = `${next}: ${modelLabel(a[next]!)}`;
+          ctx.progress(`${tier} failed (${modelLabel(a[tier]!)}: ${why}) → ${route}`, { model: '', ms: 0, answers: [], route });
+          ctx.services.logProblem?.(`Auto model: ${tier} (${a[tier]!.model}) failed: ${why} — answered with ${next} (${a[next]!.model})`);
+          tier = next;
+        }
       }
-      return ask(ctx, withSystem(system, user), model);
     },
   },
 

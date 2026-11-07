@@ -33,6 +33,9 @@ import { LiveRunsMenu } from './LiveRuns';
 import { COMING_SOON, NODE_META, PALETTE, projectNames } from './meta';
 import { newNodeId, TEMPLATE_GROUPS, TEMPLATES, type TemplateGroup } from './templates';
 
+/** "hivebot" → "HiveBot", for the badge on workflows an app installed. */
+const appName = (id: string) => (id.toLowerCase() === 'hivebot' ? 'HiveBot' : id);
+
 /** Blocks that work on a project (a site template asks which one). */
 const PROJECT_BLOCKS: NodeType[] = ['readProject', 'writeFiles', 'updateNotes', 'git', 'build', 'pause'];
 
@@ -309,7 +312,10 @@ function Editor({ active, onProblem, followRequest }: { active: boolean; onProbl
 
   const save = async (shared?: boolean) => {
     const name = doc.name.trim() || 'My canvas';
-    const c = await api<Canvas>(`/api/canvases${doc.id ? `/${doc.id}` : ''}`, { method: 'PUT', body: { name, ...graph, ...(shared !== undefined && { shared }) } });
+    // An app keeps this workflow up to date: saving your own changes stops that (the app then leaves it alone).
+    const app = canvases.find((x) => x.id === doc.id)?.managedBy;
+    if (app && !confirm(`Installed by ${appName(app)} — the app may update this workflow.\n\nKeep your changes? ${appName(app)} then stops updating it.`)) return;
+    const c = await api<Canvas>(`/api/canvases${doc.id ? `/${doc.id}` : ''}`, { method: 'PUT', body: { name, ...graph, ...(shared !== undefined && { shared }), ...(app && { managedBy: null }) } });
     setDoc({ id: c.id, name: c.name });
     setSaved(JSON.stringify({ name: c.name, graph: { nodes: c.nodes, edges: c.edges } }));
     setCanvases(await api<Canvas[]>('/api/canvases', { quiet: true }).catch(() => canvases));
@@ -476,6 +482,14 @@ function Editor({ active, onProblem, followRequest }: { active: boolean; onProbl
           aria-label="Canvas name"
         />
         {dirty && !replaying && <span className="text-xs text-amber-400" title="Kept as a draft in this browser until you save">unsaved</span>}
+        {(() => {
+          const app = !watching && !replaying ? canvases.find((x) => x.id === doc.id)?.managedBy : undefined;
+          return app ? (
+            <span className="rounded bg-sky-500/15 px-1.5 py-0.5 text-xs text-sky-300" title="The app may update this workflow. Saving your own changes stops that.">
+              Installed by {appName(app)} — the app may update this
+            </span>
+          ) : null;
+        })()}
         <button className="btn-ghost" onClick={() => save().catch(() => {})} title="Ctrl+S">
           Save
         </button>
@@ -494,6 +508,7 @@ function Editor({ active, onProblem, followRequest }: { active: boolean; onProbl
             <option key={c.id} value={c.id}>
               {c.name}
               {c.shared ? ' (shared)' : ''}
+              {c.managedBy ? ` (${appName(c.managedBy)})` : ''}
             </option>
           ))}
         </select>

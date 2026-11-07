@@ -292,7 +292,7 @@ export async function runGraph(
         const limitSecs = maxSecondsOf(node, limits);
         // The clock starts here, once the GPU is held: time in the queue doesn't count.
         const timer = callTimer(signal, limitSecs);
-        const it = p.adapter.stream({ model: ref.model, messages, temperature: node.config.temperature, think, json, numCtx: numCtxOf(node, limits, p.local), maxTokens }, timer.signal)[Symbol.asyncIterator]();
+        const it = p.adapter.stream({ model: ref.model, messages, temperature: node.config.temperature, think, json, numCtx: numCtxOf(node, limits, p.local), maxTokens, keepAlive: node.config.keepAlive }, timer.signal)[Symbol.asyncIterator]();
         try {
           for (;;) {
             const next = await Promise.race([it.next(), timer.stopped]);
@@ -402,7 +402,7 @@ export async function runGraph(
             const timer = callTimer(signal, secs);
             let r: DecisionResult;
             try {
-              r = await Promise.race([p.adapter.decide!({ model: m.model, ...req } as DecisionRequest, timer.signal), timer.stopped]);
+              r = await Promise.race([p.adapter.decide!({ model: m.model, ...(node.config.keepAlive && { keepAlive: node.config.keepAlive }), ...req } as DecisionRequest, timer.signal), timer.stopped]);
             } catch (err) {
               if (timer.timedOut()) throw new TimeLimitError(`${m.model} was stopped after ${secs} seconds`);
               if (signal.aborted) throw new Error(cancelText(signal));

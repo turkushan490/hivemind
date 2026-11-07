@@ -321,6 +321,10 @@ export const MIGRATIONS: string[] = [
   -- A running run's progress (how it was started, what its blocks did, its events), so it can go on after a restart.
   ALTER TABLE runs ADD COLUMN checkpoint TEXT;
   `,
+  `
+  -- A canvas an app installed and keeps up to date ("hivebot"); null once someone edits it by hand.
+  ALTER TABLE canvases ADD COLUMN managed_by TEXT;
+  `,
 ];
 
 export const db = new DatabaseSync(join(config.dataDir, 'hivemind.db'));

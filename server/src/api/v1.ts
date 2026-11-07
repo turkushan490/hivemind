@@ -122,7 +122,8 @@ export function v1Routes(app: FastifyInstance) {
       finished = true;
       if (!done || done.final === undefined)
         return reply.code(500).send(apiError(`The canvas "${row.name}" gave no answer${errors.length ? `: ${errors.join('; ')}` : ''} (run ${runId}, see Problems)`, 'server_error', 'run_failed'));
-      return completion(runId, model, done.final, usageOf(events));
+      const info = routeInfo(events);
+      return { ...completion(runId, model, done.final, usageOf(events)), ...(info && { hivemind: info }) };
     }
 
     // Streaming: the only block feeding the Final answer streams live; otherwise the answer comes in one piece at the end.
@@ -162,7 +163,22 @@ export function v1Routes(app: FastifyInstance) {
     });
     finished = true;
     clearInterval(ping);
+    // Which model answered (Auto model), in one extra chunk OpenAI clients skip.
+    const info = routeInfo(events);
+    if (info) send({ ...chunk(runId, model, {}), choices: [], hivemind: info });
     res.write('data: [DONE]\n\n');
     res.end();
   });
+}
+
+/**
+ * What the Auto model chose, from the run's events: the last route (after a fallback, the size that answered) and
+ * how long the decision model took. Undefined when no block chose a model.
+ */
+export function routeInfo(events: RunEvent[]): { route: string; decider_ms?: number } | undefined {
+  const routes = events.filter((e) => e.type === 'node_progress' && e.decision?.route && e.decision.model !== undefined);
+  const last = routes.at(-1)?.decision;
+  if (!last?.route) return;
+  const decider = routes.find((e) => (e.decision?.ms ?? 0) > 0)?.decision;
+  return { route: last.route, ...(decider && { decider_ms: decider.ms }) };
 }

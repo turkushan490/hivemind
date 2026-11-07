@@ -23,6 +23,7 @@ const SCOPED_ROUTES = new Set([
   'GET /api/canvases',
   'GET /api/canvases/:id',
   'PUT /api/canvases/:id?',
+  'POST /api/canvases/:id/warm',
   'POST /api/runs',
   'GET /api/runs/:id',
   'GET /api/runs/:id/events',

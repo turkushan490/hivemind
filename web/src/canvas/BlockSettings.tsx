@@ -22,10 +22,40 @@ export function BlockSettings(p: Props) {
     <>
       {p.kind === 'llm' && <AutoSettings {...p} />}
       <ModelOptions {...p} />
+      {(p.kind === 'llm' || p.kind === 'decide') && <KeepLoaded {...p} />}
       {(p.kind === 'llm' || p.kind === 'review' || p.kind === 'judge') && <SkillsOption {...p} />}
       <TimeLimit {...p} />
       <KindSettings {...p} />
     </>
+  );
+}
+
+const KEEP_OPTIONS: [string, string][] = [
+  ['', 'Ollama default'],
+  ['5m', '5 minutes'],
+  ['30m', '30 minutes'],
+  ['1h', '1 hour'],
+  ['4h', '4 hours'],
+];
+
+/** Local models (Ollama): keep the model loaded after a call, so the next answer starts warm (no load time). */
+function KeepLoaded(p: Props) {
+  const c = p.config;
+  return (
+    <label className="block space-y-1 rounded-lg border border-[#30363d] p-2.5">
+      <span className="text-xs font-semibold text-slate-300">Keep model loaded</span>
+      <select className="input text-xs" value={c.keepAlive ?? ''} onChange={(e) => p.onChange({ keepAlive: e.target.value || undefined })}>
+        {KEEP_OPTIONS.map(([v, label]) => (
+          <option key={v} value={v}>
+            {label}
+          </option>
+        ))}
+        {c.keepAlive && !KEEP_OPTIONS.some(([v]) => v === c.keepAlive) && <option value={c.keepAlive}>{c.keepAlive}</option>}
+      </select>
+      <span className="text-xs text-slate-500">
+        Local (Ollama) models only, also the Auto model's decider. Longer keeps the next answer fast but holds GPU memory that ComfyUI or training may want.
+      </span>
+    </label>
   );
 }
 

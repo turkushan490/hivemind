@@ -42,4 +42,12 @@ export const FEATURES: readonly string[] = [
   'github',
   'pause',
   'skills',
+  // HiveBot (and other apps): Auto model falls back to another size when one fails, POST /api/canvases/:id/warm and
+  // keepAlive, /api/voice/speak with a voice per request, /v1 says which model answered, canvases marked managedBy.
+  'autoFallback',
+  'warm',
+  'ttsVoiceOverride',
+  'routeInfo',
+  'managedBy',
+  'hivebot',
 ];

@@ -17,6 +17,8 @@ interface Stored {
   ttsKey?: string;
   ttsModel?: string;
   ttsVoice?: string;
+  /** Voices for apps: "jarvis" → a voice id of the speech server. */
+  appVoices?: Record<string, string>;
 }
 
 const KEY = 'voice';
@@ -42,7 +44,23 @@ export function voiceSettings(): VoiceSettings {
     ttsModel: s.ttsModel,
     ttsVoice: s.ttsVoice,
     hasTtsKey: !!s.ttsKey,
+    appVoices: s.appVoices ?? {},
   };
+}
+
+/** Voices for apps as a clean map: names of letters, digits, - and _ (at most 50), voice ids of at most 100 characters. */
+function cleanVoices(v: unknown): Record<string, string> {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) throw new Error('Voices for apps must be a list of name → voice');
+  const out: Record<string, string> = {};
+  for (const [name, voice] of Object.entries(v as Record<string, unknown>)) {
+    const n = name.trim().toLowerCase();
+    const id = String(voice ?? '').trim();
+    if (!n || !id) continue;
+    if (!/^[a-z0-9_-]{1,40}$/.test(n)) throw new Error(`"${name}" is not a valid voice name (letters, digits, - and _)`);
+    out[n] = id.slice(0, 100);
+    if (Object.keys(out).length > 50) throw new Error('At most 50 voices for apps');
+  }
+  return out;
 }
 
 const cleanUrl = (u: string) => {
@@ -55,6 +73,7 @@ const text = (v: string | undefined, old: string | undefined) => (v !== undefine
 const key = (v: string | undefined, old: string | undefined) => (v !== undefined ? (v.trim() ? encrypt(v.trim()) : undefined) : old);
 
 export function saveVoiceSettings(patch: Partial<Omit<VoiceSettings, 'hasSttKey' | 'hasTtsKey' | 'sttReady'>> & { sttKey?: string; ttsKey?: string }) {
+  const voices = patch.appVoices !== undefined ? cleanVoices(patch.appVoices) : undefined;
   const s = load();
   const next: Stored = {
     sttUrl: patch.sttUrl !== undefined ? cleanUrl(patch.sttUrl) : s.sttUrl,
@@ -66,6 +85,7 @@ export function saveVoiceSettings(patch: Partial<Omit<VoiceSettings, 'hasSttKey'
     ttsKey: key(patch.ttsKey, s.ttsKey),
     ttsModel: text(patch.ttsModel, s.ttsModel),
     ttsVoice: text(patch.ttsVoice, s.ttsVoice),
+    appVoices: voices ?? s.appVoices,
   };
   setSetting(KEY, JSON.stringify(next));
 }
@@ -136,24 +156,44 @@ export async function transcribe(audio: Buffer, mime: string, userId: string): P
   return out.trim();
 }
 
+/** Text to speech is not set up for this caller (no server, or the browser voice for the screen). */
+export class TtsNotConfigured extends Error {
+  readonly code = 'tts_not_configured';
+}
+
+/** What a caller may ask for per request: a voice (or an app voice name), the model, the speed and the format. */
+export interface SpeakOptions {
+  voice?: string;
+  model?: string;
+  speed?: number;
+  format?: 'mp3' | 'wav';
+  /** An app with an API token: it has no browser voice, so a configured server is used even in browser mode. */
+  app?: boolean;
+}
+
 /** Text to speech on the server: returns the audio and its type. */
-export async function speak(input: string, userId: string): Promise<{ audio: Buffer; type: string }> {
+export async function speak(input: string, userId: string, opts: SpeakOptions = {}): Promise<{ audio: Buffer; type: string }> {
   const s = load();
-  if (s.ttsMode !== 'server') throw new Error('Text to speech uses the browser voice (Settings → Voice)');
-  if (!s.ttsUrl) throw new Error('Text to speech has no server address (Settings → Voice)');
+  if (!s.ttsUrl) throw new TtsNotConfigured('Text to speech has no server address (Settings → Voice)');
+  if (s.ttsMode !== 'server' && !opts.app) throw new TtsNotConfigured('Text to speech uses the browser voice (Settings → Voice)');
+  const asked = opts.voice?.trim();
+  // A name from Voices for apps ("jarvis"), else the voice id as given, else the stored voice.
+  const voice = (asked && s.appVoices?.[asked.toLowerCase()]) || asked || s.ttsVoice || 'alloy';
+  const format = opts.format === 'wav' ? 'wav' : 'mp3';
+  const speed = opts.speed !== undefined && Number.isFinite(opts.speed) ? Math.min(4, Math.max(0.25, opts.speed)) : undefined;
   const apiKey = keyFor(s.ttsUrl, s.ttsKey, userId);
   const res = await call(
     `${s.ttsUrl}/audio/speech`,
     {
       method: 'POST',
       headers: { 'content-type': 'application/json', ...(apiKey && { authorization: `Bearer ${apiKey}` }) },
-      body: JSON.stringify({ model: s.ttsModel || 'tts-1', voice: s.ttsVoice || 'alloy', input, response_format: 'mp3' }),
+      body: JSON.stringify({ model: opts.model?.trim() || s.ttsModel || 'tts-1', voice, input, response_format: format, ...(speed !== undefined && { speed }) }),
     },
     'text-to-speech',
   );
   const audio = Buffer.from(await res.arrayBuffer());
   if (audio.length === 0) throw new Error('The text-to-speech server sent no audio');
-  return { audio, type: res.headers.get('content-type')?.startsWith('audio/') ? res.headers.get('content-type')! : 'audio/mpeg' };
+  return { audio, type: res.headers.get('content-type')?.startsWith('audio/') ? res.headers.get('content-type')! : format === 'wav' ? 'audio/wav' : 'audio/mpeg' };
 }
 
 /** Markdown, code and links read badly aloud: plain sentences only. */

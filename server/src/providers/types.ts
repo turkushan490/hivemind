@@ -18,6 +18,8 @@ export interface ChatRequest {
   think?: boolean;
   /** Context size in tokens (Ollama num_ctx); other providers ignore it. */
   numCtx?: number;
+  /** Keep the model loaded this long after the call (Ollama keep_alive, e.g. "30m"); others ignore it. */
+  keepAlive?: string;
 }
 
 export type StreamChunk =
@@ -52,6 +54,8 @@ export interface ProviderAdapter {
   remove?(model: string): Promise<void>;
   /** Local only: give the GPU memory back (unload everything this server holds). */
   freeMemory?(): Promise<void>;
+  /** Local only: load a model without answering, and keep it loaded keepAlive long (Ollama). */
+  warm?(model: string, keepAlive: string): Promise<void>;
   /** Local only: how much GPU memory is free right now (bytes), when the server can tell (ComfyUI). */
   vramFree?(): Promise<number | undefined>;
   /** Decision models (TypeSafe Jev, OpenAI Decisions, Ollama decision models). */

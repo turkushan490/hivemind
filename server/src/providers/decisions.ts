@@ -1,4 +1,5 @@
 import type { DecisionType, ModelInfo } from '@hivemind/shared';
+import { keepAlive } from './ollama.js';
 import { ProviderError, type ProviderAdapter, type ProviderConfig } from './types.js';
 
 /**
@@ -23,6 +24,8 @@ export interface DecisionRequest {
   questions: Record<string, DecisionQuestionSpec>;
   /** Images to judge (box questions, image questions): PNG / JPEG / WebP bytes. */
   images?: { data: Buffer; ext: string }[];
+  /** Ollama decision models: keep the model loaded this long after the call ("30m"). */
+  keepAlive?: string;
 }
 
 export type DecisionAnswer =
@@ -131,6 +134,19 @@ export function systemOneAdapter(cfg: ProviderConfig): ProviderAdapter {
       throw new ProviderError('This is a decision model: use it in a Decide block, as the Auto model router, or for Jev scoring');
     },
 
+    ...(!typesafe &&
+      cfg.preset !== 'clef-cloud' && {
+        async warm(model: string, keep: string) {
+          const res = await fetch(`${base}/api/generate`, {
+            method: 'POST',
+            signal: AbortSignal.timeout(300_000),
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ model, prompt: '', keep_alive: keepAlive(keep) ?? '30m' }),
+          });
+          if (!res.ok) throw new ProviderError(`Ollama load ${model}: HTTP ${res.status}`, res.status);
+        },
+      }),
+
     async decide(req, signal) {
       const t0 = Date.now();
       const hasBox = Object.values(req.questions).some((q) => q.type === 'box');
@@ -152,7 +168,13 @@ export function systemOneAdapter(cfg: ProviderConfig): ProviderAdapter {
           headers['typesafe-danger-zone-images'] = 'true';
         }
       } else {
-        body = { model: req.model, state: req.state, questions, ...(images.length && { images: images.map((i) => i.data.toString('base64')) }) };
+        body = {
+          model: req.model,
+          state: req.state,
+          questions,
+          ...(images.length && { images: images.map((i) => i.data.toString('base64')) }),
+          ...(keepAlive(req.keepAlive) && { keep_alive: keepAlive(req.keepAlive) }),
+        };
       }
       const data = (await post(`${base}/v1/systemone`, body, headers, signal, name)) as {
         model?: string;

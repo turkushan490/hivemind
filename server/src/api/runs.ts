@@ -5,6 +5,7 @@ import { db } from '../db/index.js';
 import { validateGraph } from '../engine/graph.js';
 import { checkVars } from '../engine/vars.js';
 import { cancelRun, giveUp, isFullAdmin, resumeRun, startRun, stoppedRuns, subscribe } from '../events/runs.js';
+import { hostHolder } from '../engine/run.js';
 import { noteRun } from '../services/activity.js';
 import { nodeOutputs, publicEvents } from '../services/runOutputs.js';
 import { requireUser, type User } from './auth.js';
@@ -21,6 +22,7 @@ export interface CanvasRow {
   graph: string;
   updated_at: string;
   shared: number;
+  managed_by?: string | null;
   owner_name?: string;
 }
 
@@ -31,6 +33,7 @@ const toCanvas = (r: CanvasRow, user: User) => ({
   ...JSON.parse(r.graph),
   updatedAt: r.updated_at,
   shared: !!r.shared,
+  ...(r.managed_by && { managedBy: r.managed_by }),
   mine: r.owner_id === user.id,
   ...(r.owner_id !== user.id && r.owner_name && { ownerName: r.owner_name }),
 });
@@ -182,17 +185,20 @@ export function runRoutes(app: FastifyInstance) {
   });
 
   app.put('/api/canvases/:id?', { preHandler: requireUser }, async (req, reply) => {
-    const body = (req.body ?? {}) as { name?: string; description?: string; shared?: boolean } & Partial<CanvasGraph>;
+    const body = (req.body ?? {}) as { name?: string; description?: string; shared?: boolean; managedBy?: string | null } & Partial<CanvasGraph>;
     const graph = { nodes: body.nodes ?? [], edges: body.edges ?? [] };
     if (!body.name?.trim()) return reply.code(400).send({ error: 'Canvas needs a name' });
+    if (body.managedBy !== undefined && body.managedBy !== null && !/^[a-z0-9_-]{1,40}$/i.test(String(body.managedBy))) return reply.code(400).send({ error: 'managedBy must be an app name (letters, digits, - and _)' });
     const id = (req.params as { id?: string }).id ?? newId();
-    const owned = db.prepare('SELECT owner_id, shared FROM canvases WHERE id = ?').get(id) as { owner_id: string; shared: number } | undefined;
+    const owned = db.prepare('SELECT owner_id, shared, managed_by FROM canvases WHERE id = ?').get(id) as { owner_id: string; shared: number; managed_by: string | null } | undefined;
     if (owned && owned.owner_id !== req.user!.id) return reply.code(404).send({ error: 'Not found' });
     const shared = body.shared === undefined ? (owned?.shared ?? 0) : body.shared ? 1 : 0;
+    // Which app keeps it up to date: as sent (null: nobody any more), else as it was.
+    const managedBy = body.managedBy === undefined ? (owned?.managed_by ?? null) : body.managedBy ? String(body.managedBy).toLowerCase() : null;
     db.prepare(
-      `INSERT INTO canvases (id, owner_id, name, description, graph, shared, updated_at) VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
-       ON CONFLICT(id) DO UPDATE SET name = excluded.name, description = excluded.description, graph = excluded.graph, shared = excluded.shared, updated_at = excluded.updated_at`,
-    ).run(id, req.user!.id, body.name.trim(), body.description ?? null, JSON.stringify(graph), shared);
+      `INSERT INTO canvases (id, owner_id, name, description, graph, shared, managed_by, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
+       ON CONFLICT(id) DO UPDATE SET name = excluded.name, description = excluded.description, graph = excluded.graph, shared = excluded.shared, managed_by = excluded.managed_by, updated_at = excluded.updated_at`,
+    ).run(id, req.user!.id, body.name.trim(), body.description ?? null, JSON.stringify(graph), shared, managedBy);
     return toCanvas(canvasFor(req.user!, id)!, req.user!);
   });
 
@@ -336,6 +342,43 @@ export function runRoutes(app: FastifyInstance) {
     const body = (req.body ?? {}) as ResumeRequest & { nodeId?: string };
     if (!['continue', 'reject', 'stop'].includes(String(body.action))) return reply.code(400).send({ error: 'action must be continue, reject or stop' });
     return resumeRun((req.params as { id: string }).id, req.user!, body) ? { ok: true } : reply.code(404).send({ error: 'No paused run with that id' });
+  });
+
+  /**
+   * Loads a workflow's local models without answering (an app calls it the moment its mic opens): the deciders and
+   * the small and medium sizes of Auto model blocks, and fixed models. When the GPU is busy (an image, training) it
+   * answers {busy: true} at once instead of waiting. Cloud models need no warming.
+   */
+  app.post('/api/canvases/:id/warm', { preHandler: requireUser }, async (req, reply) => {
+    const row = canvasFor(req.user!, (req.params as { id: string }).id);
+    if (!row) return reply.code(404).send({ error: 'Canvas not found' });
+    const { graph, providerUser } = runSetup(req.user!, row, undefined);
+    const access = allowedFor(req.user!);
+    const t0 = Date.now();
+    const refs = new Map<string, { ref: ModelRef; keepAlive: string }>();
+    for (const n of graph!.nodes) {
+      const keep = n.config.keepAlive?.trim() || '30m';
+      const add = (r?: ModelRef) => r && access.model(r.providerId, r.model) && refs.set(`${r.providerId}|${r.model}`, { ref: r, keepAlive: keep });
+      if (n.type === 'llm' && n.config.auto) {
+        add(n.config.auto.decider);
+        add(n.config.auto.small);
+        add(n.config.auto.medium);
+      } else if (n.type === 'llm' || n.type === 'decide') add(n.config.model);
+    }
+    const resolve = resolverFor(providerUser);
+    const free = gpuFreerFor(providerUser);
+    const warmed: string[] = [];
+    for (const { ref, keepAlive } of refs.values()) {
+      const p = await resolve(ref.providerId).catch(() => undefined);
+      if (!p?.local || !p.adapter.warm) continue;
+      if (p.exclusive !== false && hostHolder(p.hostKey)) return { warmed, busy: true, ms: Date.now() - t0 };
+      await free(p.hostKey, ref.providerId, { model: ref.model, bytes: (await p.modelInfo(ref.model).catch(() => undefined))?.sizeBytes }).catch(() => {});
+      try {
+        await p.adapter.warm(ref.model, keepAlive);
+        warmed.push(ref.model);
+      } catch {}
+    }
+    return { warmed, ms: Date.now() - t0 };
   });
 
   /** The run's owner, or a full admin (Activity → Stop), may stop it; anyone else gets 404. */

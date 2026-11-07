@@ -76,6 +76,8 @@ const BLOCKS: Record<NodeType, string> = {
   pause: 'waits for the user: shows "title", the text wired in (and the files changed so far) and goes on when they press Continue (they may edit the text). A block wired after it labelled "rejected" runs instead when they press Reject. Use before anything that publishes or pushes.',
   foreach: 'runs the blocks between it and its Collect block once per item of the list wired in (a JSON list like {"files": [...]}, or one item per line); each run gets one item as its input. Needs exactly one Collect after it. "maxItems" (default 50).',
   collect: 'ends a For each: gathers the result of every item, in order, and passes them on.',
+  deepSearch: 'RESEARCH: searches the web for the question (or the text wired in; "searchList": true searches each line or {"research": [...]}), reads "pageBatch" sites per round and decides after each round (with "decider", a decision model, else its own "model") to stop, read more sites, or search with new words, up to "maxPages" sites. Its output is {"items": [{url, title, text}]}: put a For each after it to review each site.',
+  panel: 'RESEARCH: "count" (default 2) different models, picked at random from "models" (2 or more), each review the text wired in with "prompt"/"system"; a failing one is replaced from the pool. Use it to have several AIs judge each source.',
 };
 
 const ref = (m: ModelInfo) => `${m.providerId}|${m.model}`;

@@ -290,6 +290,26 @@ export const NODE_META: Record<NodeType, NodeMeta> = {
     hasInput: true,
     hasOutput: true,
   },
+  deepSearch: {
+    title: 'Deep search',
+    color: '#38bdf8',
+    group: 'Data',
+    description:
+      'Searches the web in rounds: reads a few sites, then decides (with a decision model, or its own model) to stop, read more sites, or search with other words. Gives the sites it read, for a For each to review one by one.',
+    usesModel: true,
+    hasInput: true,
+    hasOutput: true,
+  },
+  panel: {
+    title: 'Review panel',
+    color: '#fda4af',
+    group: 'Logic',
+    description: 'Several different AIs, picked at random from a pool, each review what is wired in. A reviewer that fails is replaced by another from the pool.',
+    usesModel: false,
+    multiModel: 2,
+    hasInput: true,
+    hasOutput: true,
+  },
   collect: {
     title: 'Collect',
     color: '#c084fc',
@@ -303,8 +323,8 @@ export const NODE_META: Record<NodeType, NodeMeta> = {
 
 export const PALETTE: { group: NodeGroup; types: NodeType[] }[] = [
   { group: 'Core', types: ['input', 'llm', 'review', 'judge', 'output'] },
-  { group: 'Logic', types: ['router', 'decide', 'debate', 'vote', 'pause', 'foreach', 'collect'] },
-  { group: 'Data', types: ['template', 'file', 'search', 'memory'] },
+  { group: 'Logic', types: ['router', 'decide', 'debate', 'vote', 'panel', 'pause', 'foreach', 'collect'] },
+  { group: 'Data', types: ['template', 'file', 'search', 'deepSearch', 'memory'] },
   { group: 'Create', types: ['image', 'save'] },
   { group: 'Action', types: ['homeassistant', 'webhook', 'discord'] },
   { group: 'Project', types: ['readProject', 'writeFiles', 'updateNotes', 'build', 'git'] },
@@ -394,6 +414,12 @@ export function summary(kind: NodeType, c: import('@hivemind/shared').NodeConfig
       return { text: c.timeoutMinutes ? `${c.title || 'Check'} · ${c.timeoutMinutes} min` : c.title || 'Waits for you' };
     case 'foreach':
       return { text: `each item · max ${c.maxItems ?? 50}` };
+    case 'deepSearch':
+      return c.model ? { text: `${c.pageBatch ?? 5} sites a round · max ${c.maxPages ?? 15}${c.decider ? ' · Jev decides' : ''}` } : { text: 'Pick a model →', missing: true };
+    case 'panel': {
+      const n = c.models?.length ?? 0;
+      return n >= 2 ? { text: `${c.count ?? 2} of ${n} at random` } : { text: 'Pick 2+ models →', missing: true };
+    }
   }
 }
 

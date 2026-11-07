@@ -1,7 +1,7 @@
 // Types shared by the server, the web UI and (later) the Android app.
 // The canvas format and run events are the contract between them.
 
-export const NODE_TYPES = ['input', 'llm', 'review', 'judge', 'output', 'router', 'debate', 'vote', 'decide', 'template', 'file', 'search', 'memory', 'save', 'image', 'homeassistant', 'webhook', 'discord', 'generate', 'dataset', 'train', 'evaluate', 'deploy', 'readProject', 'writeFiles', 'updateNotes', 'git', 'build', 'pause', 'foreach', 'collect'] as const;
+export const NODE_TYPES = ['input', 'llm', 'review', 'judge', 'output', 'router', 'debate', 'vote', 'decide', 'template', 'file', 'search', 'memory', 'save', 'image', 'homeassistant', 'webhook', 'discord', 'generate', 'dataset', 'train', 'evaluate', 'deploy', 'readProject', 'writeFiles', 'updateNotes', 'git', 'build', 'pause', 'foreach', 'collect', 'deepSearch', 'panel'] as const;
 export type NodeType = (typeof NODE_TYPES)[number];
 
 /** Which model a node uses: a configured provider plus a model id on it. */
@@ -164,6 +164,10 @@ export interface NodeConfig {
   onTimeout?: 'continue' | 'reject' | 'stop';
   /** For each: at most this many items (default 50). */
   maxItems?: number;
+  /** Deep search: sites read per round (default 5), at most this many sites in all (default 15), at most this many rounds (default 4). */
+  pageBatch?: number;
+  maxPages?: number;
+  maxRounds?: number;
   /** Skills (LLM, Review, Judge): fixed skills by name, or "auto": the model's own pick from the list. */
   skills?: string[];
   skillMode?: 'off' | 'fixed' | 'auto';

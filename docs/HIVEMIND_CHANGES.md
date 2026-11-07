@@ -811,6 +811,26 @@ which project it works on, and can make a new one.
 
 ---
 
+## M14 — Deep research
+
+- **Deep search** block (`deepSearch`): searches the web in rounds. Each round reads `pageBatch` new sites (default
+  5; a site is never read twice), then decides with `decider` (a decision model: one choice question) or else its own
+  `model` (JSON): `enough`, `more_sites`, `many_more_sites` (three times the batch) or `new_query` (its model writes
+  other search words). At most `maxPages` sites (default 15, up to 40) and `maxRounds` rounds per search (default 4).
+  `searchList` researches each line of the text wired in (or `{"research": [...]}`), sharing the sites out. Output:
+  `{"question", "queries", "items": [{url, title, query, text}]}` — a For each goes through `items`.
+- DuckDuckGo search can now go several result pages deep (up to 40 results), through the page's own "Next" form.
+- **Review panel** block (`panel`): `count` (default 2) different models, picked at random from the pool in
+  `models`, each review the text wired in (`system`/`prompt`); a reviewer that fails is replaced by another from the
+  pool. Output: one `### Reviewer: <model>` section each.
+- Templates (group **Research**): **Deep research** (deep search → each site reviewed by 2 random AIs → memory key
+  `research` → 3 AIs read the memory for facts, conflicts, links and gaps → follow-up searches → reviewed → final
+  answer with sources), **Deep research: dig deeper** (goes on from the memory), **Research: what do we know?**
+  (memory only) and **Research: add notes** (your own data into the memory).
+- Tests: `server/test/research.blocks.test.ts`.
+
+---
+
 ## The DungeonMind canvases (installed by DungeonMind, documented here)
 
 DungeonMind keeps the JSON in its repo under `hivemind/*.canvas.json` and installs it with `PUT /api/canvases/<id>`. The user picks the models per node in HiveMind afterwards. The defaults come from the Lab scoreboard (Part 2).

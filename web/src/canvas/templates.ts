@@ -9,7 +9,7 @@ export interface TemplateModels {
   decision?: ModelRef;
 }
 
-export const TEMPLATE_GROUPS = ['Everyday', 'Voice', 'Coding', 'Creative', 'Home / research', 'Website', 'Decisions', 'Train', 'Tabletop'] as const;
+export const TEMPLATE_GROUPS = ['Everyday', 'Voice', 'Coding', 'Creative', 'Home / research', 'Research', 'Website', 'Decisions', 'Train', 'Tabletop'] as const;
 export type TemplateGroup = (typeof TEMPLATE_GROUPS)[number];
 
 export interface Template {
@@ -565,6 +565,169 @@ const TABLETOP: Template[] = [
   },
 ];
 
+// ---- Research: deep web research with several AIs per source, a shared memory, and follow-ups ----
+
+/** All research shares one memory key; each run finds what it needs in it by searching for its question. */
+const RESEARCH_KEY = 'research';
+
+const SITE_REVIEW =
+  'You review one web page for a research question. Start with "Source: <its url>". Then write what it says that matters for the question (facts, numbers, names, colours, dates, prices), ' +
+  'how reliable it looks (shop, review, forum, official, old?), and anything it says that may contradict other sources. Be short and concrete; write "nothing useful" when it has nothing.';
+
+const PAGE_PROMPT = 'Research question: {{question}}\n\nThe page:\n{{inputs}}';
+
+const ANALYST_SYSTEM =
+  'You read the notes of a web research (reviews of many sources by several AIs) and pull out what they add up to. Write: ' +
+  '1. FACTS: what is well supported (by several sources), with the sources. ' +
+  '2. CONFLICTS: where sources disagree (e.g. one says the shoe is blue, another red), with both sides and sources. ' +
+  '3. LINKS: things that connect or explain each other, or point to something worth knowing. ' +
+  '4. GAPS: what the question needs that nobody answered.';
+
+const LEADS_SYSTEM =
+  'From the analysts\' notes on a research, write the follow-up web searches worth doing: each conflict to settle, each link to check, each gap to fill. ' +
+  'At most 4 short search queries, one per line, nothing else. If nothing is worth following up, write only: NONE';
+
+const WRITER_SYSTEM =
+  'You write the final answer of a web research, from the notes in memory and the analysts. Answer the question directly first. Then: the evidence with sources (links), ' +
+  'conflicts and how they were settled (or that they are still open), and how sure you are. End with 2-3 ideas for more research. Never invent sources.';
+
+const memoryRead = (x: number, y: number, label: string, limit = 40) => node('memory', x, y, label, { key: RESEARCH_KEY, mode: 'search', query: '{{question}}', limit });
+const memoryWrite = (x: number, y: number, label: string) => node('memory', x, y, label, { key: RESEARCH_KEY, mode: 'save' });
+
+/** Everyone who may review: the fast models and the strong one, without repeats. */
+function reviewerPool(m: TemplateModels): ModelRef[] {
+  const all = [...m.text, m.judge].filter((x): x is ModelRef => !!x);
+  return all.filter((x, i) => all.findIndex((y) => y.providerId === x.providerId && y.model === x.model) === i);
+}
+
+/**
+ * Search (adaptive), then each site is reviewed by 2 random AIs and kept in memory. Returns the blocks, the edges,
+ * and the Collect block at the end.
+ */
+function searchAndReview(m: TemplateModels, x: number, y: number, label: string, opts: { list?: boolean; batch?: number; max?: number; rounds?: number }) {
+  const fast = m.text[0] ?? m.judge;
+  const pool = reviewerPool(m);
+  const deep = node('deepSearch', x, y, label, {
+    ...(fast && { model: fast }),
+    ...(m.decision && { decider: m.decision }),
+    source: 'duckduckgo',
+    pageBatch: opts.batch ?? 5,
+    maxPages: opts.max ?? 15,
+    maxRounds: opts.rounds ?? 4,
+    ...(opts.list && { searchList: true }),
+    think: false,
+  });
+  const each = node('foreach', x + 300, y, 'For each site', { maxItems: 40 });
+  const review = node('panel', x + 600, y, '2 random reviewers', { models: pool, count: 2, system: SITE_REVIEW, prompt: PAGE_PROMPT, think: false });
+  const keep = memoryWrite(x + 900, y, 'Keep in memory');
+  const all = node('collect', x + 1200, y, 'All sites reviewed');
+  return { nodes: [deep, each, review, keep, all], edges: [wire(deep, each), wire(each, review), wire(review, keep), wire(keep, all)], first: deep, last: all };
+}
+
+function analysts(m: TemplateModels, x: number, y: number) {
+  return node('panel', x, y, '3 analysts read the memory', { models: reviewerPool(m), count: 3, system: ANALYST_SYSTEM, prompt: 'Research question: {{question}}\n\nThe notes:\n{{inputs}}', think: false });
+}
+
+function deepResearch(m: TemplateModels): CanvasGraph {
+  const fast = m.text[0] ?? m.judge;
+  const strong = m.judge ?? m.text[0];
+  const q = node('input', 0, 240, 'What to research');
+  const one = searchAndReview(m, 300, 240, 'Deep search', {});
+  const recall = memoryRead(1800, 240, 'Read the memory');
+  const team = analysts(m, 2100, 240);
+  const leads = node('llm', 2400, 240, 'Follow-ups to research', { ...(fast && { model: fast }), system: LEADS_SYSTEM, prompt: 'Research question: {{question}}\n\n{{inputs}}', think: false, maxTokens: 512 });
+  const two = searchAndReview(m, 2700, 240, 'Research the follow-ups', { list: true, batch: 3, max: 9, rounds: 2 });
+  const recallAll = memoryRead(4200, 240, 'Read the memory again', 60);
+  const writer = node('llm', 4500, 240, 'Final answer', { ...(strong && { model: strong }), system: WRITER_SYSTEM, prompt: 'Research question: {{question}}\n\n{{inputs}}', think: false, maxTokens: 4096, numCtx: 32768 });
+  const out = node('output', 4800, 240, 'Answer');
+  return {
+    nodes: [q, ...one.nodes, recall, team, leads, ...two.nodes, recallAll, writer, out],
+    edges: [
+      wire(q, one.first),
+      ...one.edges,
+      wire(one.last, recall),
+      wire(recall, team),
+      wire(team, leads),
+      wire(leads, two.first),
+      ...two.edges,
+      wire(two.last, recallAll),
+      wire(recallAll, writer),
+      wire(team, writer),
+      wire(writer, out),
+    ],
+  };
+}
+
+function digDeeper(m: TemplateModels): CanvasGraph {
+  const fast = m.text[0] ?? m.judge;
+  const strong = m.judge ?? m.text[0];
+  const q = node('input', 0, 240, 'What to dig into');
+  const recall = memoryRead(300, 240, 'What we know');
+  const team = analysts(m, 600, 240);
+  const leads = node('llm', 900, 240, 'What to research next', {
+    ...(fast && { model: fast }),
+    system: `${LEADS_SYSTEM} The owner asked to dig deeper into: use their words to choose. If the memory has nothing yet, write searches for the question itself.`,
+    prompt: 'Dig deeper into: {{question}}\n\n{{inputs}}',
+    think: false,
+    maxTokens: 512,
+  });
+  const more = searchAndReview(m, 1200, 240, 'Research it', { list: true, batch: 5, max: 15, rounds: 3 });
+  const recallAll = memoryRead(2700, 240, 'Read the memory again', 60);
+  const writer = node('llm', 3000, 240, 'Answer', { ...(strong && { model: strong }), system: WRITER_SYSTEM, prompt: 'Research question: {{question}}\n\n{{inputs}}', think: false, maxTokens: 4096, numCtx: 32768 });
+  const out = node('output', 3300, 240, 'Answer');
+  return {
+    nodes: [q, recall, team, leads, ...more.nodes, recallAll, writer, out],
+    edges: [wire(q, recall), wire(recall, team), wire(team, leads), wire(leads, more.first), ...more.edges, wire(more.last, recallAll), wire(recallAll, writer), wire(team, writer), wire(writer, out)],
+  };
+}
+
+const RESEARCH: Template[] = [
+  {
+    id: 'deep-research',
+    group: 'Research',
+    name: 'Deep research',
+    description:
+      'Searches the web in rounds (reads more sites or changes the search words when the first ones miss), has every site reviewed by 2 random AIs, keeps it all in memory, lets 3 AIs find facts, conflicts and links, researches those too, and writes the answer with sources.',
+    build: deepResearch,
+  },
+  {
+    id: 'deep-research-more',
+    group: 'Research',
+    name: 'Deep research: dig deeper',
+    description: 'Goes on from what the research memory already holds: finds conflicts, links and gaps, researches them on the web (2 random AIs per site), and answers again.',
+    build: digDeeper,
+  },
+  {
+    id: 'research-ask',
+    group: 'Research',
+    name: 'Research: what do we know?',
+    description: 'Answers from the research memory only (no web): several AIs read the notes, one writes the answer with sources.',
+    build: (m) => {
+      const strong = m.judge ?? m.text[0];
+      return chain(
+        node('input', 0, 160, 'Question'),
+        memoryRead(300, 160, 'Read the memory', 60),
+        node('panel', 600, 160, '2 AIs read the notes', { models: reviewerPool(m), count: 2, system: ANALYST_SYSTEM, prompt: 'Question: {{question}}\n\nThe notes:\n{{inputs}}', think: false }),
+        node('llm', 900, 160, 'Answer', { ...(strong && { model: strong }), system: `${WRITER_SYSTEM} Use only what is in the notes; say plainly what the memory does not know.`, think: false }),
+        node('output', 1200, 160, 'Answer'),
+      );
+    },
+  },
+  {
+    id: 'research-add',
+    group: 'Research',
+    name: 'Research: add notes',
+    description: 'Adds your own notes or data to the research memory (one note per run); later research and answers use it like any source.',
+    build: () =>
+      chain(
+        node('input', 0, 160, 'Your note or data'),
+        node('memory', 320, 160, 'Keep in memory', { key: RESEARCH_KEY, mode: 'save' }),
+        node('template', 640, 160, 'Saved', { prompt: 'Saved in the research memory:\n\n{{question}}' }),
+        node('output', 960, 160, 'Result'),
+      ),
+  },
+];
+
 export const TEMPLATES: Template[] = [
   // ---- Everyday ----
   { id: 'council', group: 'Everyday', name: 'Council', description: '3 models answer, a judge merges the best parts.', build: (m) => council(m, false) },
@@ -842,6 +1005,7 @@ export const TEMPLATES: Template[] = [
       'Builds a program in a project, run after run (Node.js, also as a Windows .exe): a fast model plans and writes it, looks up online what it does not know, builds it, and when the build fails looks the error up and fixes it; a strong model checks it; PROJECT.md remembers it.',
     build: softwareBuilder,
   },
+  ...RESEARCH,
   ...VOICE,
   ...DECISIONS,
   ...TRAIN,

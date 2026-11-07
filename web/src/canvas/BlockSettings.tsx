@@ -184,6 +184,24 @@ function KindSettings(p: Props) {
       );
     case 'decide':
       return <DecideSettings {...p} />;
+    case 'panel':
+      return (
+        <div className="space-y-3">
+          <ModelList {...p} title="Pool of reviewers" min={2} />
+          <label className="block space-y-1">
+            <span className="text-xs text-slate-400">
+              Reviewers each time: {Math.min(p.config.count ?? 2, Math.max(2, p.config.models?.length ?? 2))}, picked at random
+            </span>
+            <input type="range" className="w-full" min={1} max={Math.max(2, p.config.models?.length ?? 2)} value={p.config.count ?? 2} onChange={(e) => p.onChange({ count: Number(e.target.value) })} />
+          </label>
+          <label className="block space-y-1">
+            <Label>What to look for</Label>
+            <textarea className="input min-h-16 text-xs" placeholder="Question: {{question}}\n\n{{inputs}}" value={p.config.prompt ?? ''} onChange={(e) => p.onChange({ prompt: e.target.value || undefined })} />
+          </label>
+        </div>
+      );
+    case 'deepSearch':
+      return <DeepSearchSettings {...p} />;
     case 'debate':
       return (
         <div className="space-y-3">
@@ -747,6 +765,64 @@ function HomeAssistantSettings(p: Props) {
           <TemplateHelp />
         </>
       )}
+    </div>
+  );
+}
+
+/** Deep search: the source, sites per round, the total, rounds, and who decides what to do next. */
+function DeepSearchSettings(p: Props) {
+  const c = p.config;
+  const deciders = p.models.filter((m) => m.kind === 'decision');
+  const num = (key: 'pageBatch' | 'maxPages' | 'maxRounds', label: string, min: number, max: number, def: number) => (
+    <label className="block space-y-1">
+      <span className="text-xs text-slate-400">
+        {label}: {c[key] ?? def}
+      </span>
+      <input type="range" className="w-full" min={min} max={max} value={c[key] ?? def} onChange={(e) => p.onChange({ [key]: Number(e.target.value) })} />
+    </label>
+  );
+  return (
+    <div className="space-y-2">
+      <label className="block space-y-1">
+        <Label>Search with</Label>
+        <select className="input text-xs" value={c.source ?? 'duckduckgo'} onChange={(e) => p.onChange({ source: e.target.value as NodeConfig['source'] })}>
+          {SEARCH_SOURCES.map((s) => (
+            <option key={s} value={s}>
+              {s}
+            </option>
+          ))}
+        </select>
+        <span className="text-xs text-slate-500">DuckDuckGo can go several pages deep; the others give one page of results.</span>
+      </label>
+      {num('pageBatch', 'Sites read each round', 1, 10, 5)}
+      {num('maxPages', 'Sites in all, at most', 1, 40, 15)}
+      {num('maxRounds', 'Rounds per search, at most', 1, 8, 4)}
+      <label className="block space-y-1">
+        <Label>Who decides after each round</Label>
+        <select
+          className="input text-xs"
+          value={c.decider ? `${c.decider.providerId}|${c.decider.model}` : ''}
+          onChange={(e) => {
+            const [providerId, ...rest] = e.target.value.split('|');
+            p.onChange({ decider: e.target.value ? { providerId, model: rest.join('|') } : undefined });
+          }}
+        >
+          <option value="">This block's own model</option>
+          {deciders.map((m) => (
+            <option key={`${m.providerId}|${m.model}`} value={`${m.providerId}|${m.model}`}>
+              {m.name} (decision model)
+            </option>
+          ))}
+        </select>
+        <span className="text-xs text-slate-500">After each round: enough, more sites, many more sites, or search with other words (the block's model writes the new words).</span>
+      </label>
+      <label className="flex items-start gap-2 text-xs text-slate-300">
+        <input type="checkbox" className="mt-0.5" checked={!!c.searchList} onChange={(e) => p.onChange({ searchList: e.target.checked || undefined })} />
+        <span>
+          <span className="font-semibold">Look up a list</span>
+          <span className="block text-slate-500">The text wired in lists several things to research (one per line, or {'{"research": [...]}'}); the sites are shared out over them.</span>
+        </span>
+      </label>
     </div>
   );
 }

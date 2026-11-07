@@ -87,16 +87,39 @@ async function wikipedia(q: string, count: number, lang: string): Promise<Search
 
 const BROWSER_UA = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36';
 
-/** Free and keyless: DuckDuckGo's HTML results (titles, links and snippets of the whole web). */
+/**
+ * Free and keyless: DuckDuckGo's HTML results (titles, links and snippets of the whole web). More than one page
+ * (about 10 results each) is fetched through the page's own "Next" form, at most 4 pages.
+ */
 async function duckduckgo(q: string, count: number): Promise<SearchResult[]> {
-  const res = await fetch('https://html.duckduckgo.com/html/', {
-    method: 'POST',
-    headers: { 'content-type': 'application/x-www-form-urlencoded', 'user-agent': BROWSER_UA, accept: 'text/html' },
-    body: new URLSearchParams({ q, kl: 'wt-wt' }).toString(),
-    signal: AbortSignal.timeout(20_000),
-  });
-  if (!res.ok) throw new Error(`DuckDuckGo answered HTTP ${res.status}`);
-  return parseDuckDuckGo(await res.text()).slice(0, count);
+  const out: SearchResult[] = [];
+  let form: URLSearchParams | undefined = new URLSearchParams({ q, kl: 'wt-wt' });
+  for (let page = 0; form && page < 4 && out.length < count; page++) {
+    const res = await fetch('https://html.duckduckgo.com/html/', {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded', 'user-agent': BROWSER_UA, accept: 'text/html' },
+      body: form.toString(),
+      signal: AbortSignal.timeout(20_000),
+    });
+    if (!res.ok) {
+      if (out.length) break;
+      throw new Error(`DuckDuckGo answered HTTP ${res.status}`);
+    }
+    const html = await res.text();
+    for (const r of parseDuckDuckGo(html)) if (!out.some((o) => o.url === r.url)) out.push(r);
+    form = nextPageForm(html);
+  }
+  return out.slice(0, count);
+}
+
+/** The fields of DuckDuckGo's "Next" form (the next page needs its offset and token), or undefined on the last page. */
+export function nextPageForm(html: string): URLSearchParams | undefined {
+  for (const m of html.matchAll(/<form[^>]*>([\s\S]*?)<\/form>/g)) {
+    if (!/value="Next"/i.test(m[1])) continue;
+    const params = new URLSearchParams();
+    for (const i of m[1].matchAll(/<input[^>]*name="([^"]+)"[^>]*value="([^"]*)"/g)) params.set(i[1], entities(i[2]));
+    if (params.get('q') && params.get('s')) return params;
+  }
 }
 
 /** The results in DuckDuckGo's HTML page; its links go through /l/?uddg=<the real link>. */
@@ -174,7 +197,8 @@ async function searxng(q: string, count: number, base: string): Promise<SearchRe
 export async function webSearch(q: string, opts: { source?: SearchSource; count?: number }): Promise<SearchResult[]> {
   const s = load();
   const source = opts.source ?? s.source;
-  const count = Math.max(1, Math.min(10, opts.count ?? 5));
+  // DuckDuckGo can go several pages deep (Deep search); the others give one page.
+  const count = Math.max(1, Math.min(source === 'duckduckgo' ? 40 : 10, opts.count ?? 5));
   switch (source) {
     case 'wikipedia':
       return wikipedia(q, count, s.wikiLang);

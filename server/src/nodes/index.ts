@@ -5,6 +5,7 @@ import { DECIDE_NODE, DEFAULT_THRESHOLD, toView } from './decide.js';
 import { ACTION_NODES } from './actions.js';
 import { TRAINING_NODES } from './training.js';
 import { PROJECT_NODES, type PauseServices, type ProjectServices } from './projects.js';
+import { RESEARCH_NODES } from './research.js';
 
 /** What a model about to load needs, so other AI servers on the GPU only give memory back when it doesn't fit. */
 export interface GpuNeed {
@@ -769,4 +770,7 @@ export const NODES: Record<NodeType, NodeDefinition> = {
 
   // ---- Projects ----
   ...PROJECT_NODES,
+
+  // ---- Research ----
+  ...RESEARCH_NODES,
 };

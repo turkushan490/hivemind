@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { seedProviders } from './api/providers.js';
+import { seedColibri, seedProviders } from './api/providers.js';
 import { runScheduled } from './api/schedules.js';
 import { buildApp } from './app.js';
 import { config } from './config.js';
@@ -69,6 +69,8 @@ lockDataDir();
 const app = await buildApp();
 
 seedProviders(config.ollamaUrl, config.comfyUrl, config.typesafeKey);
+// The built-in colibri engine (when the image has it) gets its two providers once.
+seedColibri();
 
 await app.listen({ port: config.port, host: config.host });
 

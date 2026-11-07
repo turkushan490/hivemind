@@ -7,6 +7,8 @@ export interface TemplateModels {
   image?: ModelRef;
   /** A decision model (Jev, Nimble…) for Decide blocks and the Auto model. */
   decision?: ModelRef;
+  /** A big, slow model for work that may take hours (a colibri giant model), when there is one. */
+  slow?: ModelRef;
 }
 
 export const TEMPLATE_GROUPS = ['Everyday', 'Voice', 'Coding', 'Creative', 'Home / research', 'Research', 'Website', 'Decisions', 'Train', 'Tabletop'] as const;
@@ -681,6 +683,54 @@ function digDeeper(m: TemplateModels): CanvasGraph {
   };
 }
 
+/**
+ * Overnight: the same search with 2 random reviewers per site on the fast models, then one big slow model (a colibri
+ * giant such as GLM-5.2 or DeepSeek V4) reads the notes and writes the answer. Its blocks may take hours, and get
+ * short prompts: on the CPU a long prompt costs more than the answer.
+ */
+function overnightResearch(m: TemplateModels): CanvasGraph {
+  const fast = m.text[0] ?? m.judge;
+  const big = m.slow ?? m.judge ?? m.text[0];
+  const hours = 6 * 3600;
+  const q = node('input', 0, 240, 'What to research');
+  const one = searchAndReview(m, 300, 240, 'Deep search', { batch: 5, max: 20, rounds: 4 });
+  const recall = memoryRead(1800, 240, 'Read the memory', 20);
+  const think = node('llm', 2100, 240, 'Big model: facts, conflicts, links', {
+    ...(big && { model: big }),
+    system: ANALYST_SYSTEM,
+    prompt: 'Research question: {{question}}\n\nThe notes:\n{{inputs}}',
+    maxTokens: 2048,
+    maxSeconds: hours,
+  });
+  const leads = node('llm', 2400, 240, 'Follow-ups to research', { ...(fast && { model: fast }), system: LEADS_SYSTEM, prompt: 'Research question: {{question}}\n\n{{inputs}}', think: false, maxTokens: 512 });
+  const two = searchAndReview(m, 2700, 240, 'Research the follow-ups', { list: true, batch: 3, max: 12, rounds: 2 });
+  const recallAll = memoryRead(4200, 240, 'Read the memory again', 20);
+  const writer = node('llm', 4500, 240, 'Big model: final answer', {
+    ...(big && { model: big }),
+    system: WRITER_SYSTEM,
+    prompt: 'Research question: {{question}}\n\n{{inputs}}',
+    maxTokens: 4096,
+    maxSeconds: hours,
+  });
+  const out = node('output', 4800, 240, 'Answer');
+  return {
+    nodes: [q, ...one.nodes, recall, think, leads, ...two.nodes, recallAll, writer, out],
+    edges: [
+      wire(q, one.first),
+      ...one.edges,
+      wire(one.last, recall),
+      wire(recall, think),
+      wire(think, leads),
+      wire(leads, two.first),
+      ...two.edges,
+      wire(two.last, recallAll),
+      wire(recallAll, writer),
+      wire(think, writer),
+      wire(writer, out),
+    ],
+  };
+}
+
 const RESEARCH: Template[] = [
   {
     id: 'deep-research',
@@ -689,6 +739,14 @@ const RESEARCH: Template[] = [
     description:
       'Searches the web in rounds (reads more sites or changes the search words when the first ones miss), has every site reviewed by 2 random AIs, keeps it all in memory, lets 3 AIs find facts, conflicts and links, researches those too, and writes the answer with sources.',
     build: deepResearch,
+  },
+  {
+    id: 'deep-research-overnight',
+    group: 'Research',
+    name: 'Deep research: overnight',
+    description:
+      'Deep research for a big, slow model (a colibri giant such as GLM-5.2 or DeepSeek V4): the fast models search and review every site with 2 random AIs, then the big model reads the notes, finds conflicts and links, and writes the answer. Its blocks may take hours: start it in the evening.',
+    build: overnightResearch,
   },
   {
     id: 'deep-research-more',

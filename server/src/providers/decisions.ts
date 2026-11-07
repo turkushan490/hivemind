@@ -46,14 +46,14 @@ export interface DecisionResult {
 
 const TIMEOUT_MS = 30_000;
 
-async function post(url: string, body: unknown, headers: Record<string, string>, signal: AbortSignal | undefined, what: string): Promise<unknown> {
-  const timeout = AbortSignal.timeout(TIMEOUT_MS);
+export async function post(url: string, body: unknown, headers: Record<string, string>, signal: AbortSignal | undefined, what: string, timeoutMs = TIMEOUT_MS): Promise<unknown> {
+  const timeout = AbortSignal.timeout(timeoutMs);
   let res: Response;
   try {
     res = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify(body), signal: signal ? AbortSignal.any([signal, timeout]) : timeout });
   } catch (err) {
     if (signal?.aborted) throw new Error('Cancelled');
-    if (timeout.aborted) throw new ProviderError(`${what} did not answer within ${TIMEOUT_MS / 1000} s`);
+    if (timeout.aborted) throw new ProviderError(`${what} did not answer within ${Math.round(timeoutMs / 1000)} s`);
     const cause = (err as { cause?: { code?: string } }).cause;
     throw new ProviderError(`Can't reach ${what} at ${url}: ${cause?.code ?? (err as Error).message}`);
   }

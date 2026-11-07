@@ -50,4 +50,6 @@ export const FEATURES: readonly string[] = [
   'routeInfo',
   'managedBy',
   'hivebot',
+  // M15: colibri inside the container (Settings → Colibri; providers "colibri" and "colibri-decisions").
+  'colibri',
 ];

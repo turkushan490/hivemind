@@ -276,7 +276,15 @@ function Editor({ active, onProblem, followRequest }: { active: boolean; onProbl
     const t = TEMPLATES.find((x) => x.id === id)!;
     const refs = prefillModels(ms);
     const d = ms.find((m) => m.kind === 'decision');
-    const graph = t.build({ text: refs.slice(0, 3), judge: refs[3], image: pickImageModel(ms), ...(d && { decision: { providerId: d.providerId, model: d.model } }) });
+    // A colibri giant model, for the templates with work that may take hours.
+    const slow = ms.find((m) => !m.kind && / \(colibri, slow\)$/.test(m.name));
+    const graph = t.build({
+      text: refs.slice(0, 3),
+      judge: refs[3],
+      image: pickImageModel(ms),
+      ...(d && { decision: { providerId: d.providerId, model: d.model } }),
+      ...(slow && { slow: { providerId: slow.providerId, model: slow.model } }),
+    });
     show(graph);
     setDoc({ name: t.name });
     setSaved(undefined);

@@ -829,6 +829,58 @@ which project it works on, and can make a new one.
   (memory only) and **Research: add notes** (your own data into the memory).
 - Tests: `server/test/research.blocks.test.ts`.
 
+## M15 — Colibri inside HiveMind
+
+[Colibri](https://github.com/JustVugg/colibri) (Apache-2.0) runs very large mixture-of-experts models (35B up to
+2.8T parameters). It keeps the experts a model uses most on the GPU or in RAM and streams the rest from disk.
+
+- **Image.** A build stage compiles a pinned release (`COLIBRI_REF`, now v2.1.0) twice:
+  - for x86-64-v3 CPUs;
+  - with CUDA for `CUDA_ARCH` (default `sm_75`; colibri's own release files start at sm_80).
+  - The engines built are GLM (`colibri`), `qwen36` and `deepseek-v4`.
+  - An engine that fails to build is left out, and the image still builds.
+  - Everything lands in `/opt/colibri/{cpu,cuda}/c` with a `build.json`.
+- **Engine** (`server/src/colibri/engine.ts`).
+  - **Process:** HiveMind starts `coli serve` on `127.0.0.1:8790` (`COLIBRI_PORT`) with one model at a time.
+  - **Switching models:** a restart. It waits until no call is using the loaded model.
+  - **Unloading:** after `keepAliveMin` minutes, or a block's `keepAlive`.
+  - **RAM:** the container's cgroup limit minus 4 GB, or the `ramGb` setting. A model whose catalog minimum is more than that is refused with a clear message.
+  - **CUDA fallback:** if the CUDA build won't start (no GPU, a missing library), it falls back to the CPU build.
+- **Models** live in `<DATA_DIR>/colibri/models/<id>`. `server/colibri/helper.py` runs colibri's own Python:
+  - `setup_catalog.py` gives the catalog with fits / tight / needs-ram / needs-disk against this container.
+  - `setup_download.py` downloads from Hugging Face with resume (and the Hugging Face token from Settings).
+  - **GGUF import:** downloads the file, then runs `coli import`.
+- **Providers**, added by themselves once, when the image has the engine:
+  - **`colibri`** (kind `openai`) lists every installed model, and a call loads the model. Giant models are named `… (colibri, slow)`.
+  - **`colibri-decisions`** (kind `decision`) answers Decide blocks and the Auto router through `/v1/systemone`, which has the same request and reply as Jev.
+  - **GPU queue:** both share it with the Ollama/ComfyUI on the same machine. That machine is `gpuHost`, by default the host of the first local Ollama.
+  - **CPU only** (`gpu: off`): colibri never waits for the GPU.
+  - **Time limit:** a block without `maxSeconds` gets `callSeconds` (default 7200).
+- **API** (admins):
+  - `GET /api/colibri/status`
+  - `PUT /api/colibri/settings`
+  - `GET /api/colibri/catalog`
+  - `POST /api/colibri/download {id}`
+  - `POST /api/colibri/import {repo, file, name}`
+  - `GET /api/colibri/jobs`
+  - `POST /api/colibri/jobs/:id/cancel`
+  - `DELETE /api/colibri/models/:name`
+  - `POST /api/colibri/load {model}`
+  - `POST /api/colibri/unload`
+  - Feature flag `colibri`.
+- **Settings → Colibri:**
+  - the engine (CUDA or CPU), RAM against the container limit, free disk;
+  - your models (Load now, Delete);
+  - downloads with progress;
+  - the catalog with fit labels;
+  - GGUF import;
+  - the settings and the engine log.
+- **Template** **Deep research: overnight:**
+  - the fast models search, and 2 random AIs review each site;
+  - a big slow model (the first `(colibri, slow)` model there is) finds facts, conflicts and links, and writes the answer;
+  - those blocks allow 6 hours, with short memory reads (20 notes).
+- Tests: `server/test/colibri.test.ts`, which uses a fake `coli serve` (`server/test/fake-coli.mjs`).
+
 ---
 
 ## The DungeonMind canvases (installed by DungeonMind, documented here)

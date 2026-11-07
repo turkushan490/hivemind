@@ -6,6 +6,7 @@ import { accessRoutes } from './api/access.js';
 import { activityRoutes } from './api/activity.js';
 import { authRoutes, viewerGuard } from './api/auth.js';
 import { builderRoutes } from './api/builder.js';
+import { colibriRoutes } from './api/colibri.js';
 import { exportRoutes } from './api/exports.js';
 import { fileRoutes } from './api/files.js';
 import { labRoutes } from './api/lab.js';
@@ -112,6 +113,7 @@ export async function buildApp(opts: { logger?: boolean; web?: boolean; onRoute?
   accessRoutes(app);
   projectRoutes(app);
   skillRoutes(app);
+  colibriRoutes(app);
 
   if (opts.web !== false && existsSync(config.webDir)) {
     await app.register(staticFiles, {

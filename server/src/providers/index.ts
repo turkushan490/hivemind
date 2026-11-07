@@ -1,4 +1,5 @@
 import { anthropicAdapter } from './anthropic.js';
+import { colibriChatAdapter, colibriDecisionAdapter } from './colibri.js';
 import { comfyAdapter } from './comfyui.js';
 import { decisionAdapter } from './decisions.js';
 import { ollamaAdapter } from './ollama.js';
@@ -13,12 +14,12 @@ export function createAdapter(cfg: ProviderConfig): ProviderAdapter {
     case 'ollama':
       return ollamaAdapter(cfg);
     case 'openai':
-      return openaiAdapter(cfg);
+      return cfg.preset === 'colibri' ? colibriChatAdapter(cfg) : openaiAdapter(cfg);
     case 'anthropic':
       return anthropicAdapter(cfg);
     case 'comfyui':
       return comfyAdapter(cfg);
     case 'decision':
-      return decisionAdapter(cfg);
+      return cfg.preset === 'colibri-decisions' ? colibriDecisionAdapter(cfg) : decisionAdapter(cfg);
   }
 }

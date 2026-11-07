@@ -13,6 +13,8 @@ export interface ResolvedProvider {
   /** Local and not switched to parallel: one job at a time per host (VRAM). */
   exclusive?: boolean;
   hostKey: string;
+  /** Seconds a call may take when the block sets none (slow providers like colibri); else the run limit. */
+  callSeconds?: number;
   modelInfo(model: string): Promise<ModelInfo | undefined>;
   /** Remembered timings per model on this provider, to show real progress next time. */
   stats?: {
@@ -161,10 +163,10 @@ const maxTokensOf = (node: CanvasNode, limits: RunLimits, isLocal: boolean) => {
 };
 
 /** Seconds one model call may take: the block's own (10 to 86400) wins over the run limit. */
-const maxSecondsOf = (node: CanvasNode, limits: RunLimits) => {
+const maxSecondsOf = (node: CanvasNode, limits: RunLimits, provider?: { callSeconds?: number }) => {
   const n = node.config.maxSeconds;
   if (n && Number.isFinite(n)) return Math.round(Math.min(86400, Math.max(10, n)));
-  return limits.maxSeconds;
+  return provider?.callSeconds ? Math.max(limits.maxSeconds, provider.callSeconds) : limits.maxSeconds;
 };
 
 /** A model call that ran past its time limit (not a cancel: the run goes on, the block fails). */
@@ -289,7 +291,7 @@ export async function runGraph(
         let callIn = 0;
         let callCostUsd: number | undefined;
         const maxTokens = maxTokensOf(node, limits, p.local);
-        const limitSecs = maxSecondsOf(node, limits);
+        const limitSecs = maxSecondsOf(node, limits, p);
         // The clock starts here, once the GPU is held: time in the queue doesn't count.
         const timer = callTimer(signal, limitSecs);
         const it = p.adapter.stream({ model: ref.model, messages, temperature: node.config.temperature, think, json, numCtx: numCtxOf(node, limits, p.local), maxTokens, keepAlive: node.config.keepAlive }, timer.signal)[Symbol.asyncIterator]();
@@ -398,7 +400,7 @@ export async function runGraph(
           const ask = async (): Promise<DecisionResult> => {
             // A local decision model (Ollama) shares the GPU like any other local model.
             if (p.local && p.exclusive !== false) await deps.services?.freeGpu?.(p.hostKey, m.providerId, { model: m.model, bytes: (await p.modelInfo(m.model).catch(() => undefined))?.sizeBytes }).catch(() => {});
-            const secs = maxSecondsOf(node, limits);
+            const secs = maxSecondsOf(node, limits, p);
             const timer = callTimer(signal, secs);
             let r: DecisionResult;
             try {

@@ -13,6 +13,24 @@ import { requireUser, type User } from './auth.js';
 import { canvasAllowed, datasetAllowed, trainingAllowed } from './scope.js';
 import { mayUseFile } from '../services/files.js';
 import { addToBasic, allowedFor, keepComfyCopy, type Access } from '../services/access.js';
+import { colibriAvailable, colibriSettings, gpuUsable } from '../colibri/engine.js';
+
+/** The two providers of the built-in colibri engine (src/colibri). */
+export const isColibri = (preset: string) => preset === 'colibri' || preset === 'colibri-decisions';
+
+/**
+ * The machine whose GPU the built-in colibri uses. It runs in this container (127.0.0.1), but the GPU is the one
+ * Ollama or ComfyUI use too: the setting, else the host of the first local Ollama, so they share one GPU queue.
+ */
+export function colibriGpuHost(): string {
+  const set = colibriSettings().gpuHost;
+  if (set) return set;
+  const ollama = db.prepare("SELECT base_url FROM providers WHERE kind = 'ollama' AND local = 1 AND enabled = 1 ORDER BY created_at LIMIT 1").get() as { base_url: string } | undefined;
+  return ollama ? hostOf(ollama.base_url) : '127.0.0.1';
+}
+
+/** The GPU queue a local provider belongs to. */
+const gpuHostOf = (row: { preset: string; base_url: string }) => (isColibri(row.preset) ? colibriGpuHost() : hostOf(row.base_url));
 
 interface ProviderRow {
   id: string;
@@ -100,10 +118,12 @@ export function resolverFor(user: User) {
     return {
       adapter: adapterFor(row),
       local: !!row.local,
-      // Parallel on: this server's models don't wait for each other.
-      exclusive: !!row.local && !row.parallel,
-      // One GPU per machine: Ollama and ComfyUI on the same host share the lock.
-      hostKey: hostOf(row.base_url),
+      // Parallel on: this server's models don't wait for each other. Colibri on the CPU holds no GPU.
+      exclusive: !!row.local && !row.parallel && (!isColibri(row.preset) || gpuUsable()),
+      // One GPU per machine: Ollama, ComfyUI and colibri on the same host share the lock.
+      hostKey: gpuHostOf(row),
+      // Colibri's giant models are slow: a block without its own limit gets the colibri one.
+      ...(isColibri(row.preset) && { callSeconds: colibriSettings().callSeconds }),
       modelInfo: async (model) => (await modelsOf(row)).find((m) => m.model === model),
       stats: row.local ? modelStats(row.id) : undefined,
     };
@@ -169,7 +189,7 @@ export function gpuFreerFor(user: User) {
       if (loaded?.some((m) => sameModel(m.model, need.model!))) return;
     }
     const rows = visibleRows(user).filter(
-      (r) => r.enabled && r.local && r.id !== exceptProviderId && hostOf(r.base_url) === hostKey && !(own && originOf(r.base_url) === originOf(own.base_url)),
+      (r) => r.enabled && r.local && r.id !== exceptProviderId && gpuHostOf(r) === hostKey && !(own && originOf(r.base_url) === originOf(own.base_url)),
     );
     await Promise.allSettled(
       rows.map(async (r) => {
@@ -235,8 +255,20 @@ export function seedProviders(ollamaUrl: string, comfyUrl?: string, typesafeKey?
   }
 }
 
+/** The built-in colibri: both providers, shared, once (removing them later in Settings sticks). */
+export function seedColibri() {
+  if (!colibriAvailable() || getSetting('seeded.colibri')) return;
+  const add = db.prepare('INSERT OR IGNORE INTO providers (id, preset, kind, name, base_url, local) VALUES (?, ?, ?, ?, ?, 1)');
+  for (const id of ['colibri', 'colibri-decisions']) {
+    const p = PROVIDER_PRESETS.find((x) => x.id === id)!;
+    if (!db.prepare('SELECT 1 FROM providers WHERE preset = ?').get(id)) add.run(id, id, p.kind, p.name, p.baseUrl);
+  }
+  setSetting('seeded.colibri', '1');
+}
+
 export function providerRoutes(app: FastifyInstance) {
-  app.get('/api/providers/presets', async () => PROVIDER_PRESETS);
+  // Colibri's presets only where the image has the engine.
+  app.get('/api/providers/presets', async () => PROVIDER_PRESETS.filter((p) => !isColibri(p.id) || colibriAvailable()));
 
   app.get('/api/providers', { preHandler: requireUser }, async (req) => usableRows(req.user!).map(toInfo));
 

@@ -20,6 +20,17 @@ COPY server/package.json server/
 COPY web/package.json web/
 RUN npm ci --omit=dev -w server && npm cache clean --force
 
+# ---- colibri: an engine for very large mixture-of-experts models (Settings → Colibri), pinned to a release ----
+# Built from source for x86-64 CPUs and, with CUDA, for CUDA_ARCH (sm_75 = Turing; the release files start at sm_80).
+FROM nvidia/cuda:12.4.1-devel-ubuntu22.04 AS colibri
+ARG COLIBRI_REF=v2.1.0
+ARG CUDA_ARCH=sm_75
+ENV COLIBRI_REF=$COLIBRI_REF CUDA_ARCH=$CUDA_ARCH
+RUN apt-get update && apt-get install -y --no-install-recommends git make build-essential python3 ca-certificates && rm -rf /var/lib/apt/lists/*
+RUN git clone --depth 1 --branch "$COLIBRI_REF" https://github.com/JustVugg/colibri.git /src
+COPY server/colibri/build.sh /build.sh
+RUN sh /build.sh
+
 # ---- runtime: the training stack (PyTorch, CUDA, Unsloth, TRL, llama.cpp) with HiveMind on top ----
 # Without a GPU everything except training works as before; with --gpus=all the built-in trainer can fine-tune models.
 FROM unsloth/unsloth:core
@@ -37,6 +48,10 @@ COPY --from=deps /app ./
 COPY --from=build /app/server/dist ./server/dist
 # Scripts of the built-in trainer (copied into the Lab folder at start, run with the image's Python).
 COPY --from=build /app/server/trainer ./server/trainer
+# Colibri: the engine builds (/opt/colibri/cpu, /opt/colibri/cuda) and HiveMind's bridge to its catalog and downloads.
+COPY --from=colibri /opt/colibri /opt/colibri
+COPY server/colibri/helper.py ./server/colibri/helper.py
+RUN (ldconfig -p | grep -q 'libgomp.so.1' || (apt-get update && apt-get install -y --no-install-recommends libgomp1 && rm -rf /var/lib/apt/lists/*))  && (cat /opt/colibri/build.json 2>/dev/null || echo 'colibri: not in this image')
 COPY --from=build /app/web/dist ./web
 ARG APP_VERSION=dev
 ENV APP_VERSION=$APP_VERSION

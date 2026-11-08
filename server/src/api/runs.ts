@@ -24,6 +24,7 @@ export interface CanvasRow {
   updated_at: string;
   shared: number;
   managed_by?: string | null;
+  folder?: string | null;
   owner_name?: string;
 }
 
@@ -35,6 +36,7 @@ const toCanvas = (r: CanvasRow, user: User) => ({
   updatedAt: r.updated_at,
   shared: !!r.shared,
   ...(r.managed_by && { managedBy: r.managed_by }),
+  ...(r.folder && { folder: r.folder }),
   mine: r.owner_id === user.id,
   ...(r.owner_id !== user.id && r.owner_name && { ownerName: r.owner_name }),
 });
@@ -186,20 +188,23 @@ export function runRoutes(app: FastifyInstance) {
   });
 
   app.put('/api/canvases/:id?', { preHandler: requireUser }, async (req, reply) => {
-    const body = (req.body ?? {}) as { name?: string; description?: string; shared?: boolean; managedBy?: string | null } & Partial<CanvasGraph>;
+    const body = (req.body ?? {}) as { name?: string; description?: string; shared?: boolean; managedBy?: string | null; folder?: string | null } & Partial<CanvasGraph>;
     const graph = { nodes: body.nodes ?? [], edges: body.edges ?? [] };
     if (!body.name?.trim()) return reply.code(400).send({ error: 'Canvas needs a name' });
     if (body.managedBy !== undefined && body.managedBy !== null && !/^[a-z0-9_-]{1,40}$/i.test(String(body.managedBy))) return reply.code(400).send({ error: 'managedBy must be an app name (letters, digits, - and _)' });
+    if (body.folder !== undefined && body.folder !== null && (typeof body.folder !== 'string' || body.folder.trim().length > 40)) return reply.code(400).send({ error: 'folder must be a name of at most 40 characters' });
     const id = (req.params as { id?: string }).id ?? newId();
-    const owned = db.prepare('SELECT owner_id, shared, managed_by FROM canvases WHERE id = ?').get(id) as { owner_id: string; shared: number; managed_by: string | null } | undefined;
+    const owned = db.prepare('SELECT owner_id, shared, managed_by, folder FROM canvases WHERE id = ?').get(id) as { owner_id: string; shared: number; managed_by: string | null; folder: string | null } | undefined;
     if (owned && owned.owner_id !== req.user!.id) return reply.code(404).send({ error: 'Not found' });
     const shared = body.shared === undefined ? (owned?.shared ?? 0) : body.shared ? 1 : 0;
     // Which app keeps it up to date: as sent (null: nobody any more), else as it was.
     const managedBy = body.managedBy === undefined ? (owned?.managed_by ?? null) : body.managedBy ? String(body.managedBy).toLowerCase() : null;
+    // Folder (Open… groups by it): as sent ("" or null: none, sorted by name again), else as it was.
+    const folder = body.folder === undefined ? (owned?.folder ?? null) : body.folder?.trim() || null;
     db.prepare(
-      `INSERT INTO canvases (id, owner_id, name, description, graph, shared, managed_by, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
-       ON CONFLICT(id) DO UPDATE SET name = excluded.name, description = excluded.description, graph = excluded.graph, shared = excluded.shared, managed_by = excluded.managed_by, updated_at = excluded.updated_at`,
-    ).run(id, req.user!.id, body.name.trim(), body.description ?? null, JSON.stringify(graph), shared, managedBy);
+      `INSERT INTO canvases (id, owner_id, name, description, graph, shared, managed_by, folder, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+       ON CONFLICT(id) DO UPDATE SET name = excluded.name, description = excluded.description, graph = excluded.graph, shared = excluded.shared, managed_by = excluded.managed_by, folder = excluded.folder, updated_at = excluded.updated_at`,
+    ).run(id, req.user!.id, body.name.trim(), body.description ?? null, JSON.stringify(graph), shared, managedBy, folder);
     return toCanvas(canvasFor(req.user!, id)!, req.user!);
   });
 

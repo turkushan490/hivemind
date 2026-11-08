@@ -254,6 +254,41 @@ export interface Canvas extends CanvasGraph {
   mine?: boolean;
   /** Who shared it (only for canvases of others). */
   ownerName?: string;
+  /** The folder it is filed in (Open… groups by it); left out: sorted by its name, see folderOf(). */
+  folder?: string;
+}
+
+/** App ids as people write them. */
+const APP_FOLDERS: Record<string, string> = { hivebot: 'HiveBot', dungeonmind: 'DungeonMind' };
+
+/**
+ * The folder a workflow shows under in Open…: its own folder, else its app's ("hivebot" → HiveBot), else one
+ * guessed from its name (HiveBot ·…, Site…, Software…, Research…, DungeonMind…, Colibri…), else Other.
+ */
+export function folderOf(c: { name: string; folder?: string | null; managedBy?: string | null }): string {
+  const own = c.folder?.trim();
+  if (own) return own;
+  if (c.managedBy) return APP_FOLDERS[c.managedBy.toLowerCase()] ?? c.managedBy;
+  const n = c.name.trim();
+  if (/^hivebot\b|hivebot character/i.test(n)) return 'HiveBot';
+  if (/^(site|website|landing)\b/i.test(n)) return 'Websites';
+  if (/^software\b/i.test(n)) return 'Software';
+  if (/^(deep research|research)\b/i.test(n)) return 'Research';
+  if (/^(dungeonmind|dnd)\b/i.test(n)) return 'DungeonMind';
+  if (/^colibri\b/i.test(n)) return 'Colibri';
+  return 'Other';
+}
+
+/** Workflows grouped by folder: folders A–Z with "Other" last, workflows A–Z inside. */
+export function groupByFolder<T extends { name: string; folder?: string | null; managedBy?: string | null }>(list: T[]): { folder: string; items: T[] }[] {
+  const groups = new Map<string, T[]>();
+  for (const c of list) {
+    const f = folderOf(c);
+    groups.set(f, [...(groups.get(f) ?? []), c]);
+  }
+  return [...groups.entries()]
+    .sort(([a], [b]) => (a === 'Other' ? 1 : b === 'Other' ? -1 : a.localeCompare(b)))
+    .map(([folder, items]) => ({ folder, items: items.sort((a, b) => a.name.localeCompare(b.name)) }));
 }
 
 // ---- Providers ----

@@ -1,4 +1,4 @@
-import type { Canvas, CanvasGraph, ModelInfo, ModelRef, NodeConfig, NodeType, Project, ProviderInfo } from '@hivemind/shared';
+import { folderOf, type Canvas, type CanvasGraph, ModelInfo, ModelRef, NodeConfig, NodeType, Project, ProviderInfo } from '@hivemind/shared';
 import {
   addEdge,
   Background,
@@ -26,6 +26,7 @@ import { PausePanel } from '../components/PausePanel';
 import { History, ReplayBar } from './Replay';
 import { useStored } from '../stored';
 import { useIsPhone } from '../phone';
+import { OpenPicker } from './OpenPicker';
 import { HiveEdge } from './HiveEdge';
 import { HiveNode, InputMic, RunViews, type HiveFlowNode } from './HiveNode';
 import { BuilderPanel } from './BuilderPanel';
@@ -122,7 +123,7 @@ function Editor({ active, onProblem, followRequest }: { active: boolean; onProbl
   const initial = useRef(loadDraft());
   const [nodes, setNodes, onNodesChange] = useNodesState<HiveFlowNode>(initial.current ? toFlow(initial.current.graph).nodes : []);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>(initial.current ? toFlow(initial.current.graph).edges : []);
-  const [doc, setDoc] = useState<{ id?: string; name: string }>({ id: initial.current?.id, name: initial.current?.name ?? 'My canvas' });
+  const [doc, setDoc] = useState<{ id?: string; name: string; folder?: string }>({ id: initial.current?.id, name: initial.current?.name ?? 'My canvas' });
   // The graph as last saved, to know if there are unsaved changes.
   const [saved, setSaved] = useState<string | undefined>(initial.current?.saved);
   const [canvases, setCanvases] = useState<Canvas[]>([]);
@@ -329,7 +330,7 @@ function Editor({ active, onProblem, followRequest }: { active: boolean; onProbl
   const openCanvas = (c: Canvas) => {
     if (!confirmDiscard()) return;
     show({ nodes: c.nodes, edges: c.edges });
-    setDoc({ id: c.id, name: c.name });
+    setDoc({ id: c.id, name: c.name, folder: c.folder ?? '' });
     setSaved(JSON.stringify({ name: c.name, graph: { nodes: c.nodes, edges: c.edges } }));
   };
 
@@ -338,8 +339,8 @@ function Editor({ active, onProblem, followRequest }: { active: boolean; onProbl
     // An app keeps this workflow up to date: saving your own changes stops that (the app then leaves it alone).
     const app = canvases.find((x) => x.id === doc.id)?.managedBy;
     if (app && !confirm(`Installed by ${appName(app)} — the app may update this workflow.\n\nKeep your changes? ${appName(app)} then stops updating it.`)) return;
-    const c = await api<Canvas>(`/api/canvases${doc.id ? `/${doc.id}` : ''}`, { method: 'PUT', body: { name, ...graph, ...(shared !== undefined && { shared }), ...(app && { managedBy: null }) } });
-    setDoc({ id: c.id, name: c.name });
+    const c = await api<Canvas>(`/api/canvases${doc.id ? `/${doc.id}` : ''}`, { method: 'PUT', body: { name, ...graph, ...(shared !== undefined && { shared }), ...(app && { managedBy: null }), ...(doc.folder !== undefined && { folder: doc.folder.trim() || null }) } });
+    setDoc({ id: c.id, name: c.name, folder: c.folder ?? '' });
     setSaved(JSON.stringify({ name: c.name, graph: { nodes: c.nodes, edges: c.edges } }));
     setCanvases(await api<Canvas[]>('/api/canvases', { quiet: true }).catch(() => canvases));
     toast(shared === undefined ? `Saved "${c.name}"` : c.shared ? `Saved "${c.name}" — everyone can use it now` : `Saved "${c.name}" — only you can use it now`, 'ok');
@@ -519,6 +520,20 @@ function Editor({ active, onProblem, followRequest }: { active: boolean; onProbl
           onChange={(e) => setDoc((d) => ({ ...d, name: e.target.value }))}
           aria-label="Canvas name"
         />
+        <input
+          className="input w-full py-1 text-sm sm:w-32"
+          list="hm-folders"
+          value={doc.folder ?? ''}
+          placeholder={`📁 ${folderOf({ name: doc.name, managedBy: canvases.find((x) => x.id === doc.id)?.managedBy })}`}
+          title="Folder in Open… (saved with Save). Empty: sorted by the name."
+          onChange={(e) => setDoc((d) => ({ ...d, folder: e.target.value }))}
+          aria-label="Folder"
+        />
+        <datalist id="hm-folders">
+          {[...new Set(mine.map((c) => folderOf(c)))].sort().map((f) => (
+            <option key={f} value={f} />
+          ))}
+        </datalist>
         {dirty && !replaying && <span className="text-xs text-amber-400" title="Kept as a draft in this browser until you save">unsaved</span>}
         {(() => {
           const app = !watching && !replaying ? canvases.find((x) => x.id === doc.id)?.managedBy : undefined;
@@ -531,25 +546,8 @@ function Editor({ active, onProblem, followRequest }: { active: boolean; onProbl
         <button className="btn-ghost" onClick={() => save().catch(() => {})} title="Ctrl+S">
           Save
         </button>
-        <select
-          className="input w-auto py-1"
-          value=""
-          // Workflows saved elsewhere (another tab, the API, DungeonMind) show without reloading the page.
-          onFocus={() => api<Canvas[]>('/api/canvases', { quiet: true }).then(setCanvases, () => {})}
-          onChange={(e) => {
-            const c = canvases.find((x) => x.id === e.target.value);
-            if (c) openCanvas(c);
-          }}
-        >
-          <option value="">Open… ({mine.length})</option>
-          {mine.map((c) => (
-            <option key={c.id} value={c.id}>
-              {c.name}
-              {c.shared ? ' (shared)' : ''}
-              {c.managedBy ? ` (${appName(c.managedBy)})` : ''}
-            </option>
-          ))}
-        </select>
+        {/* Workflows saved elsewhere (another tab, the API, DungeonMind) show without reloading the page. */}
+        <OpenPicker canvases={mine} onOpen={openCanvas} onRefresh={() => api<Canvas[]>('/api/canvases', { quiet: true }).then(setCanvases, () => {})} appName={appName} />
         <div className="relative">
           <button className="btn-ghost" onClick={() => setShowFile((s) => !s)} disabled={replaying}>
             File ▾

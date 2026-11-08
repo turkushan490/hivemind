@@ -328,6 +328,9 @@ export const MIGRATIONS: string[] = [
   `
   ALTER TABLE providers ADD COLUMN cpu_only INTEGER NOT NULL DEFAULT 0;
   `,
+  `
+  ALTER TABLE canvases ADD COLUMN folder TEXT;
+  `,
 ];
 
 export const db = new DatabaseSync(join(config.dataDir, 'hivemind.db'));

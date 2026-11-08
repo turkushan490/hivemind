@@ -81,7 +81,8 @@ export interface ProviderAdapter {
   /** Local only: give the GPU memory back (unload everything this server holds). */
   freeMemory?(): Promise<void>;
   /** Local only: load a model without answering, and keep it loaded keepAlive long (Ollama). */
-  warm?(model: string, keepAlive: string): Promise<void>;
+  /** numCtx: the context size later calls will ask for (Ollama loads the model again when it changes). */
+  warm?(model: string, keepAlive: string, numCtx?: number): Promise<void>;
   /** Local only: how much GPU memory is free right now (bytes), when the server can tell (ComfyUI). */
   vramFree?(): Promise<number | undefined>;
   /** Decision models (TypeSafe Jev, OpenAI Decisions, Ollama decision models). */

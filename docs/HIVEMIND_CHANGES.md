@@ -937,6 +937,7 @@ which project it works on, and can make a new one.
 - Colibri library: the Qwen family card has size buttons (0.6B to 235B-A22B), each with its own fit label and GGUF search.
 - Block settings texts: "Keep model loaded" applies to colibri too; "Context size" is Ollama only (colibri sets it in Settings → Colibri).
 - **Template "HiveMind: smart router"** (`hivemind-router`): Jev (the decision model) sorts the question into chat, code, reasoning, writing, deep, home or picture (unsure: chat); a branch per kind answers (fast model, coder, thinking model, writer, the big model, Home Assistant Assist, a model that sees). `TemplateModels` gained `fast`, `deep` and `vision`.
+- **HiveBot S12 (models reloading):** `POST /api/canvases/:id/warm` loads Ollama models with the context size the run will send (the block's, else the run limit), and the picture reader uses the run limit too, so the call finds the model loaded as it is instead of loading it again.
 - Home Assistant **Ask (Assist)** takes a sentence template in `body` (e.g. `{{question}}` behind a Decide block); without one it uses the text wired in, as before.
 - Tests: `server/test/pictures.test.ts`; several engines and the router template in `server/test/colibri.test.ts`.
 

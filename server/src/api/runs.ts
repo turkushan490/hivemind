@@ -1,3 +1,4 @@
+import { runLimits } from '../services/runLimits.js';
 import type { CanvasGraph, ModelRef, ResumeRequest, RunEvent, RunRequest, RunSummary } from '@hivemind/shared';
 import type { FastifyInstance } from 'fastify';
 import { newId } from '../crypto.js';
@@ -355,10 +356,13 @@ export function runRoutes(app: FastifyInstance) {
     const { graph, providerUser } = runSetup(req.user!, row, undefined);
     const access = allowedFor(req.user!);
     const t0 = Date.now();
-    const refs = new Map<string, { ref: ModelRef; keepAlive: string }>();
+    const refs = new Map<string, { ref: ModelRef; keepAlive: string; numCtx: number }>();
+    const limits = runLimits();
     for (const n of graph!.nodes) {
       const keep = n.config.keepAlive?.trim() || '30m';
-      const add = (r?: ModelRef) => r && access.model(r.providerId, r.model) && refs.set(`${r.providerId}|${r.model}`, { ref: r, keepAlive: keep });
+      // The context size the run will send (the block's, else the run limit), so the call finds the model loaded as is.
+      const ctx = n.config.numCtx && Number.isFinite(n.config.numCtx) ? Math.round(Math.min(131072, Math.max(2048, n.config.numCtx))) : limits.numCtx;
+      const add = (r?: ModelRef) => r && access.model(r.providerId, r.model) && refs.set(`${r.providerId}|${r.model}`, { ref: r, keepAlive: keep, numCtx: ctx });
       if (n.type === 'llm' && n.config.auto) {
         add(n.config.auto.decider);
         add(n.config.auto.small);
@@ -368,13 +372,13 @@ export function runRoutes(app: FastifyInstance) {
     const resolve = resolverFor(providerUser);
     const free = gpuFreerFor(providerUser);
     const warmed: string[] = [];
-    for (const { ref, keepAlive } of refs.values()) {
+    for (const { ref, keepAlive, numCtx } of refs.values()) {
       const p = await resolve(ref.providerId).catch(() => undefined);
       if (!p?.local || !p.adapter.warm) continue;
       if (p.exclusive !== false && hostHolder(p.hostKey)) return { warmed, busy: true, ms: Date.now() - t0 };
       await free(p.hostKey, ref.providerId, { model: ref.model, bytes: (await p.modelInfo(ref.model).catch(() => undefined))?.sizeBytes }).catch(() => {});
       try {
-        await p.adapter.warm(ref.model, keepAlive);
+        await p.adapter.warm(ref.model, keepAlive, numCtx);
         warmed.push(ref.model);
       } catch {}
     }

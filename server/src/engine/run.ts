@@ -289,7 +289,7 @@ export async function runGraph(
     let out = '';
     try {
       const it = p.adapter.stream(
-        { model: reader.model, messages: [{ role: 'user', content: READ_PICTURE, images: [{ data, ext: path.split('.').pop()!.toLowerCase() }] }], think: false, maxTokens: 1500, numCtx: p.local ? 8192 : undefined, keepAlive: '10m' },
+        { model: reader.model, messages: [{ role: 'user', content: READ_PICTURE, images: [{ data, ext: path.split('.').pop()!.toLowerCase() }] }], think: false, maxTokens: 1500, numCtx: p.local ? limits.numCtx : undefined, keepAlive: '30m' },
         timer.signal,
       )[Symbol.asyncIterator]();
       for (;;) {

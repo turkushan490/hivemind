@@ -48,12 +48,13 @@ export function ollamaAdapter(cfg: ProviderConfig): ProviderAdapter {
       }
     },
 
-    async warm(model: string, keep: string) {
+    async warm(model: string, keep: string, numCtx?: number) {
       const res = await fetch(`${base}/api/generate`, {
         method: 'POST',
         signal: AbortSignal.timeout(300_000),
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ model, prompt: '', keep_alive: keepAlive(keep) ?? '30m', ...(cfg.cpuOnly && { options: { num_gpu: 0 } }) }),
+        // The same context size (and CPU setting) the calls will use, or Ollama loads the model a second time.
+        body: JSON.stringify({ model, prompt: '', keep_alive: keepAlive(keep) ?? '30m', options: { ...(numCtx && { num_ctx: numCtx }), ...(cfg.cpuOnly && { num_gpu: 0 }) } }),
       });
       await checkResponse(res, `Ollama load ${model}`);
     },

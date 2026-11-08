@@ -271,6 +271,17 @@ function Editor({ active, onProblem, followRequest }: { active: boolean; onProbl
     setSaved(undefined);
   };
 
+  /** Colibri's models (inside HiveMind): one to chat, one for code, and the same chat model on its decisions side. */
+  function colibriModels(ms: typeof models) {
+    const fast = ms.filter((m) => !m.kind && / \(colibri\)$/.test(m.name));
+    const chat = fast.find((m) => !/coder/i.test(m.model)) ?? fast[0];
+    if (!chat) return undefined;
+    const coder = fast.find((m) => /coder/i.test(m.model)) ?? chat;
+    const decide = ms.find((m) => m.kind === 'decision' && / \(colibri/.test(m.name) && m.model === chat.model);
+    const ref = (m: { providerId: string; model: string }) => ({ providerId: m.providerId, model: m.model });
+    return { chat: ref(chat), coder: ref(coder), ...(decide && { decide: ref(decide) }) };
+  }
+
   function applyTemplate(id: string, ms = models, skipConfirm = false) {
     if (!skipConfirm && !confirmDiscard()) return;
     const t = TEMPLATES.find((x) => x.id === id)!;
@@ -284,6 +295,7 @@ function Editor({ active, onProblem, followRequest }: { active: boolean; onProbl
       image: pickImageModel(ms),
       ...(d && { decision: { providerId: d.providerId, model: d.model } }),
       ...(slow && { slow: { providerId: slow.providerId, model: slow.model } }),
+      ...(colibriModels(ms) && { colibri: colibriModels(ms) }),
     });
     show(graph);
     setDoc({ name: t.name });

@@ -194,6 +194,24 @@ describe('colibri in runs and settings', () => {
     expect(health.features).toContain('colibri');
   });
 
+  it('Colibri: start here sorts the question with colibri, answers on the matching branch, and explains', async () => {
+    const { TEMPLATES } = await import('../../web/src/canvas/templates.js');
+    const { runGraph } = await import('../src/engine/run.js');
+    const { resolverFor } = await import('../src/api/providers.js');
+    const t = TEMPLATES.find((x) => x.id === 'colibri-start')!;
+    const g = t.build({
+      text: [],
+      colibri: { chat: { providerId: 'colibri', model: 'qwen36-35b' }, coder: { providerId: 'colibri', model: 'qwen36-35b' }, decide: { providerId: 'colibri-decisions', model: 'qwen36-35b' } },
+    });
+    const user = db.prepare("SELECT * FROM users WHERE id = 'u1'").get() as never;
+    const r = await runGraph(g, 'How do I reverse a list in Python?', { resolve: resolverFor(user), emit: () => {} }, new AbortController().signal);
+    expect(r.status).toBe('done');
+    // The fake colibri picks the first option ("code"): only the code block answered.
+    expect(r.final).toContain('qwen36-35b says: How do I reverse a list in Python?');
+    expect(r.final).toContain('How this workflow worked');
+    expect(r.final!.match(/says:/g)).toHaveLength(1);
+  });
+
   it('the overnight research template puts the slow model on the big blocks', async () => {
     const { TEMPLATES } = await import('../../web/src/canvas/templates.js');
     const t = TEMPLATES.find((x) => x.id === 'deep-research-overnight')!;

@@ -9,6 +9,8 @@ export interface TemplateModels {
   decision?: ModelRef;
   /** A big, slow model for work that may take hours (a colibri giant model), when there is one. */
   slow?: ModelRef;
+  /** Colibri's models inside HiveMind, when some are downloaded: one to chat, one for code, and its decisions side. */
+  colibri?: { chat?: ModelRef; coder?: ModelRef; decide?: ModelRef };
 }
 
 export const TEMPLATE_GROUPS = ['Everyday', 'Voice', 'Coding', 'Creative', 'Home / research', 'Research', 'Website', 'Decisions', 'Train', 'Tabletop'] as const;
@@ -731,6 +733,68 @@ function overnightResearch(m: TemplateModels): CanvasGraph {
   };
 }
 
+// ---- Colibri: a first workflow that shows what the built-in engine does, step by step ----
+
+const COLIBRI_EXPLAIN = [
+  '{{inputs}}',
+  '',
+  '---',
+  '**How this workflow worked** (Colibri: start here)',
+  '',
+  '1. **Your question** came in.',
+  '2. **Colibri sorts it** (a Decide block): the colibri model read your question and answered one typed question, "is this about code or a normal chat?", with a probability for each option instead of free text. That is the Jev-style decision API (/v1/systemone) colibri has built in.',
+  '3. Only the matching block ran: **code** (the coder model, or the same model when you have one) or **chat**. The block whose name is the answer runs; the other is skipped.',
+  '4. The model ran inside HiveMind, in the colibri engine: the parts of the model it uses most sit on the GPU and in RAM, the rest is read from the disk when needed. The first call loads the model (that can take a minute); after that it stays loaded until a few minutes without calls (Settings → Colibri).',
+  '5. This block added this explanation under the answer. Delete it in the editor when you only want the answer.',
+].join('\n');
+
+/** Colibri: start here: sort the question with colibri's decisions, answer with the matching colibri model, explain. */
+function colibriStart(m: TemplateModels): CanvasGraph {
+  const chat = m.colibri?.chat ?? m.text[0];
+  const coder = m.colibri?.coder ?? chat;
+  const decide = m.colibri?.decide ?? m.decision;
+  const q = node('input', 0, 200, 'Your question');
+  const sort = node('decide', 320, 200, 'Colibri sorts it', {
+    ...(decide && { model: decide }),
+    state: 'Question: {{question}}',
+    threshold: 0.5,
+    questions: [
+      {
+        name: 'kind',
+        type: 'choice',
+        instructions: 'Is this question about programming (writing, fixing or explaining code), or a normal chat question?',
+        options: [
+          { name: 'code', description: 'Programming: code, errors, scripts, software' },
+          { name: 'chat', description: 'Anything else: facts, advice, writing, ideas' },
+        ],
+        safe: 'chat',
+      },
+    ],
+  });
+  const code = node('llm', 680, 80, 'code', {
+    ...(coder && { model: coder }),
+    system: 'You are a careful programmer. Answer with working code and a short explanation of how it works.',
+    prompt: '{{question}}',
+    think: false,
+    maxTokens: 2048,
+  });
+  const talk = node('llm', 680, 320, 'chat', { ...(chat && { model: chat }), system: 'Answer clearly and to the point.', prompt: '{{question}}', think: false, maxTokens: 1536 });
+  const explain = node('template', 1040, 200, 'Explain what happened', { prompt: COLIBRI_EXPLAIN });
+  const out = node('output', 1360, 200, 'Answer');
+  return { nodes: [q, sort, code, talk, explain, out], edges: [wire(q, sort), wire(sort, code), wire(sort, talk), wire(code, explain), wire(talk, explain), wire(explain, out)] };
+}
+
+const COLIBRI: Template[] = [
+  {
+    id: 'colibri-start',
+    group: 'Everyday',
+    name: 'Colibri: start here',
+    description:
+      'Your first colibri workflow (download a model in Settings → Colibri first): colibri decides whether your question is about code or a normal chat, the matching colibri model answers, and the answer ends with an explanation of every step.',
+    build: colibriStart,
+  },
+];
+
 const RESEARCH: Template[] = [
   {
     id: 'deep-research',
@@ -1064,6 +1128,7 @@ export const TEMPLATES: Template[] = [
     build: softwareBuilder,
   },
   ...RESEARCH,
+  ...COLIBRI,
   ...VOICE,
   ...DECISIONS,
   ...TRAIN,

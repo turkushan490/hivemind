@@ -879,6 +879,10 @@ which project it works on, and can make a new one.
   - the fast models search, and 2 random AIs review each site;
   - a big slow model (the first `(colibri, slow)` model there is) finds facts, conflicts and links, and writes the answer;
   - those blocks allow 6 hours, with short memory reads (20 notes).
+- Template **Colibri: start here** (Everyday): a first colibri workflow.
+  - A Decide block on `colibri-decisions` asks one question, "code or chat?".
+  - Only the block named after the answer runs (`code` on the coder model, or `chat`).
+  - The answer ends with an explanation of every step.
 - Tests: `server/test/colibri.test.ts`, which uses a fake `coli serve` (`server/test/fake-coli.mjs`).
 
 ---

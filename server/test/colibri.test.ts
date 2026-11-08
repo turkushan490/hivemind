@@ -291,6 +291,26 @@ describe('colibri in runs and settings', () => {
     expect(r.final!.match(/says:/g)).toHaveLength(1);
   });
 
+  it('HiveMind: smart router sends the question to one branch per kind, and every branch reaches the answer', async () => {
+    const { TEMPLATES } = await import('../../web/src/canvas/templates.js');
+    const { validateGraph } = await import('../src/engine/graph.js');
+    const { runGraph } = await import('../src/engine/run.js');
+    const { resolverFor } = await import('../src/api/providers.js');
+    const t = TEMPLATES.find((x) => x.id === 'hivemind-router')!;
+    const qwen = { providerId: 'colibri', model: 'qwen36-35b' };
+    const g = t.build({ text: [qwen], decision: { providerId: 'colibri-decisions', model: 'qwen36-35b' }, fast: { providerId: 'colibri', model: 'qwen3-coder-30b' }, vision: { providerId: 'x', model: 'gemma4:e2b' } });
+    validateGraph(g);
+    const labels = g.nodes.filter((n) => g.edges.some((e) => e.target === n.id && g.nodes.find((x) => x.id === e.source)?.type === 'decide')).map((n) => n.label);
+    expect(labels).toEqual(['chat', 'code', 'reasoning', 'writing', 'deep', 'home', 'picture']);
+    expect(g.nodes.find((n) => n.label === 'picture')?.config.pictures).toBe('direct');
+    const user = db.prepare("SELECT * FROM users WHERE id = 'u1'").get() as never;
+    const r = await runGraph(g, 'hello there', { resolve: resolverFor(user), emit: () => {} }, new AbortController().signal);
+    expect(r.status).toBe('done');
+    // The fake colibri picks the first option: the fast chat model answers alone.
+    expect(r.final).toContain('qwen3-coder-30b says: hello there');
+    expect(r.final!.match(/says:/g)).toHaveLength(1);
+  });
+
   it('the overnight research template puts the slow model on the big blocks', async () => {
     const { TEMPLATES } = await import('../../web/src/canvas/templates.js');
     const t = TEMPLATES.find((x) => x.id === 'deep-research-overnight')!;

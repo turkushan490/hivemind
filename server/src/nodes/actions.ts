@@ -116,7 +116,8 @@ export const ACTION_NODES: Record<'homeassistant' | 'webhook' | 'discord', NodeD
 
       // Assist: Home Assistant's own conversation agent does what the sentence says and answers in words.
       if (c.haOp === 'assist') {
-        const text = (inputText(ctx) || ctx.question).trim();
+        // A sentence template (e.g. "{{question}}" behind a Decide block) wins over the text wired in.
+        const text = (c.body?.trim() ? fillTemplate(c.body, ctx, 'none') : inputText(ctx) || ctx.question).trim();
         if (!text) throw new Error('Nothing to ask Home Assistant: wire in a sentence like "turn on the kitchen lights"');
         ctx.progress('Asking Home Assistant…');
         const res = await send(

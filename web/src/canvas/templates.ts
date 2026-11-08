@@ -11,6 +11,12 @@ export interface TemplateModels {
   slow?: ModelRef;
   /** Colibri's models inside HiveMind, when some are downloaded: one to chat, one for code, and its decisions side. */
   colibri?: { chat?: ModelRef; coder?: ModelRef; decide?: ModelRef };
+  /** A very fast model for small talk (quick robot answers). */
+  fast?: ModelRef;
+  /** The strongest model for hard planning (may be slow). */
+  deep?: ModelRef;
+  /** A model that sees pictures. */
+  vision?: ModelRef;
 }
 
 export const TEMPLATE_GROUPS = ['Everyday', 'Voice', 'Coding', 'Creative', 'Home / research', 'Research', 'Website', 'Decisions', 'Train', 'Tabletop'] as const;
@@ -807,7 +813,60 @@ function colibriStart(m: TemplateModels): CanvasGraph {
   return { nodes: [q, sort, code, talk, explain, out], edges: [wire(q, sort), wire(sort, code), wire(sort, talk), wire(code, explain), wire(talk, explain), wire(explain, out)] };
 }
 
+/** Jev (or another decision model) sorts the question; one specialist per branch answers. */
+function hivemindRouter(m: TemplateModels): CanvasGraph {
+  const main = m.colibri?.chat ?? m.text[0];
+  const coder = m.colibri?.coder ?? main;
+  const fast = m.fast ?? main;
+  const deep = m.deep ?? m.slow ?? m.judge ?? main;
+  const decide = m.decision ?? m.colibri?.decide;
+  const q = node('input', 0, 360, 'Your question');
+  const sort = node('decide', 320, 360, 'Jev sorts it', {
+    ...(decide && { model: decide }),
+    state: 'Question: {{question}}',
+    threshold: 0.55,
+    keepAlive: '30m',
+    questions: [
+      {
+        name: 'kind',
+        type: 'choice',
+        instructions: 'What kind of question is this? Pick the branch that should answer it.',
+        options: [
+          { name: 'chat', description: 'Small talk, greetings, quick facts or simple questions' },
+          { name: 'code', description: 'Writing, fixing or explaining code, scripts, errors, software' },
+          { name: 'reasoning', description: 'Math, logic, puzzles, anything to work out step by step' },
+          { name: 'writing', description: 'Stories, mails, texts, poems, rewriting' },
+          { name: 'deep', description: 'Hard planning, big decisions, long complex questions' },
+          { name: 'home', description: 'Switching lights or devices in the house, the house state' },
+          { name: 'picture', description: 'The question has a picture attached (hm-file image) or asks about one' },
+        ],
+        safe: 'chat',
+      },
+    ],
+  });
+  const branch = (label: string, y: number, model: ModelRef | undefined, cfg: NodeConfig) => node('llm', 720, y, label, { ...(model && { model }), prompt: '{{question}}', ...cfg });
+  const chat = branch('chat', 0, fast, { system: 'Answer briefly and warmly, in one to three sentences.', think: false, maxTokens: 512 });
+  const code = branch('code', 130, coder, { system: 'You are a careful programmer. Answer with working code and a short explanation.', think: false, maxTokens: 4096 });
+  const reasoning = branch('reasoning', 260, main, { system: 'Work it out step by step, then give the answer on its own line.', think: true, maxTokens: 6144 });
+  const writing = branch('writing', 390, main, { system: 'You are a skilled writer. Write exactly what is asked, in a natural voice.', think: false, maxTokens: 3072 });
+  const deepB = branch('deep', 520, deep, { system: 'Think this through carefully: options, risks, a clear plan. Be concrete.', maxTokens: 6144, maxSeconds: 7200 });
+  const home = node('homeassistant', 720, 650, 'home', { haOp: 'assist', body: '{{question}}' });
+  const picture = branch('picture', 780, m.vision ?? main, { system: 'Look at the picture carefully and answer the question about it.', think: false, maxTokens: 1536, ...(m.vision && { pictures: 'direct' as const }) });
+  const out = node('output', 1100, 360, 'Answer');
+  const branches = [chat, code, reasoning, writing, deepB, home, picture];
+  return { nodes: [q, sort, ...branches, out], edges: [wire(q, sort), ...branches.map((b) => wire(sort, b)), ...branches.map((b) => wire(b, out))] };
+}
+
 const COLIBRI: Template[] = [
+  {
+    id: 'hivemind-router',
+    group: 'Everyday',
+    name: 'HiveMind: smart router',
+    description:
+      'Jev decides what your question is (chat, code, reasoning, writing, deep, home or picture) in a fraction of a second, and the specialist for that branch answers: a fast model for chat, the coder for code, a thinking model for reasoning, the big model for deep questions, Home Assistant for the house and a model that sees for pictures. Unsure: chat.',
+    needsDecision: true,
+    build: hivemindRouter,
+  },
   {
     id: 'colibri-start',
     group: 'Everyday',

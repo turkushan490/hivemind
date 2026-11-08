@@ -936,7 +936,9 @@ which project it works on, and can make a new one.
 - **Installable (PWA):** `manifest.webmanifest`, `sw.js` (pages always from the server; only an offline page is cached), `offline.html`.
 - Colibri library: the Qwen family card has size buttons (0.6B to 235B-A22B), each with its own fit label and GGUF search.
 - Block settings texts: "Keep model loaded" applies to colibri too; "Context size" is Ollama only (colibri sets it in Settings → Colibri).
-- Tests: `server/test/pictures.test.ts`; several engines in `server/test/colibri.test.ts`.
+- **Template "HiveMind: smart router"** (`hivemind-router`): Jev (the decision model) sorts the question into chat, code, reasoning, writing, deep, home or picture (unsure: chat); a branch per kind answers (fast model, coder, thinking model, writer, the big model, Home Assistant Assist, a model that sees). `TemplateModels` gained `fast`, `deep` and `vision`.
+- Home Assistant **Ask (Assist)** takes a sentence template in `body` (e.g. `{{question}}` behind a Decide block); without one it uses the text wired in, as before.
+- Tests: `server/test/pictures.test.ts`; several engines and the router template in `server/test/colibri.test.ts`.
 
 ---
 

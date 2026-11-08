@@ -28,10 +28,13 @@ export interface ColibriSettings {
   gpuHost?: string;
   /** Context in tokens; 0 = colibri decides from the memory there is. */
   ctx?: number;
+  /** Conversations colibri keeps in memory at once (KV slots, 1-16): each keeps its prompt, so a repeat is not read again. */
+  kvSlots?: number;
 }
 
-type Filled = ColibriSettings & Required<Pick<ColibriSettings, 'gpu' | 'vramGb' | 'keepAliveMin' | 'callSeconds' | 'ctx'>>;
-export const COLIBRI_DEFAULTS: Filled = { gpu: 'auto', vramGb: 0, keepAliveMin: 10, callSeconds: 7200, ctx: 0 };
+type Filled = ColibriSettings & Required<Pick<ColibriSettings, 'gpu' | 'vramGb' | 'keepAliveMin' | 'callSeconds' | 'ctx' | 'kvSlots'>>;
+// 30 minutes: a robot conversation (HiveBot) stays warm between questions.
+export const COLIBRI_DEFAULTS: Filled = { gpu: 'auto', vramGb: 0, keepAliveMin: 30, callSeconds: 7200, ctx: 0, kvSlots: 4 };
 
 export function colibriSettings(): Filled {
   let s: ColibriSettings = {};
@@ -48,6 +51,7 @@ export function saveColibriSettings(patch: ColibriSettings): ColibriSettings {
   if (next.keepAliveMin !== undefined) next.keepAliveMin = Math.max(1, Math.min(24 * 60, Math.round(next.keepAliveMin)));
   if (next.callSeconds !== undefined) next.callSeconds = Math.max(60, Math.min(86400, Math.round(next.callSeconds)));
   if (next.ctx !== undefined) next.ctx = Math.max(0, Math.min(1_048_576, Math.round(next.ctx)));
+  if (next.kvSlots !== undefined) next.kvSlots = Math.max(1, Math.min(16, Math.round(next.kvSlots)));
   if (next.gpu !== 'off') next.gpu = 'auto';
   if (next.gpuHost !== undefined) next.gpuHost = next.gpuHost.trim() || undefined;
   setSetting('colibri', JSON.stringify(next));
@@ -67,7 +71,7 @@ export interface Launch {
   args: string[];
   env?: Record<string, string>;
 }
-type Launcher = (o: { model: string; dir: string; port: number; ramGb: number; gpu: boolean; vramGb: number; ctx: number; engineDir: string }) => Launch;
+type Launcher = (o: { model: string; dir: string; port: number; ramGb: number; gpu: boolean; vramGb: number; ctx: number; kvSlots: number; engineDir: string }) => Launch;
 
 const state = {
   root: process.env.COLIBRI_DIR || '/opt/colibri',
@@ -136,6 +140,7 @@ const defaultLauncher: Launcher = (o) => {
   const args = [join(engineDir, 'coli'), 'serve', '--model', o.dir, '--model-id', o.model, '--host', '127.0.0.1', '--port', String(o.port), '--max-queue', '32', '--queue-timeout', '86400'];
   if (o.ramGb > 0) args.push('--ram', String(o.ramGb));
   if (o.ctx > 0) args.push('--ctx', String(o.ctx));
+  if (o.kvSlots > 1) args.push('--kv-slots', String(o.kvSlots));
   args.push('--gpu', o.gpu ? 'auto' : 'none');
   if (o.gpu && o.vramGb > 0) args.push('--vram', String(o.vramGb));
   const libs = o.gpu ? cudaLibDirs() : [];
@@ -237,7 +242,7 @@ export function deleteModel(model: string) {
 
 type EngineState = 'starting' | 'ready';
 let proc: ChildProcess | undefined;
-let current: { model: string; state: EngineState; since: number; gpu: boolean } | undefined;
+let current: { model: string; state: EngineState; since: number; gpu: boolean; kvSlots: number } | undefined;
 let idle: NodeJS.Timeout | undefined;
 /** Every start and stop goes through this queue, so two calls never start two engines. */
 let queue: Promise<unknown> = Promise.resolve();
@@ -375,8 +380,8 @@ export async function warmModel(model: string, keepAlive?: string) {
   (await acquire(model, { keepAlive })).release();
 }
 
-async function start(m: InstalledModel, budget: number, opts: { keepAlive?: string; signal?: AbortSignal }, retried = false, cpuOnly = false): Promise<boolean> {
-  const s = colibriSettings();
+async function start(m: InstalledModel, budget: number, opts: { keepAlive?: string; signal?: AbortSignal }, retried = false, cpuOnly = false, slots?: number): Promise<boolean> {
+  const s = { ...colibriSettings(), ...(slots && { kvSlots: slots }) };
   const gpu = !cpuOnly && gpuUsable();
   const launch = (state.launcher ?? defaultLauncher)({
     model: m.model,
@@ -386,6 +391,7 @@ async function start(m: InstalledModel, budget: number, opts: { keepAlive?: stri
     gpu,
     vramGb: s.vramGb,
     ctx: s.ctx,
+    kvSlots: s.kvSlots,
     engineDir: gpu ? cudaDir() : cpuDir(),
   });
   mkdirSync(join(config.dataDir, 'colibri'), { recursive: true });
@@ -395,7 +401,7 @@ async function start(m: InstalledModel, budget: number, opts: { keepAlive?: stri
   const child = spawn(launch.cmd, launch.args, { env: { ...process.env, ...launch.env }, stdio: ['ignore', out, out] });
   closeSync(out);
   proc = child;
-  current = { model: m.model, state: 'starting', since: Date.now(), gpu };
+  current = { model: m.model, state: 'starting', since: Date.now(), gpu, kvSlots: s.kvSlots };
   let exited = false;
   child.once('exit', (code, sig) => {
     exited = true;
@@ -413,6 +419,9 @@ async function start(m: InstalledModel, budget: number, opts: { keepAlive?: stri
     }
     if (exited) {
       const tail = logTail(15);
+      // A model family that keeps fewer conversations: start again with what it allows.
+      const most = tail.match(/supports at most (\d+) KV slot/i);
+      if (most && !slots) return start(m, budget, opts, retried, cpuOnly, Math.max(1, Number(most[1])));
       // The CUDA build has no engine for this model family (it did not compile for CUDA): the CPU one, this time.
       if (gpu && !retried && /engine is not built/i.test(tail)) return start(m, budget, opts, true, true);
       // The CUDA build can't run here (no driver, missing library, a card it was not built for): the CPU build.
@@ -431,6 +440,20 @@ async function start(m: InstalledModel, budget: number, opts: { keepAlive?: stri
   }
   await kill(child);
   throw new Error(`Colibri took more than ${LOAD_TIMEOUT_MS / 60_000} minutes to load ${m.model}`);
+}
+
+/**
+ * The KV slot for a call, so a repeated prompt is not read again (colibri keeps each slot's prompt): decisions get the
+ * last slot to themselves, a chat the slot of its conversation (its system prompt and first question). undefined
+ * with one slot.
+ */
+export function cacheSlot(kind: 'chat' | 'decide', key: string): number | undefined {
+  const slots = loadedModel()?.kvSlots ?? 1;
+  if (slots <= 1) return undefined;
+  if (kind === 'decide') return slots - 1;
+  let h = 0;
+  for (let i = 0; i < key.length; i++) h = (h * 31 + key.charCodeAt(i)) >>> 0;
+  return h % (slots - 1);
 }
 
 /** Everything the Settings card shows. */

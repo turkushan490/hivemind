@@ -1,6 +1,6 @@
 import type { ModelInfo } from '@hivemind/shared';
 import { readSSE } from './lines.js';
-import { checkResponse, type ChatRequest, type ProviderAdapter, type ProviderConfig, type StreamChunk } from './types.js';
+import { anthropicMessages, checkResponse, type ChatRequest, type ProviderAdapter, type ProviderConfig, type StreamChunk } from './types.js';
 
 const VERSION = '2023-06-01';
 
@@ -31,7 +31,7 @@ export function anthropicAdapter(cfg: ProviderConfig): ProviderAdapter {
           model: req.model,
           max_tokens: req.maxTokens ?? 8192,
           stream: true,
-          messages,
+          messages: anthropicMessages(messages),
           ...(system && { system }),
           ...(req.temperature !== undefined && { temperature: req.temperature }),
         }),

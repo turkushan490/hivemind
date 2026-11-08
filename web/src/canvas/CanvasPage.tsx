@@ -17,6 +17,8 @@ import '@xyflow/react/dist/style.css';
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from 'react';
 import { api } from '../api';
 import { downloadText } from '../components/AnswerView';
+import { QuestionBox, useAttachments } from '../components/QuestionBox';
+import { MicButton } from '../voice';
 import { toast } from '../notify';
 import { useReplay } from '../run/replay';
 import { Clock, useRun } from '../run/state';
@@ -459,6 +461,15 @@ function Editor({ active, onProblem, followRequest }: { active: boolean; onProbl
     } catch {}
   };
 
+  // The question box: the text plus its pictures, files and audio.
+  const attachments = useAttachments();
+  const askWithAttachments = async () => {
+    if (attachments.busy) return toast('Wait until the attachments are read', 'info');
+    const q = attachments.compose(question);
+    await startRun(q);
+    if (q !== question.trim()) attachments.clear();
+  };
+
   // The mic on the Question block: what was said becomes the question, and the canvas runs.
   const startRunRef = useRef(startRun);
   startRunRef.current = startRun;
@@ -675,13 +686,14 @@ function Editor({ active, onProblem, followRequest }: { active: boolean; onProbl
           </div>
         ) : (
         <div className="ml-auto flex min-w-[320px] flex-1 items-center gap-2">
-          <input
-            className="input py-1"
-            placeholder="Ask this canvas a question…"
+          <QuestionBox
             value={question}
-            onChange={(e) => setQuestion(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && !run.running && startRun()}
+            onChange={setQuestion}
+            onSubmit={() => !run.running && askWithAttachments()}
+            attachments={attachments}
+            placeholder="Ask this canvas a question… (📎 pictures, PDFs, files, audio; Shift+Enter for a new line)"
           />
+          <MicButton size="sm" disabled={run.running} onText={(text) => setQuestion((question ? `${question} ` : '') + text)} />
           <label className="flex shrink-0 items-center gap-1.5 text-xs text-slate-400" title="The view glides to the block that is working">
             <input type="checkbox" checked={follow} onChange={(e) => setFollow(e.target.checked)} /> Follow
           </label>
@@ -690,7 +702,7 @@ function Editor({ active, onProblem, followRequest }: { active: boolean; onProbl
               Stop
             </button>
           ) : (
-            <button className="btn" onClick={() => startRun()}>
+            <button className="btn" disabled={attachments.busy} onClick={() => askWithAttachments()}>
               Run
             </button>
           )}

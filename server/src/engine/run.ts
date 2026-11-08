@@ -162,6 +162,36 @@ const maxTokensOf = (node: CanvasNode, limits: RunLimits, isLocal: boolean) => {
   return isLocal ? limits.maxTokens : undefined;
 };
 
+/** Picture links in a message: ![name](hm-file:folder/x.png). */
+const IMAGE_LINK = /!\[([^\]]*)\]\(hm-file:([^)\s]+\.(?:png|jpe?g|webp|gif))\)/gi;
+
+/**
+ * The pictures linked in the last user message (attached in the question box) become images on that message, at
+ * most 4 and 20 MB each; the links in the text become "[image: name]". Pictures that can't be read are left as text.
+ */
+export function withImages(messages: ChatMessage[], readFile?: (path: string) => Buffer): ChatMessage[] {
+  if (!readFile) return messages;
+  const i = messages.map((m) => m.role).lastIndexOf('user');
+  if (i < 0 || !IMAGE_LINK.test(messages[i].content)) return messages;
+  IMAGE_LINK.lastIndex = 0;
+  const images: { data: Buffer; ext: string }[] = [];
+  const content = messages[i].content.replace(IMAGE_LINK, (all, name: string, path: string) => {
+    if (images.length >= 4) return all;
+    try {
+      const data = readFile(decodeURIComponent(path));
+      if (data.length > 20 * 1024 * 1024) return all;
+      images.push({ data, ext: path.split('.').pop()!.toLowerCase() });
+      return `[image: ${name || path.split('/').pop()}]`;
+    } catch {
+      return all;
+    }
+  });
+  if (!images.length) return messages;
+  return messages.map((m, j) => (j === i ? { ...m, content, images } : m));
+}
+
+const stripImages = (messages: ChatMessage[]): ChatMessage[] => messages.map(({ images, ...m }) => m);
+
 /** Seconds one model call may take: the block's own (10 to 86400) wins over the run limit. */
 const maxSecondsOf = (node: CanvasNode, limits: RunLimits, provider?: { callSeconds?: number }) => {
   const n = node.config.maxSeconds;
@@ -280,9 +310,12 @@ export async function runGraph(
         deps.emit({ ...base, type: 'model_ready', warm: !loading });
       };
 
-      const call = async (messages: ChatMessage[], ref: ModelRef, think?: boolean, json?: boolean): Promise<string> => {
+      const call = async (messages: ChatMessage[], ref: ModelRef, think?: boolean, json?: boolean, noImages = false): Promise<string> => {
         const p = await deps.resolve(ref.providerId);
-        sent = { providerId: ref.providerId, model: ref.model, messages: messages.map((m) => ({ ...m })) };
+        // Pictures in the question (attached in the question box) go with the message to models that can see.
+        if (!noImages) messages = withImages(messages, deps.services?.readFile);
+        const pictures = messages.some((m) => m.images?.length);
+        sent = { providerId: ref.providerId, model: ref.model, messages: messages.map(({ images, ...m }) => ({ ...m, ...(images?.length && { content: `${m.content}\n[${images.length} image${images.length === 1 ? '' : 's'}]` }) })) };
         let out = '';
         let thought = false;
         let callLoad: number | undefined;
@@ -350,6 +383,12 @@ export async function runGraph(
         } catch (err) {
           if (timer.timedOut()) throw new TimeLimitError(`${ref.model} was stopped after ${limitSecs} seconds`);
           if (signal.aborted) throw new Error(cancelText(signal));
+          // A model that can't see refuses the pictures: ask once more with the text alone.
+          if (pictures && !out) {
+            timer.clear();
+            deps.emit({ ...base, type: 'node_progress', note: `${ref.model} can't read images (${(err as Error).message.slice(0, 120)}) — asking with the text only` });
+            return call(stripImages(messages), ref, think, json, true);
+          }
           throw err;
         } finally {
           timer.clear();
@@ -363,7 +402,7 @@ export async function runGraph(
         // Small local thinking models sometimes think until they stop and never answer: ask once more without thinking.
         if (!out.trim() && thought && think === undefined && p.local && !signal.aborted) {
           deps.emit({ ...base, type: 'node_progress', note: 'Only thought, no answer — asking again without thinking' });
-          return call(messages, ref, false, json);
+          return call(messages, ref, false, json, noImages);
         }
         return out;
       };

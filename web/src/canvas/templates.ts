@@ -294,6 +294,29 @@ const TRAIN: Template[] = [
       ),
   },
   {
+    id: 'train-robot-voice',
+    group: 'Train',
+    name: 'Train a HiveBot character (colibri teaches)',
+    description:
+      'Describe a robot character (name, personality, what it knows). Colibri (or your strongest model) writes 200 short spoken answers in that character, then a small fast model trains on them and lands in Ollama, ready for HiveBot. Training takes the GPU: run it when nobody needs it.',
+    build: (m) => {
+      const teacher = m.colibri?.chat ?? m.judge ?? m.text[0];
+      return chain(
+        node('input', 0, 120, 'The character'),
+        node('generate', 320, 120, 'Colibri writes what the character says', {
+          ...(teacher && { model: teacher }),
+          dataset: 'HiveBot character',
+          count: 200,
+          prompt:
+            'Things people say to a home robot (questions, small talk, requests, jokes, "what can you do?") and the robot\'s spoken answer, in this character: {{question}}. ' +
+            'Answers are spoken out loud: 1-3 short sentences, no lists, no markdown, no emojis; stay in character; never invent facts like the time or the weather — say it can\'t check that yet.',
+        }),
+        node('train', 640, 120, 'Train the small model', { dataset: 'HiveBot character', trainBase: 'unsloth/Qwen3.5-2B', trainName: `hivebot-character:${today()}`, epochs: 2, trainWait: true }),
+        node('output', 960, 120, 'Final answer'),
+      );
+    },
+  },
+  {
     id: 'train-decision',
     group: 'Train',
     name: 'Make your own decision model',
@@ -776,7 +799,7 @@ function colibriStart(m: TemplateModels): CanvasGraph {
     system: 'You are a careful programmer. Answer with working code and a short explanation of how it works.',
     prompt: '{{question}}',
     think: false,
-    maxTokens: 2048,
+    maxTokens: 4096,
   });
   const talk = node('llm', 680, 320, 'chat', { ...(chat && { model: chat }), system: 'Answer clearly and to the point.', prompt: '{{question}}', think: false, maxTokens: 1536 });
   const explain = node('template', 1040, 200, 'Explain what happened', { prompt: COLIBRI_EXPLAIN });

@@ -35,7 +35,7 @@ beforeAll(async () => {
     port: 18790 + Math.floor(Math.random() * 500),
     launcher: (o) => {
       launches.push({ model: o.model, gpu: o.gpu, ramGb: o.ramGb });
-      return { cmd: process.execPath, args: [fake, 'serve', '--model', o.dir, '--model-id', o.model, '--port', String(o.port)], env: (failWith ? { FAKE_COLI_FAIL: failWith } : {}) as Record<string, string> };
+      return { cmd: process.execPath, args: [fake, 'serve', '--model', o.dir, '--model-id', o.model, '--port', String(o.port), '--kv-slots', String(o.kvSlots)], env: (failWith ? { FAKE_COLI_FAIL: failWith } : {}) as Record<string, string> };
     },
   });
   const models = await import('../src/colibri/models.js');
@@ -138,6 +138,52 @@ describe('colibri engine', () => {
     expect(r.usage.inputTokens).toBe(12);
   });
 
+  it('keeps each conversation and the decisions on their own memory slot', async () => {
+    const chat = await adapterOf('colibri');
+    const dec = await adapterOf('colibri-decisions');
+    const ask = (system: string, q: string) => collect(chat.stream({ model: 'qwen36-35b', messages: [{ role: 'system', content: system }, { role: 'user', content: q }] }, new AbortController().signal));
+    await ask('You are Jev.', 'Hello');
+    await ask('You are Jev.', 'What time is it?');
+    await ask('You are Ultron.', 'Hello');
+    await dec.decide!({ model: 'qwen36-35b', state: 'x', questions: { q: { type: 'noul', instructions: 'yes?' } } });
+    const { kv, slots } = (await (await fetch(`${engine.colibriBase()}/debug/slots`)).json()) as { kv: number; slots: [string, number | null][] };
+    expect(kv).toBe(4);
+    const chats = slots.filter((s) => s[0] === 'chat').slice(-3).map((s) => s[1]!);
+    // The same character keeps its slot (its prompt is read once); decisions have slot 3 to themselves.
+    expect(chats[0]).toBe(chats[1]);
+    expect(chats.every((n) => n >= 0 && n < 3)).toBe(true);
+    expect(slots.filter((s) => s[0] === 'decide').at(-1)![1]).toBe(3);
+  });
+
+  it('a picture in the question goes to the model; one that reads text only is asked again without it', async () => {
+    const { runGraph } = await import('../src/engine/run.js');
+    const { resolverFor } = await import('../src/api/providers.js');
+    const user = db.prepare("SELECT * FROM users WHERE id = 'u1'").get() as never;
+    const g = {
+      nodes: [
+        { id: 'q', type: 'input', position: { x: 0, y: 0 }, config: {} },
+        { id: 'a', type: 'llm', position: { x: 1, y: 0 }, config: { model: { providerId: 'colibri', model: 'qwen36-35b' } } },
+        { id: 'o', type: 'output', position: { x: 2, y: 0 }, config: {} },
+      ],
+      edges: [
+        { id: 'e1', source: 'q', target: 'a' },
+        { id: 'e2', source: 'a', target: 'o' },
+      ],
+    } as never;
+    const notes: string[] = [];
+    const read: string[] = [];
+    const r = await runGraph(
+      g,
+      'What is on this picture? ![cat](hm-file:uploads/cat.png)',
+      { resolve: resolverFor(user), emit: (e) => e.type === 'node_progress' && notes.push((e as { note: string }).note), services: { readFile: (p) => (read.push(p), Buffer.from([0x89, 0x50, 1, 2])) } },
+      new AbortController().signal,
+    );
+    expect(r.status).toBe('done');
+    expect(read).toEqual(['uploads/cat.png']);
+    expect(notes.some((n) => /can't read images/.test(n))).toBe(true);
+    expect(r.final).toContain('[image: cat]');
+  });
+
   it('shows why the engine would not start', async () => {
     await engine.stopEngine();
     failWith = 'qwen36 engine is broken: bad tensor layout';
@@ -185,7 +231,7 @@ describe('colibri in runs and settings', () => {
   it('Settings → Colibri: status, catalog, and admins only', async () => {
     const s = await app.inject({ method: 'GET', url: '/api/colibri/status', headers: bearer() });
     expect(s.statusCode).toBe(200);
-    expect(s.json()).toMatchObject({ available: true, gpuHost: 'gpu.test', settings: { keepAliveMin: 10 } });
+    expect(s.json()).toMatchObject({ available: true, gpuHost: 'gpu.test', settings: { keepAliveMin: 30, kvSlots: 4 } });
     const c = await app.inject({ method: 'GET', url: '/api/colibri/catalog', headers: bearer() });
     expect(c.json().models.map((m: { id: string }) => m.id)).toEqual(['qwen36-35b', 'glm-5.2']);
     const presets = (await app.inject({ method: 'GET', url: '/api/providers/presets' })).json() as { id: string }[];

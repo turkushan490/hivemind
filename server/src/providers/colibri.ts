@@ -1,9 +1,9 @@
 import type { LoadedModel, ModelInfo } from '@hivemind/shared';
-import { acquire, colibriBase, colibriSettings, installedModels, loadedModel, stopEngine, warmModel } from '../colibri/engine.js';
+import { acquire, cacheSlot, colibriAvailable, colibriBase, colibriSettings, installedModels, loadedModel, stopEngine, warmModel } from '../colibri/engine.js';
 import { catalog, type CatalogModel } from '../colibri/models.js';
 import { fromSystemOne, post } from './decisions.js';
 import { readSSE } from './lines.js';
-import { checkResponse, ProviderError, type ChatRequest, type ProviderAdapter, type ProviderConfig, type StreamChunk } from './types.js';
+import { checkResponse, openaiMessages, ProviderError, type ChatRequest, type ProviderAdapter, type ProviderConfig, type StreamChunk } from './types.js';
 
 /**
  * Colibri inside this container (src/colibri/engine.ts). Two providers share the one engine: "colibri" chats
@@ -22,10 +22,13 @@ function catalogNames() {
   return refreshing;
 }
 
+// Read the names once at start, so the first model list doesn't wait for them.
+if (colibriAvailable()) void catalogNames();
+
 async function installedInfo(providerId: string, kind?: 'decision'): Promise<ModelInfo[]> {
   const list = installedModels();
   // The first list waits for the names; later ones use what is there and refresh behind.
-  if (list.length && !names.size) await Promise.race([catalogNames(), new Promise((r) => setTimeout(r, 5000))]);
+  if (list.length && !names.size) await Promise.race([catalogNames(), new Promise((r) => setTimeout(r, 1500))]);
   else void catalogNames();
   return list.map((m) => {
     const c = names.get(m.model);
@@ -77,6 +80,12 @@ export function colibriChatAdapter(cfg: ProviderConfig): ProviderAdapter {
   };
 }
 
+/** A conversation's slot: the same system prompt and first question land on the same cached prompt. */
+const slotOf = (req: ChatRequest) => {
+  const firstUser = req.messages.findIndex((m) => m.role === 'user');
+  return cacheSlot('chat', JSON.stringify(req.messages.slice(0, firstUser + 1).map((m) => [m.role, m.role === 'user' && req.messages.length - 1 === firstUser ? '' : m.content])));
+};
+
 async function* chat(req: ChatRequest, signal: AbortSignal, loadMs: number | undefined): AsyncIterable<StreamChunk> {
   const res = await fetch(`${colibriBase()}/v1/chat/completions`, {
     method: 'POST',
@@ -84,8 +93,9 @@ async function* chat(req: ChatRequest, signal: AbortSignal, loadMs: number | und
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
       model: req.model,
-      messages: req.messages,
+      messages: openaiMessages(req.messages),
       stream: true,
+      ...(slotOf(req) !== undefined && { cache_slot: slotOf(req) }),
       stream_options: { include_usage: true },
       ...(req.temperature !== undefined && { temperature: req.temperature }),
       ...(req.maxTokens !== undefined && { max_tokens: req.maxTokens }),
@@ -132,7 +142,7 @@ export function colibriDecisionAdapter(cfg: ProviderConfig): ProviderAdapter {
       type Reply = { model?: string; answers?: Record<string, Record<string, unknown>>; usage?: { input_tokens?: number | null; output_tokens?: number | null } };
       let data: Reply;
       try {
-        data = (await post(`${colibriBase()}/v1/systemone`, { model: req.model, state: req.state, questions }, {}, signal, 'Colibri', colibriSettings().callSeconds * 1000)) as Reply;
+        data = (await post(`${colibriBase()}/v1/systemone`, { model: req.model, state: req.state, questions, ...(cacheSlot('decide', '') !== undefined && { cache_slot: cacheSlot('decide', '') }) }, {}, signal, 'Colibri', colibriSettings().callSeconds * 1000)) as Reply;
       } finally {
         hold.release();
       }

@@ -703,13 +703,13 @@ function HomeAssistantSettings(p: Props) {
     <div className="space-y-2">
       {error && <p className="rounded-md bg-red-950/40 p-2 text-xs text-red-300">{error}</p>}
       <div className="flex gap-1">
-        {(['state', 'service'] as const).map((m) => (
+        {(['state', 'service', 'assist'] as const).map((m) => (
           <button
             key={m}
             className={`flex-1 rounded-md border px-2 py-1.5 text-sm ${op === m ? 'border-sky-400 bg-sky-400/15 text-sky-100' : 'border-[#30363d] text-slate-400'}`}
             onClick={() => p.onChange({ haOp: m })}
           >
-            {m === 'state' ? 'Read states' : 'Call a service'}
+            {m === 'state' ? 'Read states' : m === 'service' ? 'Call a service' : 'Ask (Assist)'}
           </button>
         ))}
       </div>
@@ -720,7 +720,18 @@ function HomeAssistantSettings(p: Props) {
           </option>
         ))}
       </datalist>
-      {op === 'state' ? (
+      {op === 'assist' ? (
+        <>
+          <label className="block space-y-1">
+            <Label>Language</Label>
+            <input className="input text-xs" placeholder="en" value={c.haLanguage ?? ''} onChange={(e) => p.onChange({ haLanguage: e.target.value || undefined })} />
+          </label>
+          <p className="text-xs text-slate-500">
+            The text wired in (or the question) goes to Home Assistant&apos;s Assist, like you would say it to HA: &quot;turn on the kitchen lights&quot;. HA does it and its answer
+            (&quot;Turned on the lights&quot;) is this block&apos;s output; when HA doesn&apos;t understand, the block fails with HA&apos;s words.
+          </p>
+        </>
+      ) : op === 'state' ? (
         <>
           <label className="block space-y-1">
             <Label>Entities</Label>

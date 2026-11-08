@@ -5,7 +5,31 @@ export type { LoadedModel };
 export interface ChatMessage {
   role: 'system' | 'user' | 'assistant';
   content: string;
+  /** Pictures that go with this message (a question with an image attached), for models that can see. */
+  images?: { data: Buffer; ext: string }[];
 }
+
+const mime = (ext: string) => `image/${ext.toLowerCase().replace('jpg', 'jpeg')}`;
+
+/** Ollama's /api/chat: pictures as base64 next to the text. */
+export const ollamaMessages = (messages: ChatMessage[]) =>
+  messages.map(({ images, ...m }) => (images?.length ? { ...m, images: images.map((i) => i.data.toString('base64')) } : m));
+
+/** OpenAI-compatible APIs: a message with pictures becomes text + image_url parts (data URLs). */
+export const openaiMessages = (messages: ChatMessage[]) =>
+  messages.map(({ images, ...m }) =>
+    images?.length
+      ? { role: m.role, content: [{ type: 'text', text: m.content }, ...images.map((i) => ({ type: 'image_url', image_url: { url: `data:${mime(i.ext)};base64,${i.data.toString('base64')}` } }))] }
+      : m,
+  );
+
+/** Anthropic's Messages API: image blocks before the text. */
+export const anthropicMessages = (messages: ChatMessage[]) =>
+  messages.map(({ images, ...m }) =>
+    images?.length
+      ? { role: m.role, content: [...images.map((i) => ({ type: 'image', source: { type: 'base64', media_type: mime(i.ext), data: i.data.toString('base64') } })), { type: 'text', text: m.content }] }
+      : m,
+  );
 
 export interface ChatRequest {
   model: string;

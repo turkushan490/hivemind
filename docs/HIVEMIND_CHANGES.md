@@ -883,6 +883,25 @@ which project it works on, and can make a new one.
   - A Decide block on `colibri-decisions` asks one question, "code or chat?".
   - Only the block named after the answer runs (`code` on the coder model, or `chat`).
   - The answer ends with an explanation of every step.
+- **Speed for apps (HiveBot):**
+  - colibri starts with `--kv-slots` (`kvSlots`, default 4). Each conversation (its system prompt and first question) gets its own slot (`cache_slot`), so a repeated prompt isn't read again, and decisions get the last slot to themselves.
+  - It stays loaded for 30 minutes by default.
+  - The catalog names are read once at start.
+- **Template Train a HiveBot character (colibri teaches):** colibri writes 200 short spoken answers in a character, then a small model trains on them and lands in Ollama.
+
+## M16 — Questions with pictures, files and audio; HiveBot S7/S8
+
+- **The question box** (Workflow page and Use page):
+  - grows with the text (Enter sends, Shift+Enter is a new line);
+  - 📎, drop or paste for attachments;
+  - a mic next to it on the Workflow page.
+- **What attachments become:**
+  - Pictures are uploaded to `uploads/` in your files and go into the question as `![name](hm-file:…)`.
+  - PDFs and text/code files go in as their text (100k characters at most).
+  - Audio goes in as what is said in it (speech to text).
+- **Pictures reach models that can see.** The last user message gets the pictures linked in it (at most 4, 20 MB each) as images: Ollama `images`, OpenAI-compatible `image_url` parts, Anthropic image blocks. A model that refuses them is asked again with the text only, and a progress note says so.
+- **Home Assistant block "Ask (Assist)"** (`haOp: 'assist'`, `haLanguage`): `POST /api/conversation/process`. The output is HA's own answer ("Turned on the lights"); when HA doesn't understand, the block fails with HA's words.
+- **`think: false` for cloud reasoning models:** `reasoning_effort` `none` (Gemini), `low` (gpt-oss), `minimal` (OpenAI o-series/gpt-5). A model that refuses the setting is asked again without it.
 - Tests: `server/test/colibri.test.ts`, which uses a fake `coli serve` (`server/test/fake-coli.mjs`).
 
 ---

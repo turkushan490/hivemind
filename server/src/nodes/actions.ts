@@ -114,6 +114,27 @@ export const ACTION_NODES: Record<'homeassistant' | 'webhook' | 'discord', NodeD
       const headers = { authorization: `Bearer ${ha.token}`, 'content-type': 'application/json' };
       const c = ctx.node.config;
 
+      // Assist: Home Assistant's own conversation agent does what the sentence says and answers in words.
+      if (c.haOp === 'assist') {
+        const text = (inputText(ctx) || ctx.question).trim();
+        if (!text) throw new Error('Nothing to ask Home Assistant: wire in a sentence like "turn on the kitchen lights"');
+        ctx.progress('Asking Home Assistant…');
+        const res = await send(
+          `${ha.url}/api/conversation/process`,
+          { method: 'POST', headers, body: JSON.stringify({ text: text.slice(0, 2000), language: c.haLanguage?.trim() || 'en' }) },
+          ctx.signal,
+          'Home Assistant',
+        );
+        if (!res.ok) throw new Error(`Home Assistant Assist answered HTTP ${res.status}: ${(await res.text().catch(() => '')).slice(0, 300)}`);
+        const data = (await res.json().catch(() => ({}))) as { response?: { response_type?: string; speech?: { plain?: { speech?: string } } } };
+        const speech = data.response?.speech?.plain?.speech?.trim() || '';
+        const kind = data.response?.response_type ?? '';
+        // "Sorry, I couldn't understand that" is an error, so the run shows what went wrong.
+        if (kind === 'error') throw new Error(speech || 'Home Assistant did not understand that');
+        ctx.progress(`Home Assistant: ${kind || 'done'}`);
+        return speech || 'Done.';
+      }
+
       if ((c.haOp ?? 'state') === 'state') {
         const ids = fillTemplate(c.entities ?? '', ctx, 'none')
           .split(/[\s,]+/)

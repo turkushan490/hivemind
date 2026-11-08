@@ -11,6 +11,7 @@ import { IDLE, STATE_LABEL, STATE_TEXT, useRun } from '../run/state';
 import { PausePanel } from '../components/PausePanel';
 import { useStored } from '../stored';
 import { MicButton, speak, SpeakButton, useVoice } from '../voice';
+import { QuestionBox, useAttachments } from '../components/QuestionBox';
 
 /** The simple screen: pick a saved canvas, ask, get the answer. What a phone or Home Assistant user sees. */
 export function UsePage({ active, viewer, onProblem, onBuild }: { active: boolean; viewer?: boolean; onProblem: () => void; onBuild: () => void }) {
@@ -44,11 +45,16 @@ export function UsePage({ active, viewer, onProblem, onBuild }: { active: boolea
     if (run.final) byVoice.current = false;
   }, [run.final]);
 
-  const ask = async (e?: FormEvent, q = question, target = canvas) => {
+  // The question box: the text plus its pictures, files and audio.
+  const attachments = useAttachments();
+  const ask = async (e?: FormEvent, q?: string, target = canvas) => {
     e?.preventDefault();
-    if (!target || !q.trim() || run.running) return;
+    if (attachments.busy) return toast('Wait until the attachments are read', 'info');
+    const full = q ?? attachments.compose(question);
+    if (!target || !full.trim() || run.running) return;
     try {
-      await run.start({ question: q.trim(), graph: { nodes: target.nodes, edges: target.edges }, canvasId: target.id });
+      await run.start({ question: full.trim(), graph: { nodes: target.nodes, edges: target.edges }, canvasId: target.id });
+      if (q === undefined) attachments.clear();
     } catch {}
   };
 
@@ -114,12 +120,14 @@ export function UsePage({ active, viewer, onProblem, onBuild }: { active: boolea
       </div>
 
       {routed && <div className="hm-zap -mb-2 text-xs text-indigo-300">{routed}</div>}
-      <form onSubmit={ask} className="flex gap-2">
-        <input
-          className="input h-12 text-base"
-          placeholder={`Ask “${canvas?.name}”…`}
+      <form onSubmit={ask} className="flex items-end gap-2">
+        <QuestionBox
+          big
           value={question}
-          onChange={(e) => setQuestion(e.target.value)}
+          onChange={setQuestion}
+          onSubmit={() => void ask()}
+          attachments={attachments}
+          placeholder={`Ask “${canvas?.name}”… (📎 pictures, PDFs, files, audio)`}
           autoFocus
         />
         <MicButton
@@ -135,7 +143,7 @@ export function UsePage({ active, viewer, onProblem, onBuild }: { active: boolea
             Stop
           </button>
         ) : (
-          <button className="btn h-12 shrink-0 px-6" disabled={!question.trim()}>
+          <button className="btn h-12 shrink-0 px-6" disabled={(!question.trim() && !attachments.list.length) || attachments.busy}>
             Ask
           </button>
         )}

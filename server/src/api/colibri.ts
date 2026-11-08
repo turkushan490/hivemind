@@ -20,7 +20,7 @@ export function colibriRoutes(app: FastifyInstance) {
 
   app.put('/api/colibri/settings', { preHandler: requireAdmin }, async (req) => {
     const body = (req.body ?? {}) as ColibriSettings;
-    const keys: (keyof ColibriSettings)[] = ['ramGb', 'gpu', 'vramGb', 'keepAliveMin', 'callSeconds', 'gpuHost', 'ctx'];
+    const keys: (keyof ColibriSettings)[] = ['ramGb', 'gpu', 'vramGb', 'keepAliveMin', 'callSeconds', 'gpuHost', 'ctx', 'kvSlots'];
     const patch = Object.fromEntries(keys.filter((k) => body[k] !== undefined).map((k) => [k, body[k]])) as ColibriSettings;
     return saveColibriSettings(patch);
   });

@@ -1,6 +1,6 @@
 import type { ModelInfo } from '@hivemind/shared';
 import { readLines } from './lines.js';
-import { checkResponse, foldSystem, ProviderError, type ChatRequest, type LoadedModel, type ProviderAdapter, type PullProgress, type ProviderConfig, type StreamChunk } from './types.js';
+import { checkResponse, foldSystem, ollamaMessages, ProviderError, type ChatRequest, type LoadedModel, type ProviderAdapter, type PullProgress, type ProviderConfig, type StreamChunk } from './types.js';
 
 /**
  * The name a pulled model has on the Ollama server: "ollama.com/user/model" (as written on ollama.com, or by
@@ -106,7 +106,7 @@ export function ollamaAdapter(cfg: ProviderConfig): ProviderAdapter {
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({
             model,
-            messages,
+            messages: ollamaMessages(messages),
             stream: true,
             ...(req.json && { format: 'json' }),
             ...(req.think === false && { think: false }),

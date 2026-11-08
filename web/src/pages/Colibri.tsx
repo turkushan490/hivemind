@@ -10,6 +10,7 @@ interface Settings {
   callSeconds: number;
   gpuHost?: string;
   ctx: number;
+  kvSlots: number;
 }
 
 interface Job {
@@ -347,6 +348,10 @@ export function ColibriPanel({ active }: { active: boolean }) {
             <label className="space-y-1">
               <span className="text-slate-400">Context (tokens, 0 = colibri decides)</span>
               <input className="input" type="number" min={0} step={1024} value={form.ctx} onChange={(e) => setForm({ ...form, ctx: Number(e.target.value) })} />
+            </label>
+            <label className="space-y-1">
+              <span className="text-slate-400">Conversations kept in memory (1–16): each keeps its prompt, so a repeat answers faster</span>
+              <input className="input" type="number" min={1} max={16} value={form.kvSlots} onChange={(e) => setForm({ ...form, kvSlots: Number(e.target.value) })} />
             </label>
             <label className="space-y-1 sm:col-span-2">
               <span className="text-slate-400">GPU queue: the machine of the Ollama/ComfyUI that use the same GPU (empty = the first Ollama)</span>

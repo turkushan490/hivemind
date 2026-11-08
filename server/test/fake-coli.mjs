@@ -13,6 +13,8 @@ if (process.env.FAKE_COLI_FAIL) {
 const delay = Number(process.env.FAKE_COLI_DELAY_MS || 0);
 let active = 0;
 let completed = 0;
+const slots = [];
+const kv = args.includes('--kv-slots') ? Number(arg('--kv-slots')) : 1;
 console.log(`fake coli serving ${model} on ${port} (${args.join(' ')})`);
 
 const body = (req) => new Promise((r) => {
@@ -22,9 +24,15 @@ const body = (req) => new Promise((r) => {
 });
 
 createServer(async (req, res) => {
+  if (req.url === '/debug/slots') return res.end(JSON.stringify({ kv, slots }));
   if (req.url === '/health') return res.end(JSON.stringify({ ok: true, active, queued: 0, completed, model }));
   if (req.url === '/v1/chat/completions') {
     const b = await body(req);
+    slots.push(['chat', b.cache_slot ?? null]);
+    if (b.messages.some((m) => Array.isArray(m.content))) {
+      res.statusCode = 400;
+      return res.end(JSON.stringify({ error: { message: 'This model reads text only' } }));
+    }
     active++;
     res.writeHead(200, { 'content-type': 'text/event-stream' });
     await new Promise((r) => setTimeout(r, delay));
@@ -40,6 +48,7 @@ createServer(async (req, res) => {
   }
   if (req.url === '/v1/systemone') {
     const b = await body(req);
+    slots.push(['decide', b.cache_slot ?? null]);
     const answers = Object.fromEntries(
       Object.entries(b.questions).map(([k, q]) => {
         if (q.type === 'noul') return [k, { type: 'noul', noul: 0.9 }];

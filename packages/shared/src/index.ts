@@ -120,7 +120,9 @@ export interface NodeConfig {
   loraStrength?: number;
   negative?: string;
   /** Home Assistant: read entity states, or call a service. */
-  haOp?: 'state' | 'service';
+  haOp?: 'state' | 'service' | 'assist';
+  /** Home Assistant Assist: the language of the sentence (en, nl, …). */
+  haLanguage?: string;
   /** Home Assistant: entity ids to read (comma or newline separated; templates allowed). */
   entities?: string;
   /** Home Assistant: the service to call, e.g. "light.turn_on". */

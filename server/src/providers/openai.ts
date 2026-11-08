@@ -1,7 +1,7 @@
 import type { ModelInfo } from '@hivemind/shared';
 import { checkUrl, readCapped, timeoutSignal } from '../services/net.js';
 import { readSSE } from './lines.js';
-import { checkResponse, type ChatRequest, type GeneratedImage, type ImageRequest, type ProviderAdapter, type ProviderConfig, type StreamChunk } from './types.js';
+import { checkResponse, openaiMessages, type ChatRequest, type GeneratedImage, type ImageRequest, type ProviderAdapter, type ProviderConfig, type StreamChunk } from './types.js';
 
 interface OpenAIModel {
   id: string;
@@ -73,13 +73,17 @@ export function openaiAdapter(cfg: ProviderConfig): ProviderAdapter {
     },
 
     async *stream(req: ChatRequest, signal: AbortSignal): AsyncIterable<StreamChunk> {
-      const res = await fetch(`${base}/chat/completions`, {
+      // think: false also for cloud reasoning models (Gemini, gpt-oss), which otherwise think before every answer.
+      const effort = req.think === false ? noThinking(cfg.preset, req.model) : undefined;
+      const send = (withEffort: boolean) =>
+        fetch(`${base}/chat/completions`, {
         method: 'POST',
         signal,
         headers: headers(),
         body: JSON.stringify({
+          ...(withEffort && effort && { reasoning_effort: effort }),
           model: req.model,
-          messages: req.messages,
+          messages: openaiMessages(req.messages),
           stream: true,
           stream_options: { include_usage: true },
           // Only providers known to accept it; others get the instruction in the prompt alone.
@@ -88,6 +92,12 @@ export function openaiAdapter(cfg: ProviderConfig): ProviderAdapter {
           ...(req.maxTokens !== undefined && { max_tokens: req.maxTokens }),
         }),
       });
+      let res = await send(true);
+      // A model that has no such setting refuses it: ask again without.
+      if (effort && res.status === 400) {
+        const detail = await res.clone().text().catch(() => '');
+        if (/reasoning|effort|thinking/i.test(detail)) res = await send(false);
+      }
       await checkResponse(res, `${cfg.preset} chat`);
       let usage: { prompt_tokens?: number; completion_tokens?: number } | undefined;
       let stopped: 'length' | undefined;
@@ -109,6 +119,14 @@ export function openaiAdapter(cfg: ProviderConfig): ProviderAdapter {
 
 /** OpenAI-compatible image models: DALL·E, gpt-image, and Google's Imagen through Gemini's compatible API. */
 const IMAGE_MODEL = /^(models\/)?(dall-e|gpt-image|imagen)/i;
+
+/** The "think as little as possible" setting of a cloud API, when it has one. */
+export function noThinking(preset: string, model: string): string | undefined {
+  if (preset === 'gemini') return 'none';
+  if (/gpt-oss/i.test(model)) return 'low';
+  if (preset === 'openai' && /^(o\d|gpt-5)/i.test(model)) return 'minimal';
+  return undefined;
+}
 
 function isFreePreset(preset: string): boolean {
   return preset === 'groq' || preset === 'gemini';

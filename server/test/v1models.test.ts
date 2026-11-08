@@ -125,7 +125,7 @@ describe('Gemini thought signatures', () => {
       { role: 'assistant', content: '', toolCalls: [{ id: 'a', name: 'write', arguments: '{}', extra: { google: { thought_signature: 'real' } } }] },
       { role: 'assistant', content: '', toolCalls: [{ id: 'b', name: 'write', arguments: '{}' }] },
     ]);
-    const out = openaiMessages(msgs) as { tool_calls: { extra_content: { google: { thought_signature: string } } }[] }[];
+    const out = openaiMessages(msgs) as unknown as { tool_calls: { extra_content: { google: { thought_signature: string } } }[] }[];
     expect(out[0].tool_calls[0].extra_content.google.thought_signature).toBe('real');
     expect(out[1].tool_calls[0].extra_content.google.thought_signature).toBe('skip_thought_signature_validator');
   });

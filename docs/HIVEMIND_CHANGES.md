@@ -971,6 +971,38 @@ which project it works on, and can make a new one.
   change and delete its user's skills, nothing more.
 - Tests: `server/test/kokoro.test.ts`, `server/test/hivebotS10S14.test.ts`, S12/S13 in `server/test/engine.test.ts`.
 
+## M19 — Coding agents (T3 Code / OpenCode) and folders of other apps
+
+- **Single models in `/v1`:** besides the canvases, `GET /v1/models` lists the provider models a person may use as
+  `<providerId>/<model>` (`colibri/qwen36-35b`, `ollama/gemma4:e2b`, cloud models), with
+  `hivemind: { kind: "model", provider, contextLength, tools }`. A canvas id never has a slash, so canvases keep working.
+  Settings → API tokens → **Coding agents → Single models in the API** (`prefs.apiModels`, default on for admins); a
+  limited token also needs its **models** permission (`scope.models`, at creation or `PATCH /api/tokens/:id {models}`).
+- **Tools:** `POST /v1/chat/completions` with such a model passes `messages` (tool calls and `role: "tool"` results
+  included), `tools`, `tool_choice`, `temperature`, `top_p`, `max_tokens`/`max_completion_tokens` and `stop` to the
+  provider, and answers with `tool_calls` / `finish_reason: "tool_calls"`, streamed as OpenAI deltas or whole.
+  - `ChatMessage` has `toolCalls` / `toolCallId` / `toolName` and role `tool`; `ChatRequest` has `tools`,
+    `toolChoice`, `stop`, `topP`; `StreamChunk` has `tool_call` pieces.
+  - OpenAI-compatible providers and colibri (`coli serve` renders tools in the model's own format and parses them
+    back): passed through. Ollama: native `/api/chat` tools, each call gets an id. Anthropic: `tool_use` /
+    `tool_result` blocks, `input_json_delta` streamed.
+  - All system (and `developer`) messages are merged into one at the start (some chat templates refuse a second one).
+  - Ollama gets `num_ctx` 32768 for API calls (its default 4096 is too small for an agent's ~12k first request); a
+    request that can't fit the model's context gets a 400 `context_length_exceeded` with both numbers.
+  - Same rules as a run: access profiles, the run time limit (colibri's longer one for colibri), the shared GPU queue
+    (`: waiting for GPU` / `: loading model` comments every 10 s while streaming), usage in the stats
+    (`run_usage`, `node_type = 'api'`).
+- **Copy OpenCode config** (Settings → API tokens): an `opencode.json` provider block for this HiveMind with every
+  model that can call tools (`tool_call: true`, context limit).
+- **Folders of other apps:** a folder another app works in (T3 Code's projects) mounted into the container (template
+  path "Folder of another app" → `/projects`). Projects → **Folders of other apps**: a switch (off by default), the
+  allowed roots (never HiveMind's own folders), and each folder with **Open as project**. Such a project
+  (`projects.external`) is the folder itself: workflows, the editor, Build and Git work on the same files; new files
+  get the owner of the folder; `node_modules`, `.venv` and caches are skipped; bigger limits (20,000 files, 2 GB).
+  Deleting the project never deletes the folder; switched off, it stays listed but can't be opened (403).
+  `GET/PUT /api/outside-folders`, `POST /api/projects/outside { path, name? }` (admins).
+- Tests: `server/test/v1models.test.ts`, `server/test/outsideFolders.test.ts`.
+
 ---
 
 ## The DungeonMind canvases (installed by DungeonMind, documented here)

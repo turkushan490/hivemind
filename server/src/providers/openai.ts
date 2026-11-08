@@ -90,6 +90,7 @@ export function openaiAdapter(cfg: ProviderConfig): ProviderAdapter {
           ...(req.json && ['openai', 'groq'].includes(cfg.preset) && { response_format: { type: 'json_object' } }),
           ...(req.temperature !== undefined && { temperature: req.temperature }),
           ...(req.maxTokens !== undefined && { max_tokens: req.maxTokens }),
+          ...toolFields(req),
         }),
       });
       let res = await send(true);
@@ -109,12 +110,31 @@ export function openaiAdapter(cfg: ProviderConfig): ProviderAdapter {
         if (thinking) yield { type: 'thinking', text: thinking };
         const text = delta?.content;
         if (text) yield { type: 'token', text };
+        yield* toolDeltas(delta?.tool_calls);
         if (msg.usage) usage = msg.usage;
         if (msg.choices?.[0]?.finish_reason === 'length') stopped = 'length';
       }
       yield { type: 'done', inputTokens: usage?.prompt_tokens, outputTokens: usage?.completion_tokens, ...(stopped && { stopped }) };
     },
   };
+}
+
+/** tools, tool_choice, stop and top_p for an OpenAI-compatible request (only what the caller set). */
+export function toolFields(req: ChatRequest) {
+  return {
+    ...(req.tools?.length && { tools: req.tools }),
+    ...(req.tools?.length && req.toolChoice !== undefined && { tool_choice: req.toolChoice }),
+    ...(req.stop !== undefined && { stop: req.stop }),
+    ...(req.topP !== undefined && { top_p: req.topP }),
+  };
+}
+
+/** OpenAI's streamed tool_calls deltas as tool_call chunks. */
+export function* toolDeltas(calls: unknown): Iterable<StreamChunk> {
+  if (!Array.isArray(calls)) return;
+  for (const c of calls as { index?: number; id?: string; function?: { name?: string; arguments?: string } }[]) {
+    yield { type: 'tool_call', index: c.index ?? 0, ...(c.id && { id: c.id }), ...(c.function?.name && { name: c.function.name }), ...(c.function?.arguments && { arguments: c.function.arguments }) };
+  }
 }
 
 /** OpenAI-compatible image models: DALL·E, gpt-image, and Google's Imagen through Gemini's compatible API. */

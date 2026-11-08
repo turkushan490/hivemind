@@ -5,10 +5,11 @@ import { checkVars } from '../engine/vars.js';
 import { cancelRun, startRun, subscribe } from '../events/runs.js';
 import { apiError, chatFrom, chunk, LiveText, completion, findCanvas, modelList, streamSource, usageOf, type CanvasModelRow } from '../services/openaiCompat.js';
 import { authenticate } from './auth.js';
-import { getPrefs } from './builder.js';
+import { apiModelsOn, getPrefs } from './builder.js';
+import { callApiModel, isApiModel, splitModelId, toolSupport } from '../services/v1Models.js';
 import { routeCanvas } from '../services/canvasRouter.js';
 import { logError } from '../errors.js';
-import { gpuFreerFor, resolverFor, trainingFor } from './providers.js';
+import { allowedModelsOf, gpuFreerFor, resolverFor, trainingFor, usableRow, usableRows } from './providers.js';
 import { canvasesFor, runSetup, sourceOf } from './runs.js';
 import { noteRun } from '../services/activity.js';
 import { allowedFor, notAllowed } from '../services/access.js';
@@ -30,12 +31,43 @@ export function v1Routes(app: FastifyInstance) {
     const rows = canvasesFor(req.user!).map((r): CanvasModelRow => ({ id: r.id, name: r.name, description: r.description, updatedAt: r.updated_at }));
     // With the canvas router on, "auto" picks the right canvas per request.
     if (getPrefs(req.user!).canvasRouter && rows.length) rows.unshift({ id: 'auto', name: 'Auto (picks the canvas)', description: 'A decision model picks the canvas for each request', updatedAt: rows[0].updatedAt });
-    return modelList(rows);
+    const list = modelList(rows);
+    if (!apiModelsOn(req.user!)) return list;
+    // Single models for coding agents: "<provider>/<model>", with whether it can call tools.
+    const access = allowedFor(req.user!);
+    const providers = usableRows(req.user!, access).filter((r) => r.enabled && r.kind !== 'comfyui' && r.kind !== 'decision');
+    const lists = await Promise.allSettled(providers.map((r) => allowedModelsOf(r, access)));
+    const now = Math.floor(Date.now() / 1000);
+    const singles = lists.flatMap((l, i) =>
+      l.status !== 'fulfilled'
+        ? []
+        : l.value
+            .filter((m) => isApiModel(m, providers[i].kind))
+            .map((m) => ({
+              id: `${providers[i].id}/${m.model}`,
+              object: 'model',
+              created: now,
+              owned_by: providers[i].name,
+              name: `${m.name} · ${providers[i].name}`,
+              hivemind: { kind: 'model', provider: providers[i].id, ...(m.contextLength && { contextLength: m.contextLength }), tools: toolSupport(m, providers[i].kind, providers[i].preset) },
+            })),
+    );
+    return { ...list, data: [...list.data, ...singles] };
   });
 
   app.post('/v1/chat/completions', { preHandler: requireToken }, async (req, reply) => {
     const body = (req.body ?? {}) as { model?: string; messages?: unknown; stream?: boolean; hivemind_vars?: unknown };
     if (!body.model) return reply.code(400).send(apiError('"model" is required: the id or name of a saved canvas (see GET /v1/models)'));
+    // A single model ("colibri/qwen36-35b"): called directly, tools and all (a canvas id never has a slash).
+    const single = body.model.includes('/') && !findCanvas(canvasesFor(req.user!), body.model) ? splitModelId(body.model.replace(/^hivemind\//i, '')) : undefined;
+    if (single) {
+      if (!apiModelsOn(req.user!))
+        return reply.code(403).send(apiError('Single models are off in the API for you (Settings → API tokens → "Single models in the API", or the "models" permission of the token)', 'permission_error', 'models_off'));
+      const row = usableRow(req.user!, single.providerId);
+      if (!row?.enabled) return reply.code(404).send(apiError(`No model "${body.model}". GET /v1/models lists them.`, 'invalid_request_error', 'model_not_found'));
+      const provider = await resolverFor(req.user!)(single.providerId);
+      return callApiModel(req, reply, { user: req.user!, id: body.model, ...single, provider, freeGpu: gpuFreerFor(req.user!), body: req.body as Record<string, unknown> });
+    }
     let question: string;
     let vars: Record<string, string>;
     let chat: { system: string; history: { role: 'user' | 'assistant'; content: string }[] };

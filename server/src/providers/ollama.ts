@@ -27,7 +27,7 @@ export function ollamaAdapter(cfg: ProviderConfig): ProviderAdapter {
         sizeBytes: m.size,
         quant: m.details?.quantization_level,
         modifiedAt: m.modified_at,
-        ...(m.capabilities && { vision: m.capabilities.includes('vision') }),
+        ...(m.capabilities && { vision: m.capabilities.includes('vision'), tools: m.capabilities.includes('tools') }),
         ...(m.details?.family && { family: m.details.family }),
       }));
     },
@@ -117,10 +117,13 @@ export function ollamaAdapter(cfg: ProviderConfig): ProviderAdapter {
             ...(req.json && { format: 'json' }),
             ...(req.think === false && { think: false }),
             ...(keepAlive(req.keepAlive) && { keep_alive: keepAlive(req.keepAlive) }),
+            ...(req.tools?.length && { tools: req.tools }),
             options: {
               ...(req.temperature !== undefined && { temperature: req.temperature }),
               ...(req.maxTokens !== undefined && { num_predict: req.maxTokens }),
               ...(req.numCtx !== undefined && { num_ctx: req.numCtx }),
+              ...(req.topP !== undefined && { top_p: req.topP }),
+              ...(req.stop !== undefined && { stop: Array.isArray(req.stop) ? req.stop : [req.stop] }),
               // CPU only: no layers on the GPU.
               ...(cfg.cpuOnly && { num_gpu: 0 }),
             },
@@ -148,10 +151,11 @@ export function ollamaAdapter(cfg: ProviderConfig): ProviderAdapter {
         );
       }
       await checkResponse(res, 'Ollama /api/chat');
+      let toolIndex = 0;
       for await (const line of readLines(res.body!)) {
         if (!line.trim()) continue;
         const msg = JSON.parse(line) as {
-          message?: { content?: string; thinking?: string };
+          message?: { content?: string; thinking?: string; tool_calls?: { id?: string; function?: { name?: string; arguments?: unknown } }[] };
           done?: boolean;
           error?: string;
           prompt_eval_count?: number;
@@ -163,6 +167,11 @@ export function ollamaAdapter(cfg: ProviderConfig): ProviderAdapter {
         if (msg.error) throw new Error(`Ollama: ${msg.error}`);
         if (msg.message?.thinking) yield { type: 'thinking', text: msg.message.thinking };
         if (msg.message?.content) yield { type: 'token', text: msg.message.content };
+        // Ollama sends each tool call whole (arguments as an object): it gets an id here.
+        for (const c of msg.message?.tool_calls ?? []) {
+          const args = c.function?.arguments;
+          yield { type: 'tool_call', index: toolIndex++, id: c.id || `call_${Math.random().toString(36).slice(2, 12)}`, name: c.function?.name ?? '', arguments: typeof args === 'string' ? args : JSON.stringify(args ?? {}) };
+        }
         if (msg.done) {
           yield {
             type: 'done',

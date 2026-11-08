@@ -1,6 +1,7 @@
 import type { AccessOverview } from '@hivemind/shared';
 import { useEffect, useState } from 'react';
 import { api } from '../api';
+import { toast } from '../notify';
 
 interface Token {
   id: string;
@@ -8,7 +9,7 @@ interface Token {
   prefix: string;
   createdAt: string;
   lastUsedAt?: string;
-  scope?: { canvases: string[]; memory: string[]; training?: boolean; datasets?: string[]; skills?: boolean };
+  scope?: { canvases: string[]; memory: string[]; training?: boolean; datasets?: string[]; skills?: boolean; models?: boolean };
   /** Settings → Access: a profile of its own (it gets only what both it and its user allow). */
   profileId?: string;
 }
@@ -50,7 +51,9 @@ export function Tokens({ isAdmin = false }: { isAdmin?: boolean }) {
     );
 
   return (
-    <div className="card max-w-2xl space-y-3">
+    <div className="max-w-2xl space-y-4">
+    <ApiModels />
+    <div className="card space-y-3">
       <h2 className="font-semibold">API tokens</h2>
       <p className="text-sm text-slate-400">
         For the phone app, Home Assistant or scripts. Send as <code>Authorization: Bearer hm_…</code>.
@@ -130,6 +133,19 @@ export function Tokens({ isAdmin = false }: { isAdmin?: boolean }) {
             </span>
           )}
           {t.scope && (
+            <label className="flex shrink-0 items-center gap-1 text-xs text-slate-400" title="/v1 also offers it single models (for coding agents)">
+              <input
+                type="checkbox"
+                checked={!!t.scope.models}
+                onChange={async (e) => {
+                  await api(`/api/tokens/${t.id}`, { method: 'PATCH', body: { models: e.target.checked } });
+                  load();
+                }}
+              />
+              models
+            </label>
+          )}
+          {t.scope && (
             <label className="flex shrink-0 items-center gap-1 text-xs text-slate-400" title="May make, change and delete skills">
               <input
                 type="checkbox"
@@ -158,6 +174,84 @@ export function Tokens({ isAdmin = false }: { isAdmin?: boolean }) {
           </button>
         </div>
       ))}
+    </div>
+    </div>
+  );
+}
+
+/**
+ * Coding agents (T3 Code / OpenCode, Continue…) through /v1: besides the workflows, single models
+ * ("colibri/qwen36-35b") that can call tools, so the agent can read and change files with HiveMind's models.
+ */
+function ApiModels() {
+  const [on, setOn] = useState<boolean | null>(null);
+  const [models, setModels] = useState<{ id: string; name?: string; hivemind?: { kind?: string; tools?: boolean | string; contextLength?: number } }[]>([]);
+  const load = async () => {
+    const prefs = await api<{ apiModels?: boolean }>('/api/me/prefs', { quiet: true }).catch(() => ({}) as { apiModels?: boolean });
+    const me = await api<{ role: string }>('/api/auth/me', { quiet: true }).catch(() => ({ role: 'user' }));
+    setOn(prefs.apiModels ?? me.role === 'admin');
+    const list = await api<{ data: typeof models }>('/v1/models', { quiet: true }).catch(() => ({ data: [] }));
+    setModels(list.data.filter((m) => m.hivemind?.kind === 'model'));
+  };
+  useEffect(() => {
+    void load();
+  }, []);
+  if (on === null) return null;
+  const toolModels = models.filter((m) => m.hivemind?.tools);
+  const opencode = () =>
+    JSON.stringify(
+      {
+        $schema: 'https://opencode.ai/config.json',
+        provider: {
+          hivemind: {
+            npm: '@ai-sdk/openai-compatible',
+            name: 'HiveMind',
+            options: { baseURL: `${location.origin}/v1`, apiKey: '{file:~/.config/opencode/hivemind-token}' },
+            models: Object.fromEntries(toolModels.map((m) => [m.id, { name: m.name ?? m.id, tool_call: true, ...(m.hivemind?.contextLength && { limit: { context: m.hivemind.contextLength, output: 8192 } }) }])),
+          },
+        },
+      },
+      null,
+      2,
+    );
+  return (
+    <div className="card space-y-2">
+      <h2 className="font-semibold">Coding agents (T3 Code, OpenCode)</h2>
+      <label className="flex items-start gap-2 text-sm">
+        <input
+          type="checkbox"
+          className="mt-1"
+          checked={on}
+          onChange={async (e) => {
+            await api('/api/me/prefs', { method: 'PUT', body: { apiModels: e.target.checked } });
+            await load();
+          }}
+        />
+        <span>
+          <span className="font-medium">Single models in the API</span>
+          <span className="block text-xs text-slate-400">
+            <code>/v1/models</code> also lists your models (<code>colibri/qwen36-35b</code>, <code>ollama/…</code>, cloud models), and a coding agent can call them with tools, so it can read and change files. A
+            limited token needs its <b>models</b> box ticked below.
+          </span>
+        </span>
+      </label>
+      {on && (
+        <>
+          <p className="text-xs text-slate-400">
+            {models.length} models, {toolModels.length} with tools{toolModels.length ? `: ${toolModels.slice(0, 6).map((m) => m.id).join(', ')}${toolModels.length > 6 ? ', …' : ''}` : ''}.
+          </p>
+          <button
+            className="btn-ghost"
+            disabled={!toolModels.length}
+            onClick={async () => {
+              await navigator.clipboard.writeText(opencode()).catch(() => {});
+              toast('OpenCode config copied: put it in ~/.config/opencode/opencode.json and the token in hivemind-token', 'ok');
+            }}
+          >
+            Copy OpenCode config
+          </button>
+        </>
+      )}
     </div>
   );
 }

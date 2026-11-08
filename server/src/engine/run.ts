@@ -394,7 +394,15 @@ export async function runGraph(
         // Pictures in the question (attached in the question box) go with the message to models that can see.
         if (!noImages) messages = withImages(messages, deps.services?.readFile);
         const pictures = messages.some((m) => m.images?.length);
-        sent = { providerId: ref.providerId, model: ref.model, messages: messages.map(({ images, ...m }) => ({ ...m, ...(images?.length && { content: `${m.content}\n[${images.length} image${images.length === 1 ? '' : 's'}]` }) })) };
+        sent = {
+          providerId: ref.providerId,
+          model: ref.model,
+          messages: messages.map(({ images, toolCalls, toolCallId, toolName, ...m }) => ({
+            ...m,
+            role: m.role === 'tool' ? 'user' : m.role,
+            ...(images?.length && { content: `${m.content}\n[${images.length} image${images.length === 1 ? '' : 's'}]` }),
+          })),
+        };
         let out = '';
         let thought = false;
         let callLoad: number | undefined;
@@ -434,6 +442,8 @@ export async function runGraph(
               out += chunk.text;
               const secs = (Date.now() - firstAnswer) / 1000;
               deps.emit({ ...base, type: 'token', model: ref.model, text: chunk.text, tokens, tokensPerSec: secs > 0.2 ? tokens / secs : undefined });
+            } else if (chunk.type === 'tool_call') {
+              // Blocks offer no tools; only /v1 calls for coding agents do.
             } else {
               // Prefer the provider's exact token count over the number of chunks.
               if (chunk.outputTokens) {

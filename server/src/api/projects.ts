@@ -23,9 +23,11 @@ import {
   renameProject,
   toProject,
   writeProjectFile,
+  createOutsideProject,
 } from '../services/projects.js';
 import { createZip, readZip } from '../services/zip.js';
-import { requireUser } from './auth.js';
+import { requireAdmin, requireUser } from './auth.js';
+import { listOutside, outsideFolders, saveOutsideFolders } from '../services/outsideFolders.js';
 
 const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8', '.htm': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
@@ -54,6 +56,19 @@ export function projectRoutes(app: FastifyInstance) {
   app.get('/api/projects', { preHandler: requireUser }, async (req) => listProjects(req.user!));
 
   app.post('/api/projects', { preHandler: requireUser }, async (req, reply) => safe(reply, () => createProject(req.user!, (req.body as { name?: unknown } | undefined)?.name)));
+
+  // Folders of other apps (T3 Code's /projects): the switch, the allowed roots, and their folders. Admins only.
+  app.get('/api/outside-folders', { preHandler: requireAdmin }, async () => ({ ...outsideFolders(), list: listOutside() }));
+  app.put('/api/outside-folders', { preHandler: requireAdmin }, async (req, reply) =>
+    safe(reply, () => ({ ...saveOutsideFolders((req.body ?? {}) as { enabled?: boolean; roots?: string[] }), list: listOutside() })),
+  );
+  /** Opens one of those folders as a project, in place: { path, name? }. */
+  app.post('/api/projects/outside', { preHandler: requireAdmin }, async (req, reply) =>
+    safe(reply, () => {
+      const b = (req.body ?? {}) as { path?: unknown; name?: unknown };
+      return createOutsideProject(req.user!, b.path, b.name);
+    }),
+  );
 
   app.get('/api/projects/:id', { preHandler: requireUser }, async (req, reply) => safe(reply, () => toProject(getProject(req.user!, (req.params as Params).id))));
 

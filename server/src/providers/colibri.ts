@@ -4,6 +4,7 @@ import { catalog, type CatalogModel } from '../colibri/models.js';
 import { fromSystemOne, post } from './decisions.js';
 import { readSSE } from './lines.js';
 import { checkResponse, openaiMessages, ProviderError, type ChatRequest, type ProviderAdapter, type ProviderConfig, type StreamChunk } from './types.js';
+import { toolDeltas, toolFields } from './openai.js';
 
 /**
  * Colibri inside this container (src/colibri/engine.ts). Two providers share the one engine: "colibri" chats
@@ -101,6 +102,8 @@ async function* chat(req: ChatRequest, signal: AbortSignal, loadMs: number | und
       // think: false asks a thinking model (Qwen3.6, GLM) to answer straight away.
       ...(req.think === false && { enable_thinking: false, reasoning_effort: 'none' }),
       ...(req.think === true && { enable_thinking: true }),
+      // Coding agents (/v1): colibri renders the tools in the model's own format and parses its calls back.
+      ...toolFields(req),
     }),
   });
   if (res.status === 429) throw new ProviderError('Colibri is busy (its queue is full); try again in a moment', 429);
@@ -113,6 +116,7 @@ async function* chat(req: ChatRequest, signal: AbortSignal, loadMs: number | und
     const thinking = delta?.reasoning_content ?? delta?.reasoning;
     if (thinking) yield { type: 'thinking', text: thinking };
     if (delta?.content) yield { type: 'token', text: delta.content };
+    yield* toolDeltas(delta?.tool_calls);
     if (msg.usage) usage = msg.usage;
     if (msg.choices?.[0]?.finish_reason === 'length') stopped = 'length';
   }

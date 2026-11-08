@@ -1,12 +1,13 @@
 import type { FileChange, Project, ProjectChange, ProjectFile } from '@hivemind/shared';
 import { createHmac, timingSafeEqual } from 'node:crypto';
-import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { dirname, extname, join, relative, resolve, sep } from 'node:path';
+import { chownSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { basename, dirname, extname, join, relative, resolve, sep } from 'node:path';
 import { config } from '../config.js';
 import { newId } from '../crypto.js';
 import { db } from '../db/index.js';
 import { lineDiff } from './diff.js';
 import { filesDir, type FileUser, seesAllFiles } from './files.js';
+import { checkOutside } from './outsideFolders.js';
 
 /** Projects live in the files folder (files/projects/<id>/), but never show in the Files tab. */
 export const projectsDir = join(filesDir, 'projects');
@@ -39,6 +40,8 @@ interface ProjectRow {
   folder: string;
   github_repo: string | null;
   github_branch: string | null;
+  /** A folder of another app, opened in place (Settings → Projects → Folders of other apps). */
+  external?: string | null;
   created_at: string;
   updated_at: string;
   username?: string | null;
@@ -47,8 +50,45 @@ interface ProjectRow {
 const err = (statusCode: number, message: string) => Object.assign(new Error(message), { statusCode });
 export const projectNotFound = () => err(404, 'Project not found');
 
-/** The project folder on disk. */
-export const rootOf = (p: { id: string }) => join(projectsDir, p.id);
+/** Outside folders by project id (a row read once; null = an ordinary project). */
+const outside = new Map<string, string | null>();
+const externalOf = (id: string): string | null => {
+  if (!outside.has(id)) outside.set(id, (db.prepare('SELECT external FROM projects WHERE id = ?').get(id) as { external: string | null } | undefined)?.external ?? null);
+  return outside.get(id)!;
+};
+export const isOutside = (p: { id: string }) => !!externalOf(p.id);
+
+/** The project folder on disk: files/projects/<id>, or the other app's folder (only while outside folders are on). */
+export const rootOf = (p: { id: string }) => {
+  const ext = externalOf(p.id);
+  return ext ? checkOutside(ext) : join(projectsDir, p.id);
+};
+
+/** Folders of other apps hold dependencies HiveMind should not walk through or count. */
+const OUTSIDE_SKIP = new Set(['node_modules', '.venv', 'venv', '__pycache__', '.next', '.turbo', '.cache']);
+const skipName = (p: { id: string }, name: string) => isOutside(p) && OUTSIDE_SKIP.has(name);
+/** Other apps' projects can be bigger than HiveMind's own. */
+const limitsOf = (p: { id: string }) => (isOutside(p) ? { ...PROJECT_LIMITS, files: 20000, totalBytes: 2 * 1024 ** 3 } : PROJECT_LIMITS);
+
+/** Files written into another app's folder belong to that folder's owner, so the app can still change them. */
+function sameOwner(p: { id: string }, full: string) {
+  if (!isOutside(p)) return;
+  try {
+    const st = statSync(rootOf(p));
+    chownSync(full, st.uid, st.gid);
+  } catch {}
+}
+
+/** Opens a folder of another app as a project (it stays where it is). */
+export function createOutsideProject(user: FileUser, path: unknown, name?: unknown): Project {
+  const real = checkOutside(String(path ?? ''));
+  const taken = db.prepare('SELECT id FROM projects WHERE external = ?').get(real) as { id: string } | undefined;
+  if (taken) throw err(409, 'That folder is already a project');
+  const id = newId().replace(/[^a-zA-Z0-9]/g, 'x');
+  db.prepare('INSERT INTO projects (id, owner_id, name, folder, external) VALUES (?, ?, ?, ?, ?)').run(id, user.id, cleanProjectName(name || basename(real)), real, real);
+  outside.delete(id);
+  return toProject(getProject(user, id));
+}
 
 /** A project its owner or a full admin may use; everyone else gets "not found". */
 export function getProject(user: FileUser, id: string): ProjectRow {
@@ -69,7 +109,12 @@ export function findProject(user: FileUser, idOrName: string): ProjectRow {
 }
 
 export function toProject(row: ProjectRow): Project {
-  const { files, bytes } = usage(row);
+  // An outside folder that is switched off or no longer mounted still shows in the list (it just can't be opened).
+  let files = 0;
+  let bytes = 0;
+  try {
+    ({ files, bytes } = usage(row));
+  } catch {}
   return {
     id: row.id,
     name: row.name,
@@ -80,6 +125,7 @@ export function toProject(row: ProjectRow): Project {
     updatedAt: row.updated_at,
     files,
     sizeBytes: bytes,
+    ...(row.external && { outside: row.external }),
   };
 }
 
@@ -112,7 +158,9 @@ export function renameProject(user: FileUser, id: string, name: unknown): Projec
 
 export function deleteProject(user: FileUser, id: string) {
   const row = getProject(user, id);
-  rmSync(rootOf(row), { recursive: true, force: true });
+  // Another app's folder stays: only HiveMind forgets it.
+  if (!row.external) rmSync(rootOf(row), { recursive: true, force: true });
+  outside.delete(id);
   rmSync(join(config.dataDir, 'builds', row.id), { recursive: true, force: true });
   db.prepare('DELETE FROM projects WHERE id = ?').run(id);
 }
@@ -172,6 +220,7 @@ export function projectTree(project: { id: string }, max = PROJECT_LIMITS.files)
     for (const name of names.sort()) {
       if (out.length >= max) return;
       if (dir === root && name === '.git') continue;
+      if (skipName(project, name)) continue;
       const full = join(dir, name);
       const st = lstatSync(full);
       if (st.isSymbolicLink()) continue;
@@ -199,6 +248,7 @@ export function projectFolders(project: { id: string }): string[] {
     }
     for (const name of names.sort()) {
       if (dir === root && name === '.git') continue;
+      if (skipName(project, name)) continue;
       const full = join(dir, name);
       const st = lstatSync(full);
       if (st.isDirectory() && !st.isSymbolicLink()) {
@@ -212,7 +262,7 @@ export function projectFolders(project: { id: string }): string[] {
 }
 
 function usage(project: { id: string }): { files: number; bytes: number } {
-  const tree = projectTree(project, PROJECT_LIMITS.files + 1);
+  const tree = projectTree(project, limitsOf(project).files + 1);
   return { files: tree.length, bytes: tree.reduce((n, f) => n + f.size, 0) };
 }
 
@@ -251,7 +301,8 @@ export function writeProjectFile(
   const full = projectPath(project, clean);
   const size = typeof data === 'string' ? Buffer.byteLength(data) : data.length;
   if (opts.byBlock && BLOCKED_EXT.has(extname(clean).toLowerCase())) throw err(400, `Blocks may not write ${extname(clean)} files: ${clean}`);
-  const maxFile = opts.byBlock ? PROJECT_LIMITS.blockFileBytes : PROJECT_LIMITS.uploadFileBytes;
+  const lim = limitsOf(project);
+  const maxFile = opts.byBlock ? lim.blockFileBytes : lim.uploadFileBytes;
   if (size > maxFile) throw err(413, `${clean} is too big (${Math.round(size / 1024)} KB; at most ${Math.round(maxFile / 1024 / 1024)} MB)`);
   let before: Buffer | undefined;
   try {
@@ -263,12 +314,15 @@ export function writeProjectFile(
   }
   if (before && opts.mode === 'new') return { path: clean, status: 'skipped', added: 0, removed: 0 };
   const { files, bytes } = usage(project);
-  if (!before && files >= PROJECT_LIMITS.files) throw err(413, `The project is full: at most ${PROJECT_LIMITS.files} files`);
-  if (bytes - (before?.length ?? 0) + size > PROJECT_LIMITS.totalBytes) throw err(413, `The project is full: at most ${PROJECT_LIMITS.totalBytes / 1024 / 1024} MB`);
+  if (!before && files >= lim.files) throw err(413, `The project is full: at most ${lim.files} files`);
+  if (bytes - (before?.length ?? 0) + size > lim.totalBytes) throw err(413, `The project is full: at most ${lim.totalBytes / 1024 / 1024} MB`);
+  const madeFrom = firstMissing(dirname(full));
   mkdirSync(dirname(full), { recursive: true });
+  if (madeFrom) for (let d = dirname(full); d.length >= madeFrom.length; d = dirname(d)) sameOwner(project, d);
   // The parent may have been made just now: check again that nothing leads out of the project.
   projectPath(project, clean);
   writeFileSync(full, data);
+  if (!before) sameOwner(project, full);
   touchProject(project.id);
   const text = isTextPath(clean);
   if (before && Buffer.compare(before, typeof data === 'string' ? Buffer.from(data) : data) === 0) return { path: clean, status: 'skipped', added: 0, removed: 0 };
@@ -299,9 +353,21 @@ export function deleteProjectPath(project: { id: string }, rel: string): FileCha
   return changes;
 }
 
+/** The highest folder of `dir` that doesn't exist yet (undefined when it all exists). */
+function firstMissing(dir: string): string | undefined {
+  let missing: string | undefined;
+  for (let d = dir; !existsSync(d); d = dirname(d)) {
+    missing = d;
+    if (dirname(d) === d) break;
+  }
+  return missing;
+}
+
 export function makeFolder(project: { id: string }, rel: string) {
   const full = projectPath(project, rel);
+  const madeFrom = firstMissing(full);
   mkdirSync(full, { recursive: true });
+  if (madeFrom) for (let d = full; d.length >= madeFrom.length; d = dirname(d)) sameOwner(project, d);
   projectPath(project, rel);
   touchProject(project.id);
 }

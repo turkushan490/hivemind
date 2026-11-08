@@ -331,6 +331,10 @@ export const MIGRATIONS: string[] = [
   `
   ALTER TABLE canvases ADD COLUMN folder TEXT;
   `,
+  `
+  -- A project that is a folder of another app (T3 Code's /projects/x), opened in place instead of files/projects/<id>.
+  ALTER TABLE projects ADD COLUMN external TEXT;
+  `,
 ];
 
 export const db = new DatabaseSync(join(config.dataDir, 'hivemind.db'));

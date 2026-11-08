@@ -405,6 +405,8 @@ export interface ModelInfo {
   family?: string;
   /** Parameters as people say it ("400B", "1T A32B"): from the provider, or set by an admin for remote models. */
   params?: string;
+  /** The model can call tools (Ollama's "tools" capability); left out when the provider doesn't say. */
+  tools?: boolean;
 }
 
 /** Cloud and well-known model names that can read pictures, for providers that don't say (OpenAI, Gemini, Claude, OpenRouter). */
@@ -718,6 +720,8 @@ export interface Project {
   updatedAt: string;
   files: number;
   sizeBytes: number;
+  /** A folder of another app (e.g. T3 Code's /projects/x) opened in place: HiveMind never deletes it. */
+  outside?: string;
 }
 
 export interface ProjectFile {

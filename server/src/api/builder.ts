@@ -16,6 +16,14 @@ export interface Prefs {
   builderModel?: ModelRef;
   /** Voice and /v1 model "auto": a decision model picks the canvas for each request. */
   canvasRouter?: ModelRef;
+  /** /v1 also offers single models ("colibri/qwen36-35b"), for coding agents; default on for admins. */
+  apiModels?: boolean;
+}
+
+/** Whether /v1 offers this person single models: their setting, and for a limited token its "models" permission. */
+export function apiModelsOn(u: User): boolean {
+  if (u.scope && u.scope.models !== true) return false;
+  return getPrefs(u).apiModels ?? u.role === 'admin';
 }
 
 const prefsKey = (u: User) => `user:${u.id}:prefs`;
@@ -44,6 +52,7 @@ export function builderRoutes(app: FastifyInstance) {
     if (body.setupDone !== undefined) next.setupDone = !!body.setupDone;
     if (body.builderModel !== undefined) next.builderModel = body.builderModel?.providerId && body.builderModel.model ? body.builderModel : undefined;
     if (body.canvasRouter !== undefined) next.canvasRouter = body.canvasRouter?.providerId && body.canvasRouter.model ? body.canvasRouter : undefined;
+    if (body.apiModels !== undefined) next.apiModels = !!body.apiModels;
     setSetting(prefsKey(req.user!), JSON.stringify(next));
     return next;
   });

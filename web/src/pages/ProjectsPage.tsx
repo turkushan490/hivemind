@@ -67,12 +67,20 @@ export function ProjectsPage({ active }: { active: boolean }) {
           >
             <div className="truncate font-medium">{p.name}</div>
             <div className="text-xs text-slate-500">
+              {p.outside && <span className="text-sky-400">{p.outside} · </span>}
               {p.files} files · {size(p.sizeBytes)}
               {p.githubRepo && ` · ${p.githubRepo}`}
               {p.owner && ` · ${p.owner}`}
             </div>
           </button>
         ))}
+        <OtherApps
+          projects={projects}
+          onOpened={async (id) => {
+            await load();
+            setSelected(id);
+          }}
+        />
       </aside>
       <div className="min-w-0 flex-1">{project ? <ProjectView key={project.id} project={project} onChanged={load} onDeleted={() => (setSelected(''), load())} /> : <p className="text-sm text-slate-400">Pick or add a project.</p>}</div>
     </div>
@@ -527,5 +535,90 @@ function BuildTab({ project, hasPackage, onBuilt }: { project: Project; hasPacka
         </div>
       )}
     </div>
+  );
+}
+
+interface Outside {
+  enabled: boolean;
+  roots: string[];
+  list: { root: string; mounted: boolean; folders: { name: string; path: string; git: boolean }[] }[];
+}
+
+/**
+ * Folders of other apps (admins): e.g. T3 Code's projects, mounted into the HiveMind container as /projects. Switched
+ * on, each folder there can be opened as a project in place, so workflows read and change the same files.
+ */
+function OtherApps({ projects, onOpened }: { projects: Project[]; onOpened: (id: string) => void }) {
+  const [o, setO] = useState<Outside | null>(null);
+  const [roots, setRoots] = useState('');
+  useEffect(() => {
+    api<Outside>('/api/outside-folders', { quiet: true })
+      .then((x) => {
+        setO(x);
+        setRoots(x.roots.join(', '));
+      })
+      .catch(() => setO(null));
+  }, []);
+  if (!o) return null;
+  const save = async (patch: Partial<Outside>) => {
+    try {
+      const x = await api<Outside>('/api/outside-folders', { method: 'PUT', body: patch });
+      setO(x);
+      setRoots(x.roots.join(', '));
+    } catch {}
+  };
+  const opened = new Map(projects.filter((p) => p.outside).map((p) => [p.outside!, p.id]));
+  return (
+    <details className="mt-4 rounded-md border border-[#30363d] p-2 text-sm" open={o.enabled}>
+      <summary className="cursor-pointer text-slate-300">Folders of other apps</summary>
+      <p className="mt-1 text-xs text-slate-500">
+        Folders of other apps (like T3 Code) mounted into HiveMind in its Docker template. Switched on, you can open them here as projects: workflows then read and change the same files. Deleting such a
+        project only removes it from HiveMind; the folder stays.
+      </p>
+      <label className="mt-2 flex items-center gap-2 text-xs">
+        <input type="checkbox" checked={o.enabled} onChange={(e) => save({ enabled: e.target.checked })} />
+        Allow HiveMind to work in these folders
+      </label>
+      <div className="mt-2 flex gap-1">
+        <input className="input py-1 text-xs" value={roots} onChange={(e) => setRoots(e.target.value)} placeholder="/projects" title="Folders inside the HiveMind container, comma separated" />
+        <button className="btn-ghost px-2 py-0.5 text-xs" onClick={() => save({ roots: roots.split(/[,\s]+/).filter(Boolean) })}>
+          Save
+        </button>
+      </div>
+      {o.list.map((r) => (
+        <div key={r.root} className="mt-2 space-y-1">
+          <div className="text-xs font-semibold text-slate-400">{r.root}</div>
+          {!r.mounted && <p className="text-xs text-amber-300">Not mounted: add it as a path in HiveMind&apos;s Docker template (Unraid: Edit → Add another Path).</p>}
+          {r.mounted && r.folders.length === 0 && <p className="text-xs text-slate-500">No folders in it yet.</p>}
+          {r.folders.map((f) => (
+            <div key={f.path} className="flex items-center gap-2 text-xs">
+              <span className="min-w-0 flex-1 truncate" title={f.path}>
+                {f.name}
+                {f.git && <span className="ml-1 text-slate-500">git</span>}
+              </span>
+              {opened.has(f.path) ? (
+                <button className="btn-ghost px-2 py-0.5" onClick={() => onOpened(opened.get(f.path)!)}>
+                  Show
+                </button>
+              ) : (
+                <button
+                  className="btn-ghost px-2 py-0.5"
+                  disabled={!o.enabled}
+                  onClick={async () => {
+                    try {
+                      const p = await api<Project>('/api/projects/outside', { body: { path: f.path } });
+                      toast(`${p.name} is now a project`, 'ok');
+                      onOpened(p.id);
+                    } catch {}
+                  }}
+                >
+                  Open as project
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+      ))}
+    </details>
   );
 }

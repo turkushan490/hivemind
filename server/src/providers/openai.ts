@@ -83,7 +83,7 @@ export function openaiAdapter(cfg: ProviderConfig): ProviderAdapter {
         body: JSON.stringify({
           ...(withEffort && effort && { reasoning_effort: effort }),
           model: req.model,
-          messages: openaiMessages(req.messages),
+          messages: openaiMessages(cfg.preset === 'gemini' ? withThoughtSignatures(req.messages) : req.messages),
           stream: true,
           stream_options: { include_usage: true },
           // Only providers known to accept it; others get the instruction in the prompt alone.
@@ -132,8 +132,16 @@ export function toolFields(req: ChatRequest) {
 /** OpenAI's streamed tool_calls deltas as tool_call chunks. */
 export function* toolDeltas(calls: unknown): Iterable<StreamChunk> {
   if (!Array.isArray(calls)) return;
-  for (const c of calls as { index?: number; id?: string; function?: { name?: string; arguments?: string } }[]) {
-    yield { type: 'tool_call', index: c.index ?? 0, ...(c.id && { id: c.id }), ...(c.function?.name && { name: c.function.name }), ...(c.function?.arguments && { arguments: c.function.arguments }) };
+  for (const c of calls as { index?: number; id?: string; function?: { name?: string; arguments?: string }; extra_content?: Record<string, unknown> }[]) {
+    yield {
+      type: 'tool_call',
+      index: c.index ?? 0,
+      ...(c.id && { id: c.id }),
+      ...(c.function?.name && { name: c.function.name }),
+      ...(c.function?.arguments && { arguments: c.function.arguments }),
+      // Gemini: the thought signature that has to go back with this call next turn.
+      ...(c.extra_content && { extra: c.extra_content }),
+    };
   }
 }
 
@@ -150,4 +158,14 @@ export function noThinking(preset: string, model: string): string | undefined {
 
 function isFreePreset(preset: string): boolean {
   return preset === 'groq' || preset === 'gemini';
+}
+
+/**
+ * Gemini wants each earlier tool call back with its thought signature. A client that dropped it (most agents do)
+ * gets Google's documented placeholder, so the conversation can go on instead of failing with HTTP 400.
+ */
+export function withThoughtSignatures(messages: ChatRequest['messages']): ChatRequest['messages'] {
+  return messages.map((m) =>
+    m.toolCalls?.length ? { ...m, toolCalls: m.toolCalls.map((c) => (c.extra ? c : { ...c, extra: { google: { thought_signature: 'skip_thought_signature_validator' } } })) } : m,
+  );
 }

@@ -33,7 +33,7 @@ type Part = { type?: string; text?: string; image_url?: { url?: string } | strin
 type RawMessage = {
   role?: string;
   content?: string | Part[] | null;
-  tool_calls?: { id?: string; type?: string; function?: { name?: string; arguments?: string | Record<string, unknown> } }[];
+  tool_calls?: { id?: string; type?: string; function?: { name?: string; arguments?: string | Record<string, unknown> }; extra_content?: Record<string, unknown> }[];
   tool_call_id?: string;
   name?: string;
 };
@@ -76,7 +76,7 @@ export function toChatMessages(raw: unknown): ChatMessage[] {
         const name = c.function?.name ?? '';
         names.set(id, name);
         const args = c.function?.arguments;
-        return { id, name, arguments: typeof args === 'string' ? args : JSON.stringify(args ?? {}) };
+        return { id, name, arguments: typeof args === 'string' ? args : JSON.stringify(args ?? {}), ...(c.extra_content && typeof c.extra_content === 'object' && { extra: c.extra_content }) };
       });
       rest.push({ role: 'assistant', content: textOf(m.content), ...(calls.length && { toolCalls: calls }) });
     } else if (role === 'tool') {
@@ -195,7 +195,7 @@ export async function callApiModel(
 
   let content = '';
   let reasoning = '';
-  const calls: { id: string; name: string; arguments: string }[] = [];
+  const calls: { id: string; name: string; arguments: string; extra?: Record<string, unknown> }[] = [];
   let usage = { prompt_tokens: 0, completion_tokens: 0 };
   let stopped: 'length' | undefined;
   let genMs: number | undefined;
@@ -215,9 +215,25 @@ export async function callApiModel(
         if (c.id) call.id = c.id;
         if (c.name) call.name += c.name;
         if (c.arguments) call.arguments += c.arguments;
+        if (c.extra) call.extra = { ...call.extra, ...c.extra };
         send?.({
           ...base,
-          choices: [{ index: 0, delta: { tool_calls: [{ index: c.index, ...(c.id && { id: call.id, type: 'function' }), function: { ...(c.name && { name: c.name }), ...(c.arguments !== undefined && { arguments: c.arguments }) } }] }, finish_reason: null }],
+          choices: [
+            {
+              index: 0,
+              delta: {
+                tool_calls: [
+                  {
+                    index: c.index,
+                    ...(c.id && { id: call.id, type: 'function' }),
+                    function: { ...(c.name && { name: c.name }), ...(c.arguments !== undefined && { arguments: c.arguments }) },
+                    ...(c.extra && { extra_content: c.extra }),
+                  },
+                ],
+              },
+              finish_reason: null,
+            },
+          ],
         });
       } else if (c.type === 'done') {
         usage = { prompt_tokens: c.inputTokens ?? 0, completion_tokens: c.outputTokens ?? 0 };
@@ -288,7 +304,9 @@ export async function callApiModel(
           role: 'assistant',
           content: content || (toolCalls.length ? null : ''),
           ...(reasoning && { reasoning_content: reasoning }),
-          ...(toolCalls.length && { tool_calls: toolCalls.map((c) => ({ id: c.id, type: 'function', function: { name: c.name, arguments: c.arguments || '{}' } })) }),
+          ...(toolCalls.length && {
+            tool_calls: toolCalls.map((c) => ({ id: c.id, type: 'function', function: { name: c.name, arguments: c.arguments || '{}' }, ...(c.extra && { extra_content: c.extra }) })),
+          }),
         },
         finish_reason: finish,
       },

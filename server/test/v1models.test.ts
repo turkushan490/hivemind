@@ -116,3 +116,17 @@ describe('tool messages for each provider', () => {
     expect(a[2]).toEqual({ role: 'user', content: [{ type: 'tool_result', tool_use_id: 'c1', content: 'ok' }] });
   });
 });
+
+describe('Gemini thought signatures', () => {
+  it('pass back what Gemini sent, and a placeholder when the agent dropped it', async () => {
+    const { withThoughtSignatures } = await import('../src/providers/openai.js');
+    const { openaiMessages } = await import('../src/providers/types.js');
+    const msgs = withThoughtSignatures([
+      { role: 'assistant', content: '', toolCalls: [{ id: 'a', name: 'write', arguments: '{}', extra: { google: { thought_signature: 'real' } } }] },
+      { role: 'assistant', content: '', toolCalls: [{ id: 'b', name: 'write', arguments: '{}' }] },
+    ]);
+    const out = openaiMessages(msgs) as { tool_calls: { extra_content: { google: { thought_signature: string } } }[] }[];
+    expect(out[0].tool_calls[0].extra_content.google.thought_signature).toBe('real');
+    expect(out[1].tool_calls[0].extra_content.google.thought_signature).toBe('skip_thought_signature_validator');
+  });
+});

@@ -7,6 +7,8 @@ export interface ToolCall {
   id: string;
   name: string;
   arguments: string;
+  /** Provider data that must come back with the call (Gemini's extra_content.google.thought_signature). */
+  extra?: Record<string, unknown>;
 }
 
 /** A tool the caller offers (OpenAI's format). */
@@ -52,7 +54,11 @@ export const openaiMessages = (messages: ChatMessage[]) =>
   messages.map(({ images, toolCalls, toolCallId, toolName, ...m }) => {
     if (m.role === 'tool') return { role: 'tool', content: m.content, tool_call_id: toolCallId ?? '', ...(toolName && { name: toolName }) };
     if (toolCalls?.length)
-      return { role: m.role, content: m.content || null, tool_calls: toolCalls.map((c) => ({ id: c.id, type: 'function', function: { name: c.name, arguments: c.arguments || '{}' } })) };
+      return {
+        role: m.role,
+        content: m.content || null,
+        tool_calls: toolCalls.map((c) => ({ id: c.id, type: 'function', function: { name: c.name, arguments: c.arguments || '{}' }, ...(c.extra && { extra_content: c.extra }) })),
+      };
     return images?.length
       ? { role: m.role, content: [{ type: 'text', text: m.content }, ...images.map((i) => ({ type: 'image_url', image_url: { url: `data:${mime(i.ext)};base64,${i.data.toString('base64')}` } }))] }
       : m;
@@ -111,7 +117,7 @@ export type StreamChunk =
   | { type: 'token'; text: string }
   | { type: 'thinking'; text: string }
   /** A tool call, whole or in pieces: the first piece of a call has its id and name, later ones add to its arguments. */
-  | { type: 'tool_call'; index: number; id?: string; name?: string; arguments?: string }
+  | { type: 'tool_call'; index: number; id?: string; name?: string; arguments?: string; extra?: Record<string, unknown> }
   /** genMs: pure generation time when the provider reports it (more exact tok/s). stopped: cut off at maxTokens. */
   | { type: 'done'; inputTokens?: number; outputTokens?: number; genMs?: number; loadMs?: number; stopped?: 'length' };
 

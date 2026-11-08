@@ -889,6 +889,13 @@ which project it works on, and can make a new one.
   - The catalog names are read once at start.
 - **Template Train a HiveBot character (colibri teaches):** colibri writes 200 short spoken answers in a character, then a small model trains on them and lands in Ollama.
 
+- **Colibri library** (Settings → Colibri), modelled on the Ollama library:
+  - every model family colibri runs (`web/src/pages/colibriModels.ts`), with search, size filters, tags, the fit against colibri's RAM, colibri's speed numbers and Hugging Face links;
+  - **Download** for colibri's ready-made versions;
+  - **Find GGUF files** searches Hugging Face (`/api/hf/search`, `/api/hf/files`): pick a repo, then a quant, and it is imported (split files as a `-*-of-N` pattern);
+  - models that need a PyTorch conversion are marked as such.
+- **The image builds every engine** colibri has: qwen38, deepseek_v41, glm53, mimo, olmoe, kimi_k3, inkling, laya and gliner_decide too. `GET /api/colibri/status` lists them (`engines`), and the library marks a family whose engine is missing.
+
 ## M16 — Questions with pictures, files and audio; HiveBot S7/S8
 
 - **The question box** (Workflow page and Use page):

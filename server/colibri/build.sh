@@ -7,7 +7,8 @@
 set -u
 out=/opt/colibri
 mkdir -p "$out"
-engines="colibri qwen36 deepseek-v4"
+# Every engine colibri has for a model family (deepseek-v4 is the Makefile target of the deepseek_v4 engine).
+engines="colibri qwen36 qwen38 deepseek-v4 deepseek_v41 glm53 mimo olmoe kimi_k3 inkling laya gliner_decide"
 cuda=false
 for flavour in cpu cuda; do
   flags="ARCH=x86-64-v3"

@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { api } from '../api';
 import { toast } from '../notify';
+import { ColibriLibrary } from './ColibriLibrary';
 
 interface Settings {
   ramGb?: number;
@@ -13,7 +14,7 @@ interface Settings {
   kvSlots: number;
 }
 
-interface Job {
+export interface Job {
   id: string;
   kind: 'download' | 'gguf';
   model: string;
@@ -41,9 +42,11 @@ interface Status {
   settings: Settings;
   gpuHost: string;
   jobs: Job[];
+  /** Engines the image has, per build. */
+  engines?: { cpu?: string[]; cuda?: string[] };
 }
 
-interface CatalogModel {
+export interface CatalogModel {
   id: string;
   name: string;
   download_gb: number;
@@ -68,7 +71,7 @@ interface Installed {
 
 const gb = (b: number) => `${(b / 1e9).toFixed(b >= 1e10 ? 0 : 1)} GB`;
 
-const FIT: Record<CatalogModel['status'], { label: string; cls: string }> = {
+export const FIT: Record<CatalogModel['status'], { label: string; cls: string }> = {
   good: { label: 'fits', cls: 'bg-emerald-900/50 text-emerald-300' },
   tight: { label: 'fits (tight)', cls: 'bg-amber-900/50 text-amber-300' },
   'needs-ram': { label: 'too big (RAM)', cls: 'bg-red-900/50 text-red-300' },
@@ -262,45 +265,17 @@ export function ColibriPanel({ active }: { active: boolean }) {
         </div>
       )}
 
-      <div className="card space-y-2">
-        <h3 className="font-semibold">Download a model</h3>
-        <p className="text-xs text-slate-500">
-          Colibri&apos;s own list, checked against this container: <i>fits</i> means the always-loaded part plus the smallest expert cache fit in its RAM, and the download
-          fits on the disk.
-        </p>
-        {catError && <p className="text-sm text-red-300">{catError}</p>}
-        {cat?.models.map((m) => (
-          <div key={m.id} className="flex flex-wrap items-start gap-2 border-t border-[#21262d] pt-2 text-sm">
-            <div className="min-w-0 flex-1">
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="font-medium">{m.name}</span>
-                <span className={`rounded px-1.5 text-xs ${FIT[m.status].cls}`}>{FIT[m.status].label}</span>
-                {m.recommended && <span className="rounded bg-indigo-900/60 px-1.5 text-xs text-indigo-200">recommended</span>}
-                {m.size_class === 'large' && <span className="rounded bg-slate-800 px-1.5 text-xs text-slate-300">slow: for overnight</span>}
-              </div>
-              <div className="text-xs text-slate-400">
-                {m.summary}. {m.download_gb} GB download, RAM {m.ram_min_gb}–{m.ram_good_gb} GB, {m.runs}.
-              </div>
-              <div className="text-xs text-slate-500">{m.reason}</div>
-              {m.license_note && <div className="text-xs text-amber-300">{m.license_note}</div>}
-            </div>
-            {m.installed ? (
-              <span className="text-xs text-emerald-300">installed</span>
-            ) : (
-              <button
-                className="btn"
-                disabled={!!busy || m.status === 'needs-disk' || running.some((j) => j.model === m.id)}
-                title={m.status === 'needs-ram' ? 'It downloads, but will only load once HiveMind has more RAM' : undefined}
-                onClick={() =>
-                  (m.download_gb < 100 || confirm(`${m.name} is a ${m.download_gb} GB download. Start it?`)) && act('download', () => api('/api/colibri/download', { body: { id: m.id } }))
-                }
-              >
-                {m.downloaded_bytes > 0 ? `Go on (${gb(m.downloaded_bytes)} there)` : 'Download'}
-              </button>
-            )}
-          </div>
-        ))}
-      </div>
+      <ColibriLibrary
+        catalog={cat?.models ?? []}
+        catError={catError}
+        engines={status.engines}
+        ramBytes={status.ramBudgetBytes}
+        diskFree={cat?.diskFree}
+        running={running}
+        busy={!!busy}
+        onDownload={(m) => (m.download_gb < 100 || confirm(`${m.name} is a ${m.download_gb} GB download. Start it?`)) && act('download', () => api('/api/colibri/download', { body: { id: m.id } }))}
+        onImport={(body) => act('import', () => api('/api/colibri/import', { body }))}
+      />
 
       <form className="card space-y-2" onSubmit={importGguf}>
         <h3 className="font-semibold">Import a GGUF from Hugging Face</h3>

@@ -456,12 +456,22 @@ export function cacheSlot(kind: 'chat' | 'decide', key: string): number | undefi
   return h % (slots - 1);
 }
 
+/** colibri's engine binaries (one per model family). */
+const ENGINE_NAMES = ['colibri', 'qwen36', 'qwen38', 'deepseek_v4', 'deepseek_v41', 'glm53', 'mimo', 'olmoe', 'kimi_k3', 'inkling', 'laya', 'gliner_decide', 'qwenimage'];
+
+/** Which engines each build has (a model family without its engine can't start). */
+export function builtEngines(): { cpu: string[]; cuda: string[] } {
+  const has = (dir: string) => ENGINE_NAMES.filter((n) => existsSync(join(dir, n)));
+  return { cpu: has(cpuDir()), cuda: has(cudaDir()) };
+}
+
 /** Everything the Settings card shows. */
 export async function colibriStatus() {
   const b = build();
   const live = loadedModel();
   return {
     available: colibriAvailable(),
+    engines: state.launcher ? undefined : builtEngines(),
     version: b.version,
     ref: b.ref,
     cudaBuilt: !!b.cuda,

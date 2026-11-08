@@ -119,6 +119,44 @@ describe('runGraph', () => {
     expect(recorded[0]).toMatchObject({ model: 'a', loadMs: 8700 });
   });
 
+  it('a long block on colibri on the CPU never makes an Ollama block on the same machine wait (HiveBot S13)', async () => {
+    const colibri = { ...fake({ local: true, delay: 1500 }), exclusive: false };
+    const ollama = fake({ local: true });
+    const one = (model: string): CanvasGraph =>
+      ({
+        nodes: [
+          { id: 'q', type: 'input', position: { x: 0, y: 0 }, config: {} },
+          { id: 'a', type: 'llm', position: { x: 1, y: 0 }, config: { model: { providerId: model, model } } },
+          { id: 'o', type: 'output', position: { x: 2, y: 0 }, config: {} },
+        ],
+        edges: [
+          { id: 'e1', source: 'q', target: 'a' },
+          { id: 'e2', source: 'a', target: 'o' },
+        ],
+      }) as never;
+    const deps = { resolve: async (id: string) => (id === 'colibri' ? colibri : ollama), emit: () => {} };
+    const long = runGraph(one('colibri'), 'write a website', deps, new AbortController().signal);
+    await new Promise((r) => setTimeout(r, 100));
+    const t0 = Date.now();
+    const quick = await runGraph(one('gemma'), 'hi', deps, new AbortController().signal);
+    expect(quick.status).toBe('done');
+    expect(Date.now() - t0).toBeLessThan(700);
+    expect((await long).status).toBe('done');
+  });
+
+  it('corrects "warm" when the model had to load after all (another context size)', async () => {
+    const p = fake({ local: true });
+    p.adapter.stream = async function* () {
+      yield { type: 'warm' as const };
+      yield { type: 'token' as const, text: 'ok' };
+      yield { type: 'done' as const, outputTokens: 1, loadMs: 21490 };
+    };
+    const { events } = await run(councilGraph([ref('a')], ref('a')), p);
+    const ready = events.filter((e) => e.type === 'model_ready' && e.nodeId === 'm1');
+    expect(ready.map((e) => e.warm)).toEqual([true, false]);
+    expect(ready[1].loadMs).toBe(21490);
+  });
+
   it('asks a local model again without thinking when it only thought', async () => {
     const p = fake({ local: true });
     const asks: (boolean | undefined)[] = [];

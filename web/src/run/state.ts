@@ -100,7 +100,8 @@ export function applyEvent(views: Record<string, NodeView>, ev: RunEvent): Recor
       next = { ...v, state: 'skipped' };
       break;
     case 'model_ready':
-      next = { ...v, readyAt: ev.ts, warm: ev.warm };
+      // A second model_ready (warm: false) corrects the first when the model had to load after all.
+      next = { ...v, readyAt: v.readyAt ?? ev.ts, warm: ev.warm };
       break;
     case 'thinking':
       next = { ...v, state: 'thinking', thinking: (v.thinking ?? '') + (ev.text ?? '') };

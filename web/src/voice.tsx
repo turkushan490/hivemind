@@ -194,7 +194,7 @@ export async function speak(text: string, voice: VoiceSettings | null, onEnd?: (
   current?.stop();
   const say = speakable(text);
   if (!say) return;
-  if (voice?.ttsMode === 'server') {
+  if (voice?.ttsMode === 'server' || voice?.ttsMode === 'builtin') {
     const res = await fetch('/api/voice/speak', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text: say }) }).catch(() => null);
     if (!res) throw new Error("Can't reach the HiveMind server");
     if (!res.ok) {

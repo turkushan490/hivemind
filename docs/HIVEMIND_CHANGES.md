@@ -942,6 +942,35 @@ which project it works on, and can make a new one.
 - Home Assistant **Ask (Assist)** takes a sentence template in `body` (e.g. `{{question}}` behind a Decide block); without one it uses the text wired in, as before.
 - Tests: `server/test/pictures.test.ts`; several engines and the router template in `server/test/colibri.test.ts`.
 
+## M18 — HiveBot S10–S14, Workflows panel
+
+- **Workflows panel (PC):** the workflow list (folders, search, the open one highlighted) is a panel on the left of the
+  workflow screen, next to the blocks; ◂ folds it to a thin "Workflows" strip, ▸ opens it again (remembered per
+  browser). The phone keeps the **Open…** dropdown.
+- **S10, sizes of remote models:** an OpenAI-compatible or cloud server says nothing about how big its models are, so
+  apps that pick "the big model" by size (HiveBot's Ultron) couldn't see it. Settings → AI providers → **Model sizes**
+  writes a size (GB) and parameters ("400B") per model; `GET /api/models` returns them as `sizeBytes` / `params`
+  (what an admin wrote wins). `GET/PUT /api/providers/:id/sizes` (`{ model, sizeGb, params }`; 0 and no params removes
+  it). Remote models never take the local GPU lock, and `/v1` keeps the stream alive while a slow model thinks.
+- **S11, built-in voice:** Kokoro (kokoro-onnx, 82M) inside the container, behind the OpenAI `/audio/speech` API
+  (`server/kokoro/serve.py`, Python package in `/opt/kokoro-lib`, its own folder so the training stack is untouched).
+  Model files (~350 MB) download into `/data/kokoro` the first time; the server starts on demand on 127.0.0.1:8880 and
+  stops after 30 minutes of quiet. About a second per sentence on the CPU. Settings → Voice → **HiveMind voice
+  (Kokoro)** (`ttsMode: 'builtin'`, voice picker); apps with an API token get it too when no speech server is set.
+  Voices for apps map names to Kokoro voices (`jarvis = bm_george`). `VoiceSettings.builtinTts` / `builtinVoices`.
+- **S12, the truth about loading:** Ollama's `/api/ps` reports the context size a model is loaded with; a call with
+  another `numCtx` is reported as loading (Ollama loads it again). When a call that looked warm still reports a real
+  load (`loadMs` > 1 s), a second `model_ready` with `warm: false` and `loadMs` follows.
+- **S13, a long colibri job no longer blocks local blocks:** colibri on the CPU (`gpu: off`) holds no GPU lock, so
+  an Ollama block on the same machine runs while colibri writes for minutes (test in `engine.test.ts`).
+- **S14, the workflow guide:** a built-in shared skill **hivemind-workflows** (`server/skills/`): the canvas JSON,
+  every block, `{{question}}`/`{{inputs}}`/`{{vars.x}}`, and the rules (Router/Decide pick by label, same `numCtx` per
+  model, `think: false`, Jev for decisions, short colibri prompts, folders). Installed at start for the first admin and
+  updated with new versions unless an admin changed it. API tokens get a **skills** permission (`scope.skills`, at
+  creation or later with `PATCH /api/tokens/:id {skills}`, a checkbox on the token list): such a token may make,
+  change and delete its user's skills, nothing more.
+- Tests: `server/test/kokoro.test.ts`, `server/test/hivebotS10S14.test.ts`, S12/S13 in `server/test/engine.test.ts`.
+
 ---
 
 ## The DungeonMind canvases (installed by DungeonMind, documented here)

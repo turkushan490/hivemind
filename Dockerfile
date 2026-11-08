@@ -51,6 +51,12 @@ COPY --from=build /app/server/trainer ./server/trainer
 # Colibri: the engine builds (/opt/colibri/cpu, /opt/colibri/cuda) and HiveMind's bridge to its catalog and downloads.
 COPY --from=colibri /opt/colibri /opt/colibri
 COPY server/colibri/helper.py ./server/colibri/helper.py
+# Built-in voice: Kokoro (kokoro-onnx) in its own folder, so the training stack's packages stay as they are. The model
+# files (~350 MB) are downloaded into /data/kokoro the first time a voice is needed.
+RUN /opt/unsloth-venv/bin/pip install --no-cache-dir --quiet --target /opt/kokoro-lib kokoro-onnx==0.6.1  && rm -rf /opt/kokoro-lib/bin && PYTHONPATH=/opt/kokoro-lib /opt/unsloth-venv/bin/python -c 'import kokoro_onnx, soundfile; print("kokoro ok")'
+COPY server/kokoro/serve.py ./server/kokoro/serve.py
+# Skills that come with HiveMind (the workflow guide), installed and shared at start.
+COPY server/skills ./server/skills
 RUN (ldconfig -p | grep -q 'libgomp.so.1' || (apt-get update && apt-get install -y --no-install-recommends libgomp1 && rm -rf /var/lib/apt/lists/*))  && (cat /opt/colibri/build.json 2>/dev/null || echo 'colibri: not in this image')
 COPY --from=build /app/web/dist ./web
 ARG APP_VERSION=dev

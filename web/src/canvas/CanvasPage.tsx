@@ -26,7 +26,7 @@ import { PausePanel } from '../components/PausePanel';
 import { History, ReplayBar } from './Replay';
 import { useStored } from '../stored';
 import { useIsPhone } from '../phone';
-import { OpenPicker } from './OpenPicker';
+import { OpenPicker, WorkflowSidebar } from './OpenPicker';
 import { HiveEdge } from './HiveEdge';
 import { HiveNode, InputMic, RunViews, type HiveFlowNode } from './HiveNode';
 import { BuilderPanel } from './BuilderPanel';
@@ -327,6 +327,9 @@ function Editor({ active, onProblem, followRequest }: { active: boolean; onProbl
     toast(`This workflow works on the project ${p.name}`, 'ok');
   }
 
+  // Workflows saved elsewhere (another tab, the API, DungeonMind) show without reloading the page.
+  const refreshCanvases = () => void api<Canvas[]>('/api/canvases', { quiet: true }).then(setCanvases, () => {});
+
   const openCanvas = (c: Canvas) => {
     if (!confirmDiscard()) return;
     show({ nodes: c.nodes, edges: c.edges });
@@ -546,8 +549,8 @@ function Editor({ active, onProblem, followRequest }: { active: boolean; onProbl
         <button className="btn-ghost" onClick={() => save().catch(() => {})} title="Ctrl+S">
           Save
         </button>
-        {/* Workflows saved elsewhere (another tab, the API, DungeonMind) show without reloading the page. */}
-        <OpenPicker canvases={mine} onOpen={openCanvas} onRefresh={() => api<Canvas[]>('/api/canvases', { quiet: true }).then(setCanvases, () => {})} appName={appName} />
+        {/* On a PC the list sits on the left (WorkflowSidebar); the phone keeps the dropdown. */}
+        {phone && <OpenPicker canvases={mine} onOpen={openCanvas} onRefresh={refreshCanvases} appName={appName} currentId={doc.id} />}
         <div className="relative">
           <button className="btn-ghost" onClick={() => setShowFile((s) => !s)} disabled={replaying}>
             File ▾
@@ -733,6 +736,7 @@ function Editor({ active, onProblem, followRequest }: { active: boolean; onProbl
 
       <Clock.Provider value={replaying ? replay.now : Date.now}>
       <div className="flex min-h-0 flex-1">
+        {!phone && <WorkflowSidebar canvases={mine} onOpen={openCanvas} onRefresh={refreshCanvases} appName={appName} currentId={doc.id} />}
         <aside
           className={`${
             phone

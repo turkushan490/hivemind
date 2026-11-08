@@ -16,8 +16,9 @@ async function safe(reply: FastifyReply, fn: () => unknown): Promise<unknown> {
 
 /** Settings → Skills: your own skills and the shared ones (limited API tokens may only read them). */
 export function skillRoutes(app: FastifyInstance) {
-  const noTokens = async (req: { user?: { scope?: unknown } }, reply: FastifyReply) => {
-    if (req.user?.scope) return reply.code(403).send({ error: 'This API token may not change skills' });
+  // A limited token changes skills only when its scope says skills: true (scope.ts lets those routes through).
+  const noTokens = async (req: { user?: { scope?: { skills?: boolean } } }, reply: FastifyReply) => {
+    if (req.user?.scope && req.user.scope.skills !== true) return reply.code(403).send({ error: 'This API token may not change skills' });
   };
 
   app.get('/api/skills', { preHandler: requireUser }, async (req) => listSkills(req.user!));

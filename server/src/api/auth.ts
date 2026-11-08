@@ -28,6 +28,8 @@ export interface TokenScope {
   training?: boolean;
   /** Datasets it may list, make and fill, by name: exact or ending in "*" ("DungeonMind*"). */
   datasets?: string[];
+  /** May make, change and delete its user's skills (an app that writes its own guides, like HiveBot's Ultron). */
+  skills?: boolean;
 }
 
 declare module 'fastify' {
@@ -251,7 +253,7 @@ export function authRoutes(app: FastifyInstance) {
   );
 
   app.post('/api/tokens', { preHandler: requireUser }, async (req, reply) => {
-    const body = (req.body ?? {}) as { name?: string; canvases?: unknown; memory?: unknown; training?: unknown; datasets?: unknown; profileId?: unknown };
+    const body = (req.body ?? {}) as { name?: string; canvases?: unknown; memory?: unknown; training?: unknown; datasets?: unknown; skills?: unknown; profileId?: unknown };
     const name = String(body.name ?? '').trim();
     if (!name) return reply.code(400).send({ error: 'Give the token a name' });
     // A limited token can't make tokens with more rights than itself.
@@ -268,8 +270,10 @@ export function authRoutes(app: FastifyInstance) {
       const datasets = list(body.datasets, 'datasets');
       if (body.training !== undefined && typeof body.training !== 'boolean') throw new Error('training must be true or false');
       const training = body.training === true;
-      if (canvases || memory || datasets || training)
-        scope = { canvases: canvases ?? [], memory: memory ?? [], ...(training && { training }), ...(datasets && { datasets }) };
+      if (body.skills !== undefined && typeof body.skills !== 'boolean') throw new Error('skills must be true or false');
+      const skills = body.skills === true;
+      if (canvases || memory || datasets || training || skills)
+        scope = { canvases: canvases ?? [], memory: memory ?? [], ...(training && { training }), ...(datasets && { datasets }), ...(skills && { skills }) };
     } catch (err) {
       return reply.code(400).send({ error: (err as Error).message });
     }
@@ -289,6 +293,21 @@ export function authRoutes(app: FastifyInstance) {
     );
     // Only time the full token is shown.
     return { id, name, token, ...(scope && { scope }), ...(profileId !== undefined && { profileId }) };
+  });
+
+  /** A limited token's skills permission, switched on or off later (the rest of its scope stays as made). */
+  app.patch('/api/tokens/:id', { preHandler: requireUser }, async (req, reply) => {
+    if (req.user!.scope) return reply.code(403).send({ error: 'A limited API token cannot change tokens' });
+    const skills = (req.body as { skills?: unknown } | undefined)?.skills;
+    if (typeof skills !== 'boolean') return reply.code(400).send({ error: 'skills must be true or false' });
+    const row = db.prepare('SELECT scope FROM api_tokens WHERE id = ? AND user_id = ?').get((req.params as { id: string }).id, req.user!.id) as { scope: string | null } | undefined;
+    if (!row) return reply.code(404).send({ error: 'No such token' });
+    if (!row.scope) return reply.code(400).send({ error: 'This token is not limited: it may already do everything its user may' });
+    const scope = JSON.parse(row.scope) as TokenScope;
+    if (skills) scope.skills = true;
+    else delete scope.skills;
+    db.prepare('UPDATE api_tokens SET scope = ? WHERE id = ?').run(JSON.stringify(scope), (req.params as { id: string }).id);
+    return { ok: true, scope };
   });
 
   app.delete('/api/tokens/:id', { preHandler: requireUser }, async (req) => {

@@ -562,17 +562,35 @@ function VoiceSettingsPanel({ isAdmin, active }: { isAdmin: boolean; active: boo
       <section className="space-y-2 text-sm">
         <div className="text-xs font-semibold tracking-wider text-slate-500 uppercase">Text to speech</div>
         <div className="flex gap-1">
-          {(['browser', 'server'] as const).map((m) => (
+          {(v.builtinTts ? (['browser', 'builtin', 'server'] as const) : (['browser', 'server'] as const)).map((m) => (
             <button
               key={m}
               disabled={!isAdmin}
               className={`flex-1 rounded-md border px-2 py-1.5 text-sm ${v.ttsMode === m ? 'border-indigo-500 bg-indigo-500/15 text-indigo-100' : 'border-[#30363d] text-slate-400'}`}
               onClick={() => set({ ttsMode: m })}
             >
-              {m === 'browser' ? 'Browser voice (free, built in)' : 'Speech server (OpenAI-compatible)'}
+              {m === 'browser' ? 'Browser voice (free, built in)' : m === 'builtin' ? 'HiveMind voice (Kokoro, inside HiveMind)' : 'Speech server (OpenAI-compatible)'}
             </button>
           ))}
         </div>
+        {v.ttsMode === 'builtin' && (
+          <>
+            <p className="text-xs text-slate-400">
+              Kokoro runs inside HiveMind on the processor (about a second per sentence). The first time a voice is needed it downloads its model (350 MB), then it starts by
+              itself when something speaks and stops after 30 minutes of quiet. Apps with an API token also get this voice when no speech server is set.
+            </p>
+            <label className="block space-y-1">
+              <span className="text-xs text-slate-400">Voice</span>
+              <select className="input" disabled={!isAdmin} value={v.ttsVoice && v.builtinVoices?.includes(v.ttsVoice) ? v.ttsVoice : 'af_heart'} onChange={(e) => set({ ttsVoice: e.target.value })}>
+                {(v.builtinVoices ?? []).map((id) => (
+                  <option key={id} value={id}>
+                    {id} · {id[0] === 'a' ? 'American' : 'British'} {id[1] === 'f' ? 'woman' : 'man'}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </>
+        )}
         {v.ttsMode === 'server' && (
           <>
             {isAdmin && (

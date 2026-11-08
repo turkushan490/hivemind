@@ -8,7 +8,7 @@ interface Token {
   prefix: string;
   createdAt: string;
   lastUsedAt?: string;
-  scope?: { canvases: string[]; memory: string[]; training?: boolean; datasets?: string[] };
+  scope?: { canvases: string[]; memory: string[]; training?: boolean; datasets?: string[]; skills?: boolean };
   /** Settings → Access: a profile of its own (it gets only what both it and its user allow). */
   profileId?: string;
 }
@@ -30,6 +30,7 @@ export function Tokens({ isAdmin = false }: { isAdmin?: boolean }) {
   const [memory, setMemory] = useState('');
   const [training, setTraining] = useState(false);
   const [datasets, setDatasets] = useState('');
+  const [skills, setSkills] = useState(false);
 
   const load = async () => setTokens(await api('/api/tokens'));
   useEffect(() => {
@@ -63,7 +64,7 @@ export function Tokens({ isAdmin = false }: { isAdmin?: boolean }) {
               body: {
                 name,
                 ...(profileId && { profileId }),
-                ...(limit && { canvases: list(canvases), memory: list(memory), training, ...(list(datasets).length && { datasets: list(datasets) }) }),
+                ...(limit && { canvases: list(canvases), memory: list(memory), training, skills, ...(list(datasets).length && { datasets: list(datasets) }) }),
               },
             });
             setFresh(t.token);
@@ -99,6 +100,10 @@ export function Tokens({ isAdmin = false }: { isAdmin?: boolean }) {
             <input type="checkbox" checked={training} onChange={(e) => setTraining(e.target.checked)} />
             May train models on those datasets
           </label>
+          <label className="flex items-center gap-2 text-xs text-slate-300 sm:col-span-2">
+            <input type="checkbox" checked={skills} onChange={(e) => setSkills(e.target.checked)} />
+            May write skills (an app that keeps its own guides, like HiveBot&apos;s Ultron)
+          </label>
           <p className="text-xs text-slate-500 sm:col-span-2">
             Comma or space separated; a <code>*</code> at the end matches the start. The token can then only install, run and read those workflows, use those memory keys,
             fill those datasets and (when allowed) train on them and follow its own training jobs — nothing else in HiveMind.
@@ -123,6 +128,19 @@ export function Tokens({ isAdmin = false }: { isAdmin?: boolean }) {
               {t.scope.datasets?.length ? ` · ${t.scope.datasets.join(' ')}` : ''}
               {t.scope.training ? ' · trains' : ''}
             </span>
+          )}
+          {t.scope && (
+            <label className="flex shrink-0 items-center gap-1 text-xs text-slate-400" title="May make, change and delete skills">
+              <input
+                type="checkbox"
+                checked={!!t.scope.skills}
+                onChange={async (e) => {
+                  await api(`/api/tokens/${t.id}`, { method: 'PATCH', body: { skills: e.target.checked } });
+                  load();
+                }}
+              />
+              skills
+            </label>
           )}
           <span className="text-xs text-slate-500">last used: {t.lastUsedAt ?? 'never'}</span>
           {profileSelect(t.profileId ?? '', async (v) => {

@@ -194,13 +194,16 @@ export interface VoiceSettings {
   /** Ready to transcribe (an address is set). */
   sttReady: boolean;
   /** Text to speech: the browser's own voices, or an OpenAI-compatible /audio/speech server (OpenAI, Kokoro, Piper). */
-  ttsMode: 'browser' | 'server';
+  ttsMode: 'browser' | 'server' | 'builtin';
   ttsUrl?: string;
   ttsModel?: string;
   ttsVoice?: string;
   hasTtsKey: boolean;
   /** Voices for apps: a name an app asks for ("jarvis") → a voice of the speech server. */
   appVoices: Record<string, string>;
+  /** The image has the built-in voice (Kokoro inside HiveMind), and its voices. */
+  builtinTts?: boolean;
+  builtinVoices?: string[];
 }
 
 /** Home Assistant connection (GET/PUT /api/settings/homeassistant); the token is never sent back. */
@@ -400,6 +403,8 @@ export interface ModelInfo {
   vision?: boolean;
   /** Ollama: the model's architecture family (qwen35, llama, gemma3, ...). */
   family?: string;
+  /** Parameters as people say it ("400B", "1T A32B"): from the provider, or set by an admin for remote models. */
+  params?: string;
 }
 
 /** Cloud and well-known model names that can read pictures, for providers that don't say (OpenAI, Gemini, Claude, OpenRouter). */
@@ -637,7 +642,10 @@ export interface RunEvent {
   estimated?: boolean;
   /** model_loading / node_done: model size in memory. */
   sizeBytes?: number;
-  /** model_ready: the model was already in memory, no loading needed. */
+  /**
+   * model_ready: the model was already in memory, no loading needed. A second model_ready with warm: false and loadMs
+   * follows when the provider had to load it after all (Ollama with another context size).
+   */
   warm?: boolean;
   /** node_done: real load time reported by the provider. */
   loadMs?: number;

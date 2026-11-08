@@ -6,6 +6,7 @@ import { buildApp } from './app.js';
 import { config } from './config.js';
 import { describe, logError } from './errors.js';
 import { startScheduler } from './services/schedules.js';
+import { seedBuiltinSkills } from './services/skills.js';
 import { closeStaleRuns } from './events/runs.js';
 import { resumeStoppedRuns } from './api/runs.js';
 import { lockDataDir } from './services/build.js';
@@ -71,6 +72,7 @@ const app = await buildApp();
 seedProviders(config.ollamaUrl, config.comfyUrl, config.typesafeKey);
 // The built-in colibri engine (when the image has it) gets its two providers once.
 seedColibri();
+seedBuiltinSkills();
 
 await app.listen({ port: config.port, host: config.host });
 

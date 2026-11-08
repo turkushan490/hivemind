@@ -1,9 +1,11 @@
 import type { Skill } from '@hivemind/shared';
-import { mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, extname, join, relative, resolve, sep } from 'node:path';
+import { createHash } from 'node:crypto';
+import { fileURLToPath } from 'node:url';
 import { config } from '../config.js';
 import { newId } from '../crypto.js';
-import { db } from '../db/index.js';
+import { db, getSetting, setSetting } from '../db/index.js';
 import { githubToken, REPO_RE } from './git.js';
 import { createZip, readZip } from './zip.js';
 
@@ -304,4 +306,43 @@ export function skillsForRun(user: SkillUser) {
       return text;
     },
   };
+}
+
+// ---- Built-in skills (server/skills/*/SKILL.md): shared with everyone, owned by the first admin ----
+
+const here = dirname(fileURLToPath(import.meta.url));
+const builtinDir = () => [resolve(here, '../skills'), resolve(here, '../../skills')].find((d) => existsSync(d));
+const sha = (b: Buffer | string) => createHash('sha256').update(b).digest('hex');
+
+/**
+ * Installs the skills that come with HiveMind (e.g. "hivemind-workflows", the guide to building workflows) and
+ * updates them with new versions, unless an admin changed the skill: then their version stays.
+ */
+export function seedBuiltinSkills() {
+  const dir = builtinDir();
+  const admin = db.prepare("SELECT id, role FROM users WHERE role = 'admin' ORDER BY created_at LIMIT 1").get() as { id: string; role: string } | undefined;
+  if (!dir || !admin) return;
+  for (const name of readdirSync(dir)) {
+    const file = join(dir, name, 'SKILL.md');
+    if (!existsSync(file)) continue;
+    const data = readFileSync(file);
+    const meta = parseSkillMd(data.toString('utf8'));
+    const key = `skills.builtin.${meta.name}`;
+    const row = db.prepare('SELECT * FROM skills WHERE owner_id = ? AND name = ? COLLATE NOCASE').get(admin.id, meta.name) as SkillRow | undefined;
+    if (row) {
+      let current = '';
+      try {
+        current = sha(readFileSync(join(dirOf(row), 'SKILL.md')));
+      } catch {}
+      // Changed by an admin since it was installed: leave it.
+      if (current !== getSetting(key) || current === sha(data)) continue;
+    }
+    try {
+      const { skill } = saveSkill(admin, [{ path: 'SKILL.md', data }]);
+      shareSkill(skill.id, true);
+      setSetting(key, sha(data));
+    } catch (e) {
+      console.error(`Built-in skill ${name}: ${(e as Error).message}`);
+    }
+  }
 }

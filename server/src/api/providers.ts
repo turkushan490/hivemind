@@ -107,10 +107,47 @@ const modelCache = new Map<string, { at: number; models: ModelInfo[] }>();
 export const forgetModels = (providerId: string) => modelCache.delete(providerId);
 async function modelsOf(row: ProviderRow, fresh = false): Promise<ModelInfo[]> {
   const hit = modelCache.get(row.id);
-  if (!fresh && hit && Date.now() - hit.at < 10 * 60_000) return hit.models;
+  if (!fresh && hit && Date.now() - hit.at < 10 * 60_000) return withSizes(row.id, hit.models);
   const models = await adapterFor(row).listModels();
   modelCache.set(row.id, { at: Date.now(), models });
-  return models;
+  return withSizes(row.id, models);
+}
+
+// ---- Model sizes for remote models (Settings → AI providers → Model sizes) ----
+// A cloud or OpenAI-compatible server says nothing about how big its models are; apps (HiveBot picks "the big model"
+// by size) need it, so an admin can write it down per model.
+
+export interface ModelSize {
+  sizeBytes?: number;
+  params?: string;
+}
+const SIZES_KEY = 'model.sizes';
+export function modelSizes(): Record<string, Record<string, ModelSize>> {
+  try {
+    return JSON.parse(getSetting(SIZES_KEY) ?? '{}') as Record<string, Record<string, ModelSize>>;
+  } catch {
+    return {};
+  }
+}
+/** Sets (or with neither field, removes) the size of one model. */
+export function saveModelSize(providerId: string, model: string, size: ModelSize) {
+  const all = modelSizes();
+  const of = { ...(all[providerId] ?? {}) };
+  const clean: ModelSize = {
+    ...(size.sizeBytes && Number.isFinite(size.sizeBytes) && size.sizeBytes > 0 && { sizeBytes: Math.round(size.sizeBytes) }),
+    ...(size.params?.trim() && { params: size.params.trim().slice(0, 40) }),
+  };
+  if (Object.keys(clean).length) of[model] = clean;
+  else delete of[model];
+  if (Object.keys(of).length) all[providerId] = of;
+  else delete all[providerId];
+  setSetting(SIZES_KEY, JSON.stringify(all));
+}
+/** What the admin wrote wins over what the provider reports. */
+function withSizes(providerId: string, models: ModelInfo[]): ModelInfo[] {
+  const set = modelSizes()[providerId];
+  if (!set) return models;
+  return models.map((m) => (set[m.model] ? { ...m, ...set[m.model] } : m));
 }
 
 // ---- Picture reader: describes pictures for models that can't see (Settings → Pictures) ----
@@ -418,6 +455,25 @@ export function providerRoutes(app: FastifyInstance) {
   });
 
   /** Every model of every enabled provider this user may use; providers that fail are reported, not fatal. */
+  /** Model sizes: the sizes written down for this provider's models. */
+  app.get('/api/providers/:id/sizes', { preHandler: requireUser }, async (req, reply) => {
+    const row = rowFor(req.user!, (req.params as { id: string }).id);
+    if (!row) return reply.code(404).send({ error: 'Not found' });
+    return modelSizes()[row.id] ?? {};
+  });
+
+  /** Sets one model's size ({ model, sizeGb, params }); sizeGb 0 and no params removes it. */
+  app.put('/api/providers/:id/sizes', { preHandler: requireUser }, async (req, reply) => {
+    const row = rowFor(req.user!, (req.params as { id: string }).id);
+    if (!row || !canEdit(req.user!, row)) return reply.code(404).send({ error: 'Not found' });
+    const b = (req.body ?? {}) as { model?: unknown; sizeGb?: unknown; params?: unknown };
+    if (typeof b.model !== 'string' || !b.model.trim() || b.model.length > 300) return reply.code(400).send({ error: 'model is required' });
+    const gbNum = b.sizeGb === undefined || b.sizeGb === null || b.sizeGb === '' ? 0 : Number(b.sizeGb);
+    if (!Number.isFinite(gbNum) || gbNum < 0 || gbNum > 100_000) return reply.code(400).send({ error: 'sizeGb must be 0 to 100000' });
+    saveModelSize(row.id, b.model.trim(), { sizeBytes: gbNum * 1e9, params: typeof b.params === 'string' ? b.params : undefined });
+    return modelSizes()[row.id] ?? {};
+  });
+
   app.get('/api/models', { preHandler: requireUser }, async (req) => {
     const access = allowedFor(req.user!);
     const rows = usableRows(req.user!, access).filter((r) => r.enabled);

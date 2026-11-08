@@ -1,6 +1,7 @@
 import type { VoiceSettings } from '@hivemind/shared';
 import { decrypt, encrypt } from '../crypto.js';
 import { db, getSetting, setSetting } from '../db/index.js';
+import { ensureKokoro, KOKORO_VOICES, kokoroAvailable } from './kokoro.js';
 
 /**
  * Voice, pluggable like providers: speech to text through any OpenAI-compatible /audio/transcriptions
@@ -12,7 +13,7 @@ interface Stored {
   sttKey?: string;
   sttModel?: string;
   sttLanguage?: string;
-  ttsMode?: 'browser' | 'server';
+  ttsMode?: 'browser' | 'server' | 'builtin';
   ttsUrl?: string;
   ttsKey?: string;
   ttsModel?: string;
@@ -45,6 +46,8 @@ export function voiceSettings(): VoiceSettings {
     ttsVoice: s.ttsVoice,
     hasTtsKey: !!s.ttsKey,
     appVoices: s.appVoices ?? {},
+    builtinTts: kokoroAvailable(),
+    ...(kokoroAvailable() && { builtinVoices: KOKORO_VOICES }),
   };
 }
 
@@ -80,7 +83,7 @@ export function saveVoiceSettings(patch: Partial<Omit<VoiceSettings, 'hasSttKey'
     sttKey: key(patch.sttKey, s.sttKey),
     sttModel: text(patch.sttModel, s.sttModel),
     sttLanguage: text(patch.sttLanguage, s.sttLanguage),
-    ttsMode: patch.ttsMode === 'server' || patch.ttsMode === 'browser' ? patch.ttsMode : s.ttsMode,
+    ttsMode: patch.ttsMode === 'server' || patch.ttsMode === 'browser' || patch.ttsMode === 'builtin' ? patch.ttsMode : s.ttsMode,
     ttsUrl: patch.ttsUrl !== undefined ? cleanUrl(patch.ttsUrl) : s.ttsUrl,
     ttsKey: key(patch.ttsKey, s.ttsKey),
     ttsModel: text(patch.ttsModel, s.ttsModel),
@@ -174,14 +177,33 @@ export interface SpeakOptions {
 /** Text to speech on the server: returns the audio and its type. */
 export async function speak(input: string, userId: string, opts: SpeakOptions = {}): Promise<{ audio: Buffer; type: string }> {
   const s = load();
-  if (!s.ttsUrl) throw new TtsNotConfigured('Text to speech has no server address (Settings → Voice)');
-  if (s.ttsMode !== 'server' && !opts.app) throw new TtsNotConfigured('Text to speech uses the browser voice (Settings → Voice)');
+  // The built-in voice (Kokoro in this container): chosen in Settings, or for apps when no speech server is set.
+  const builtin = kokoroAvailable() && (s.ttsMode === 'builtin' || (!!opts.app && s.ttsMode !== 'server' && !s.ttsUrl));
+  if (!builtin) {
+    if (!s.ttsUrl) throw new TtsNotConfigured('Text to speech has no server address (Settings → Voice)');
+    if (s.ttsMode !== 'server' && !opts.app) throw new TtsNotConfigured('Text to speech uses the browser voice (Settings → Voice)');
+  }
   const asked = opts.voice?.trim();
   // A name from Voices for apps ("jarvis"), else the voice id as given, else the stored voice.
-  const voice = (asked && s.appVoices?.[asked.toLowerCase()]) || asked || s.ttsVoice || 'alloy';
+  const voice = (asked && s.appVoices?.[asked.toLowerCase()]) || asked || s.ttsVoice || (builtin ? 'af_heart' : 'alloy');
+  if (builtin) {
+    const base = await ensureKokoro();
+    const format = opts.format === 'wav' ? 'wav' : 'mp3';
+    const speed = opts.speed !== undefined && Number.isFinite(opts.speed) ? Math.min(4, Math.max(0.25, opts.speed)) : undefined;
+    // Its voices are Kokoro's own (am_puck, bm_george…): an OpenAI name like "alloy" becomes the default.
+    const id = KOKORO_VOICES.includes(voice) || /^[a-z][fm]_[a-z]+$/.test(voice) ? voice : 'af_heart';
+    const res = await call(
+      `${base}/audio/speech`,
+      { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ model: 'kokoro', voice: id, input, response_format: format, ...(speed !== undefined && { speed }) }) },
+      'built-in text-to-speech',
+    );
+    const audio = Buffer.from(await res.arrayBuffer());
+    if (audio.length === 0) throw new Error('The built-in voice sent no audio');
+    return { audio, type: res.headers.get('content-type') || (format === 'wav' ? 'audio/wav' : 'audio/mpeg') };
+  }
   const format = opts.format === 'wav' ? 'wav' : 'mp3';
   const speed = opts.speed !== undefined && Number.isFinite(opts.speed) ? Math.min(4, Math.max(0.25, opts.speed)) : undefined;
-  const apiKey = keyFor(s.ttsUrl, s.ttsKey, userId);
+  const apiKey = keyFor(s.ttsUrl!, s.ttsKey, userId);
   const res = await call(
     `${s.ttsUrl}/audio/speech`,
     {

@@ -46,6 +46,16 @@ const SCOPED_ROUTES = new Set([
   'DELETE /api/workflows/:id/schedule',
 ]);
 
+/** Only for tokens with skills: true (their user's own skills; the routes check ownership themselves). */
+const SKILL_ROUTES = new Set([
+  'GET /api/skills/:id',
+  'GET /api/skills/:id/file',
+  'POST /api/skills',
+  'PUT /api/skills/:id/file',
+  'DELETE /api/skills/:id/file',
+  'DELETE /api/skills/:id',
+]);
+
 /** Only for tokens with datasets in their scope, and only for matching datasets. */
 const DATASET_ROUTES = new Set([
   'GET /api/datasets',
@@ -95,6 +105,10 @@ export async function scopeGuard(req: FastifyRequest, reply: FastifyReply) {
         | undefined;
       if (row && !datasetAllowed(user, row.name)) return deny(`use dataset "${row.name}"`);
     }
+    return;
+  }
+  if (SKILL_ROUTES.has(route)) {
+    if (user.scope.skills !== true) return deny('change skills');
     return;
   }
   if (TRAINING_ROUTES.has(route)) {

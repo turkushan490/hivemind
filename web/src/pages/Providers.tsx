@@ -211,6 +211,7 @@ function ProviderCard(props: {
                 </span>
               </label>
             )}
+            {!p.local && (p.kind === 'openai' || p.kind === 'anthropic') && <ModelSizes providerId={p.id} />}
             {tested[p.id] && (
               <div className="hm-pop space-y-1 rounded-md border border-indigo-900/60 bg-indigo-950/20 p-2">
                 <p className="text-[11px] text-slate-400">Spam example from the Jev guide (a scam comment):</p>
@@ -331,6 +332,63 @@ function OpenRouterFree() {
           </li>
         ))}
       </ul>
+    </details>
+  );
+}
+
+/**
+ * Model sizes for a remote AI server: it doesn't say how big its models are, but apps do need it (HiveBot puts
+ * Ultron's deep questions on "the big model", the largest one in /api/models). Written down per model here.
+ */
+function ModelSizes({ providerId }: { providerId: string }) {
+  const [open, setOpen] = useState(false);
+  const [sizes, setSizes] = useState<Record<string, { sizeBytes?: number; params?: string }>>({});
+  const [names, setNames] = useState<string[]>([]);
+  const [form, setForm] = useState({ model: '', sizeGb: '', params: '' });
+  useEffect(() => {
+    if (!open) return;
+    void api<Record<string, { sizeBytes?: number; params?: string }>>(`/api/providers/${providerId}/sizes`, { quiet: true }).then(setSizes).catch(() => {});
+    void api<ModelInfo[]>(`/api/providers/${providerId}/models`, { quiet: true })
+      .then((ms) => setNames(ms.map((m) => m.model)))
+      .catch(() => {});
+  }, [open, providerId]);
+  const save = async (model: string, sizeGb: string, params: string) => {
+    try {
+      setSizes(await api(`/api/providers/${providerId}/sizes`, { method: 'PUT', body: { model, sizeGb: Number(sizeGb) || 0, params } }));
+      setForm({ model: '', sizeGb: '', params: '' });
+    } catch {}
+  };
+  const listId = `sizes-${providerId}`;
+  return (
+    <details className="rounded-md border border-[#30363d] px-2 py-1.5 text-xs" onToggle={(e) => setOpen((e.target as HTMLDetailsElement).open)}>
+      <summary className="cursor-pointer text-slate-300">Model sizes{Object.keys(sizes).length ? ` (${Object.keys(sizes).length})` : ''}</summary>
+      <p className="mt-1 text-slate-500">This server doesn&apos;t say how big its models are. Apps such as HiveBot pick &quot;the big model&quot; by size, so write it down here.</p>
+      <div className="mt-2 space-y-1">
+        {Object.entries(sizes).map(([model, s]) => (
+          <div key={model} className="flex flex-wrap items-center gap-2">
+            <span className="break-all text-slate-200">{model}</span>
+            <span className="text-slate-500">
+              {s.sizeBytes ? `${Math.round(s.sizeBytes / 1e9)} GB` : ''} {s.params ?? ''}
+            </span>
+            <button className="btn-ghost ml-auto px-2 py-0.5" onClick={() => save(model, '0', '')}>
+              Remove
+            </button>
+          </div>
+        ))}
+      </div>
+      <div className="mt-2 grid gap-1 sm:grid-cols-[1fr_6rem_7rem_auto]">
+        <input className="input py-1" list={listId} placeholder="model" value={form.model} onChange={(e) => setForm({ ...form, model: e.target.value })} />
+        <datalist id={listId}>
+          {names.map((n) => (
+            <option key={n} value={n} />
+          ))}
+        </datalist>
+        <input className="input py-1" type="number" min={0} placeholder="GB" value={form.sizeGb} onChange={(e) => setForm({ ...form, sizeGb: e.target.value })} />
+        <input className="input py-1" placeholder="e.g. 400B" value={form.params} onChange={(e) => setForm({ ...form, params: e.target.value })} />
+        <button className="btn-ghost" disabled={!form.model.trim() || (!Number(form.sizeGb) && !form.params.trim())} onClick={() => save(form.model.trim(), form.sizeGb, form.params)}>
+          Save
+        </button>
+      </div>
     </details>
   );
 }

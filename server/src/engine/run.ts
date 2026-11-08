@@ -446,6 +446,11 @@ export async function runGraph(
               }
               // Only a real load is worth remembering (a warm model reports a few ms).
               if (chunk.loadMs && chunk.loadMs > 300) callLoad = chunk.loadMs;
+              // It looked loaded but the provider had to load it after all (another context size): say so.
+              if (chunk.loadMs && chunk.loadMs > 1000 && ready && !loading) {
+                loading = true;
+                deps.emit({ ...base, type: 'model_ready', warm: false, loadMs: chunk.loadMs });
+              }
               if (callLoad && loadMs === undefined) loadMs = callLoad;
               inputTokens = (inputTokens ?? 0) + (chunk.inputTokens ?? 0);
               callIn += chunk.inputTokens ?? 0;

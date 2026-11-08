@@ -97,8 +97,11 @@ export function ollamaAdapter(cfg: ProviderConfig): ProviderAdapter {
       try {
         const ps = await fetch(`${base}/api/ps`, { signal });
         if (ps.ok) {
-          const loaded = ((await ps.json()) as { models?: { name: string }[] }).models ?? [];
-          yield loaded.some((m) => m.name === model) ? { type: 'warm' } : { type: 'loading' };
+          const loaded = ((await ps.json()) as { models?: { name: string; context_length?: number }[] }).models ?? [];
+          const hit = loaded.find((m) => m.name === model);
+          // Loaded with another context size: Ollama loads it again for this call.
+          const reload = !!hit && !!req.numCtx && !!hit.context_length && hit.context_length !== req.numCtx;
+          yield hit && !reload ? { type: 'warm' } : { type: 'loading' };
         }
       } catch {}
 

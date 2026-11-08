@@ -20,7 +20,7 @@ export function colibriRoutes(app: FastifyInstance) {
 
   app.put('/api/colibri/settings', { preHandler: requireAdmin }, async (req) => {
     const body = (req.body ?? {}) as ColibriSettings;
-    const keys: (keyof ColibriSettings)[] = ['ramGb', 'gpu', 'vramGb', 'keepAliveMin', 'callSeconds', 'gpuHost', 'ctx', 'kvSlots'];
+    const keys: (keyof ColibriSettings)[] = ['ramGb', 'gpu', 'vramGb', 'keepAliveMin', 'callSeconds', 'gpuHost', 'ctx', 'kvSlots', 'maxEngines', 'pinned'];
     const patch = Object.fromEntries(keys.filter((k) => body[k] !== undefined).map((k) => [k, body[k]])) as ColibriSettings;
     return saveColibriSettings(patch);
   });
@@ -87,8 +87,10 @@ export function colibriRoutes(app: FastifyInstance) {
     }
   });
 
-  app.post('/api/colibri/unload', { preHandler: requireAdmin }, async () => {
-    await stopEngine();
+  /** Unloads one model ({ model }) or every colibri model. */
+  app.post('/api/colibri/unload', { preHandler: requireAdmin }, async (req) => {
+    const model = (req.body as { model?: string } | undefined)?.model;
+    await stopEngine(typeof model === 'string' && model ? model : undefined);
     return { ok: true };
   });
 }

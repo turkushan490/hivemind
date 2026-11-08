@@ -106,6 +106,9 @@ describe('colibri engine', () => {
   });
 
   it('never switches models in the middle of an answer', async () => {
+    // One model at a time: a second model has to wait for the first one's answer.
+    await engine.stopEngine();
+    engine.saveColibriSettings({ maxEngines: 1 });
     const hold = await engine.acquire('qwen3-coder-30b');
     let switched = false;
     const other = engine.acquire('qwen36-35b').then((h) => {
@@ -118,6 +121,36 @@ describe('colibri engine', () => {
     hold.release();
     await other;
     expect(engine.loadedModel()?.model).toBe('qwen36-35b');
+    engine.saveColibriSettings({ maxEngines: 3 });
+  });
+
+  it('keeps several models loaded, each on its own port, and unloads the one used longest ago when RAM runs out', async () => {
+    await engine.stopEngine();
+    launches.length = 0;
+    engine.saveColibriSettings({ maxEngines: 3, ramGb: 0 });
+    const a = await adapterOf('colibri');
+    await collect(a.stream({ model: 'qwen36-35b', messages: [{ role: 'user', content: 'one' }] }, new AbortController().signal));
+    await collect(a.stream({ model: 'qwen3-coder-30b', messages: [{ role: 'user', content: 'two' }] }, new AbortController().signal));
+    const both = engine.loadedModels();
+    expect(both.map((m) => m.model).sort()).toEqual(['qwen3-coder-30b', 'qwen36-35b']);
+    expect(new Set(both.map((m) => m.port)).size).toBe(2);
+    // Only the first one got the GPU.
+    expect(launches.map((l) => l.gpu)).toEqual([true, false]);
+    // Back to the first: no load, it answers on its own port.
+    const again = await collect(a.stream({ model: 'qwen36-35b', messages: [{ role: 'user', content: 'three' }] }, new AbortController().signal));
+    expect(again[0]).toEqual({ type: 'warm' });
+    expect(again.filter((c) => c.type === 'token').map((c) => (c as { text: string }).text).join('')).toContain('qwen36-35b says: three');
+    expect(launches).toHaveLength(2);
+    // RAM for 13 GB: qwen36 needs 10 GB, the others 2 GB each; a third model pushes out the one used longest ago (the coder).
+    engine.saveColibriSettings({ ramGb: 13 });
+    addModel('small-one');
+    await collect(a.stream({ model: 'small-one', messages: [{ role: 'user', content: 'four' }] }, new AbortController().signal));
+    expect(engine.loadedModels().map((m) => m.model).sort()).toEqual(['qwen36-35b', 'small-one']);
+    expect((await a.loaded!()).map((m) => m.model).sort()).toEqual(['qwen36-35b', 'small-one']);
+    // Unloading one leaves the other.
+    await a.unload!('small-one');
+    expect(engine.loadedModels().map((m) => m.model)).toEqual(['qwen36-35b']);
+    engine.saveColibriSettings({ ramGb: 0 });
   });
 
   it('refuses a model that needs more RAM than the container has, with what to do', async () => {

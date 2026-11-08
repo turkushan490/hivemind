@@ -141,7 +141,7 @@ export function systemOneAdapter(cfg: ProviderConfig): ProviderAdapter {
             method: 'POST',
             signal: AbortSignal.timeout(300_000),
             headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ model, prompt: '', keep_alive: keepAlive(keep) ?? '30m' }),
+            body: JSON.stringify({ model, prompt: '', keep_alive: keepAlive(keep) ?? '30m', ...(cfg.cpuOnly && { options: { num_gpu: 0 } }) }),
           });
           if (!res.ok) throw new ProviderError(`Ollama load ${model}: HTTP ${res.status}`, res.status);
         },
@@ -174,6 +174,7 @@ export function systemOneAdapter(cfg: ProviderConfig): ProviderAdapter {
           questions,
           ...(images.length && { images: images.map((i) => i.data.toString('base64')) }),
           ...(keepAlive(req.keepAlive) && { keep_alive: keepAlive(req.keepAlive) }),
+          ...(cfg.cpuOnly && { options: { num_gpu: 0 } }),
         };
       }
       const data = (await post(`${base}/v1/systemone`, body, headers, signal, name)) as {

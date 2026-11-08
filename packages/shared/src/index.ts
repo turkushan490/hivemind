@@ -40,6 +40,11 @@ export interface NodeConfig {
   keepAlive?: string;
   /** LLM: send the chat history from /v1 as real messages instead of one prompt. */
   useMessages?: boolean;
+  /**
+   * Pictures in the question: "auto" (default) sends them to models that can see and lets the picture reader
+   * describe them for models that can't; "direct" always sends them to this block's model.
+   */
+  pictures?: 'auto' | 'direct';
   /** Image: how many pictures per run (1-8). */
   batch?: number;
   /** Decide: what the decision model reads (template; default the text wired in, else the question). */
@@ -303,6 +308,8 @@ export interface ProviderInfo {
   local: boolean;
   /** Local only: run this server's models at the same time instead of one by one. */
   parallel: boolean;
+  /** Ollama only: run this server's models on the CPU (num_gpu 0), so they never wait for the GPU. */
+  cpuOnly: boolean;
   shared: boolean;
 }
 
@@ -354,6 +361,20 @@ export interface ModelInfo {
   sizeBytes?: number;
   quant?: string;
   modifiedAt?: string;
+  /** The model can read pictures (Ollama's "vision" capability); left out when the provider doesn't say. */
+  vision?: boolean;
+  /** Ollama: the model's architecture family (qwen35, llama, gemma3, ...). */
+  family?: string;
+}
+
+/** Cloud and well-known model names that can read pictures, for providers that don't say (OpenAI, Gemini, Claude, OpenRouter). */
+const VISION_NAMES = /gemini|gpt-4o|gpt-4\.1|gpt-4-turbo|gpt-5|chatgpt-4o|(^|\/)o[34](-|$)|claude|llava|bakllava|moondream|minicpm-v|gemma-?[34]|qwen[\d.]*-?vl|qwen3\.[56]|-vl\b|vision|pixtral|llama-?4|mistral-small-3|mistral-medium|grok-[234]|kimi-k2\.5|glm-4\.\dv|lfm[\d.]*-vl/i;
+const NO_VISION_NAMES = /gpt-oss|embed|whisper|tts|coder|deepseek-r1|gpt-3\.5/i;
+
+/** Whether a model reads pictures: what its provider says first, else its name. */
+export function seesPictures(model: string, info?: { vision?: boolean }): boolean {
+  if (info?.vision !== undefined) return info.vision;
+  return VISION_NAMES.test(model) && !NO_VISION_NAMES.test(model);
 }
 
 /** A model currently held in memory by a local provider. */

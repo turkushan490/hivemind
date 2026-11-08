@@ -10,7 +10,8 @@ import { logError } from '../errors.js';
  * Colibri (github.com/JustVugg/colibri) inside this container: a C engine for very large mixture-of-experts models
  * that keeps the hot experts on the GPU or in RAM and streams the rest from disk. The HiveMind image carries the
  * engine in /opt/colibri (a CPU build, and a CUDA build when it compiled); HiveMind starts `coli serve` on
- * localhost with one model at a time, switches models by restarting it, and stops it after the keep-alive.
+ * localhost, one engine per loaded model (several at once when they fit the RAM budget), and stops each after the
+ * keep-alive.
  */
 
 export interface ColibriSettings {
@@ -30,11 +31,15 @@ export interface ColibriSettings {
   ctx?: number;
   /** Conversations colibri keeps in memory at once (KV slots, 1-16): each keeps its prompt, so a repeat is not read again. */
   kvSlots?: number;
+  /** Models loaded at the same time (1-8), each in its own engine; they share the RAM budget. */
+  maxEngines?: number;
+  /** Models that stay loaded (no keep-alive), and come back after a bigger model pushed them out. */
+  pinned?: string[];
 }
 
-type Filled = ColibriSettings & Required<Pick<ColibriSettings, 'gpu' | 'vramGb' | 'keepAliveMin' | 'callSeconds' | 'ctx' | 'kvSlots'>>;
+type Filled = ColibriSettings & Required<Pick<ColibriSettings, 'gpu' | 'vramGb' | 'keepAliveMin' | 'callSeconds' | 'ctx' | 'kvSlots' | 'maxEngines'>>;
 // 30 minutes: a robot conversation (HiveBot) stays warm between questions.
-export const COLIBRI_DEFAULTS: Filled = { gpu: 'auto', vramGb: 0, keepAliveMin: 30, callSeconds: 7200, ctx: 0, kvSlots: 4 };
+export const COLIBRI_DEFAULTS: Filled = { gpu: 'auto', vramGb: 0, keepAliveMin: 30, callSeconds: 7200, ctx: 0, kvSlots: 4, maxEngines: 3 };
 
 export function colibriSettings(): Filled {
   let s: ColibriSettings = {};
@@ -52,6 +57,8 @@ export function saveColibriSettings(patch: ColibriSettings): ColibriSettings {
   if (next.callSeconds !== undefined) next.callSeconds = Math.max(60, Math.min(86400, Math.round(next.callSeconds)));
   if (next.ctx !== undefined) next.ctx = Math.max(0, Math.min(1_048_576, Math.round(next.ctx)));
   if (next.kvSlots !== undefined) next.kvSlots = Math.max(1, Math.min(16, Math.round(next.kvSlots)));
+  if (next.maxEngines !== undefined) next.maxEngines = Math.max(1, Math.min(8, Math.round(Number(next.maxEngines) || 1)));
+  if (next.pinned !== undefined) next.pinned = Array.isArray(next.pinned) ? [...new Set(next.pinned.filter((m) => typeof m === 'string' && validModelName(m)))].slice(0, 8) : [];
   if (next.gpu !== 'off') next.gpu = 'auto';
   if (next.gpuHost !== undefined) next.gpuHost = next.gpuHost.trim() || undefined;
   setSetting('colibri', JSON.stringify(next));
@@ -91,7 +98,6 @@ export function configureColibri(o: { root?: string; modelsDir?: string; port?: 
   state.cudaBroken = false;
 }
 
-export const colibriBase = () => `http://127.0.0.1:${state.port}`;
 export const colibriModelsDir = () => state.modelsDir;
 const logFile = () => join(config.dataDir, 'colibri', 'engine.log');
 
@@ -232,19 +238,37 @@ export const validModelName = (name: string) => /^[A-Za-z0-9][A-Za-z0-9._-]{0,79
 
 export function deleteModel(model: string) {
   if (!validModelName(model)) throw new Error('Not a model name');
-  if (current?.model === model) void stopEngine();
+  if (engines.has(model)) void stopEngine(model);
   rmSync(join(state.modelsDir, model), { recursive: true, force: true });
   rmSync(join(state.modelsDir, '.gguf', model), { recursive: true, force: true });
   sizes.delete(join(state.modelsDir, model));
 }
 
-// ---- the engine process ----
+// ---- the engine processes ----
 
+/**
+ * Several models can be loaded at once, each in its own `coli serve` on its own port (Settings → Colibri → models
+ * loaded at once). They share the RAM budget: a model that doesn't fit unloads the one used longest ago (pinned
+ * models last), never one that is answering. Only one engine uses the GPU; the others run on the CPU.
+ */
 type EngineState = 'starting' | 'ready';
-let proc: ChildProcess | undefined;
-let current: { model: string; state: EngineState; since: number; gpu: boolean; kvSlots: number } | undefined;
-let idle: NodeJS.Timeout | undefined;
-/** Every start and stop goes through this queue, so two calls never start two engines. */
+interface Engine {
+  model: string;
+  port: number;
+  proc: ChildProcess;
+  state: EngineState;
+  since: number;
+  gpu: boolean;
+  kvSlots: number;
+  /** The RAM it was given (--ram). */
+  ramBytes: number;
+  /** Calls using it right now: it is never stopped under them. */
+  active: number;
+  lastUsed: number;
+  idle?: NodeJS.Timeout;
+}
+const engines = new Map<string, Engine>();
+/** Every start and stop goes through this queue, so two calls never start the same engine twice. */
 let queue: Promise<unknown> = Promise.resolve();
 /** Called with the minimum RAM a model needs (from the catalog), or undefined when unknown. */
 let ramNeedOf: (model: string) => Promise<number | undefined> = async () => undefined;
@@ -256,21 +280,43 @@ const serial = <T>(fn: () => Promise<T>): Promise<T> => {
   return next;
 };
 
-/** What is loaded right now, if anything. */
-export const loadedModel = () => (current && proc && proc.exitCode === null ? { ...current } : undefined);
+const alive = (e: Engine) => e.proc.exitCode === null && e.proc.signalCode === null;
+const info = (e: Engine) => ({ model: e.model, state: e.state, since: e.since, gpu: e.gpu, kvSlots: e.kvSlots, port: e.port, ramBytes: e.ramBytes, active: e.active, lastUsed: e.lastUsed });
 
-function logTail(lines = 30): string {
+/** One model's engine, or (no model) the one used last. */
+export function loadedModel(model?: string) {
+  if (model) {
+    const e = engines.get(model);
+    return e && alive(e) ? info(e) : undefined;
+  }
+  return loadedModels()[0];
+}
+
+/** Every loaded model, the one used last first. */
+export const loadedModels = () =>
+  [...engines.values()]
+    .filter(alive)
+    .sort((a, b) => b.lastUsed - a.lastUsed)
+    .map(info);
+
+/** Where a model's engine listens (the first port when it isn't loaded). */
+export const colibriBase = (model?: string) => `http://127.0.0.1:${(model && engines.get(model)?.port) || loadedModel()?.port || state.port}`;
+
+const logFileOf = (model: string) => join(config.dataDir, 'colibri', `engine-${model}.log`);
+let lastLog = '';
+
+function logTail(lines = 30, file = lastLog || logFile()): string {
   try {
-    const text = readFileSync(logFile(), 'utf8');
+    const text = readFileSync(file, 'utf8');
     return text.split('\n').slice(-lines - 1).join('\n').trim();
   } catch {
     return '';
   }
 }
 
-async function healthy(signal?: AbortSignal): Promise<Record<string, unknown> | undefined> {
+async function healthy(port: number, signal?: AbortSignal): Promise<Record<string, unknown> | undefined> {
   try {
-    const res = await fetch(`${colibriBase()}/health`, { signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(5000)]) : AbortSignal.timeout(5000) });
+    const res = await fetch(`http://127.0.0.1:${port}/health`, { signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(5000)]) : AbortSignal.timeout(5000) });
     if (!res.ok) return undefined;
     return (await res.json().catch(() => ({}))) as Record<string, unknown>;
   } catch {
@@ -279,18 +325,25 @@ async function healthy(signal?: AbortSignal): Promise<Record<string, unknown> | 
 }
 
 /** The engine's queue counters (GET /health), when it runs. */
-export const engineHealth = () => (loadedModel() ? healthy() : Promise.resolve(undefined));
+export const engineHealth = (model?: string) => {
+  const l = loadedModel(model);
+  return l ? healthy(l.port) : Promise.resolve(undefined);
+};
 
-function resetIdle(keepAlive?: string) {
-  if (idle) clearTimeout(idle);
+const isPinned = (model: string) => (colibriSettings().pinned ?? []).includes(model);
+
+function resetIdle(e: Engine, keepAlive?: string) {
+  if (e.idle) clearTimeout(e.idle);
+  // Pinned models stay loaded until room is needed.
+  if (isPinned(e.model)) return;
   const ms = keepAliveMs(keepAlive) ?? colibriSettings().keepAliveMin * 60_000;
   if (ms <= 0) return;
-  idle = setTimeout(() => {
+  e.idle = setTimeout(() => {
     // Never in the middle of an answer: try again later while it is busy.
-    if (active > 0) return resetIdle(keepAlive);
-    void stopEngine();
+    if (e.active > 0) return resetIdle(e, keepAlive);
+    void stopEngine(e.model).then(() => rewarmPinned());
   }, ms);
-  idle.unref();
+  e.idle.unref();
 }
 
 /** "30m", "2h", "90s", "-1" (forever) like Ollama's keep_alive; undefined when not given. */
@@ -311,33 +364,55 @@ async function kill(p: ChildProcess) {
   clearTimeout(t);
 }
 
-/** Unloads the model (stops the engine); it starts again on the next call. */
-export function stopEngine(): Promise<void> {
+async function drop(e: Engine) {
+  if (e.idle) clearTimeout(e.idle);
+  if (engines.get(e.model) === e) engines.delete(e.model);
+  await kill(e.proc);
+}
+
+/** Unloads one model (or every model); it starts again on the next call. */
+export function stopEngine(model?: string): Promise<void> {
   return serial(async () => {
-    if (idle) clearTimeout(idle);
-    const p = proc;
-    proc = undefined;
-    current = undefined;
-    if (p) await kill(p);
+    for (const e of [...engines.values()]) if (!model || e.model === model) await drop(e);
   });
+}
+
+/** Pinned models that were pushed out come back once there is room (after a big model was unloaded). */
+let rewarming = false;
+function rewarmPinned() {
+  if (rewarming) return;
+  const missing = (colibriSettings().pinned ?? []).filter((m) => !loadedModel(m) && isInstalled(m));
+  if (!missing.length) return;
+  rewarming = true;
+  void (async () => {
+    try {
+      for (const m of missing) await warmModel(m).catch(() => {});
+    } finally {
+      rewarming = false;
+    }
+  })();
 }
 
 /** How long a model may take to load: the dense part is read from disk (a 744B model reads ~10 GB). */
 const LOAD_TIMEOUT_MS = 30 * 60_000;
 
-/** Calls using the engine right now: a model switch waits until they are done. */
-let active = 0;
+/** RAM to give a model: all of it in RAM when it fits (its files plus 2 GB to work), else everything there is. */
+const ramWant = (m: InstalledModel, need: number | undefined, budget: number) => Math.min(budget, Math.max(need ?? 0, m.sizeBytes + 2e9));
 
 /**
- * Makes sure `model` is the one being served, starting or switching the engine when needed, and holds it until
- * release() (a switch to another model waits for every holder). loaded: it had to load (the caller shows "loading").
+ * Makes sure `model` is served, starting its engine when needed (and unloading others to make room), and holds it
+ * until release(): an engine with holders is never stopped. loaded: it had to load (the caller shows "loading").
  */
 export function acquire(model: string, opts: { keepAlive?: string; signal?: AbortSignal } = {}): Promise<{ loaded: boolean; release: () => void }> {
   return serial(async () => {
     if (!colibriAvailable()) throw new Error('Colibri is not in this HiveMind image');
     let loaded = false;
-    const live = loadedModel();
-    if (live?.model !== model || live.state !== 'ready') {
+    let e = engines.get(model);
+    if (e && (!alive(e) || e.state !== 'ready')) {
+      await drop(e);
+      e = undefined;
+    }
+    if (!e) {
       const found = installedModels().find((m) => m.model === model);
       if (!found) throw new Error(`Colibri has no model "${model}" (Settings → Colibri → Download)`);
       const budget = ramBudgetBytes();
@@ -346,30 +421,38 @@ export function acquire(model: string, opts: { keepAlive?: string; signal?: Abor
         throw new Error(
           `${model} needs ${Math.round(need / 1e9)} GB of RAM and colibri has ${Math.round(budget / 1e9)} GB here. Give HiveMind more memory (--memory in its Docker template) or pick a smaller model.`,
         );
-      // Never cut off an answer of the model that is loaded now.
-      while (active > 0) {
+      const want = ramWant(found, need, budget);
+      const most = Math.max(1, colibriSettings().maxEngines);
+      // Make room: unload the model used longest ago (pinned ones last), waiting for any that is answering.
+      for (;;) {
+        const others = [...engines.values()].filter(alive);
+        const used = others.reduce((n, o) => n + o.ramBytes, 0);
+        if (others.length < most && used + want <= budget) break;
+        const idle = others.filter((o) => o.active === 0).sort((a, b) => Number(isPinned(a.model)) - Number(isPinned(b.model)) || a.lastUsed - b.lastUsed);
+        if (idle[0]) {
+          await drop(idle[0]);
+          continue;
+        }
         if (opts.signal?.aborted) throw new Error('Cancelled');
         await new Promise((r) => setTimeout(r, 300));
       }
-      if (proc) {
-        if (idle) clearTimeout(idle);
-        const p = proc;
-        proc = undefined;
-        current = undefined;
-        await kill(p);
-      }
-      loaded = await start(found, budget, opts);
+      for (const dead of [...engines.values()].filter((o) => !alive(o))) engines.delete(dead.model);
+      e = await start(found, want, opts);
+      loaded = true;
     }
-    active++;
-    if (idle) clearTimeout(idle);
+    const held = e;
+    held.active++;
+    held.lastUsed = Date.now();
+    if (held.idle) clearTimeout(held.idle);
     let done = false;
     return {
       loaded,
       release: () => {
         if (done) return;
         done = true;
-        active = Math.max(0, active - 1);
-        if (!active && loadedModel()) resetIdle(opts.keepAlive);
+        held.active = Math.max(0, held.active - 1);
+        held.lastUsed = Date.now();
+        if (!held.active && engines.get(held.model) === held && alive(held)) resetIdle(held, opts.keepAlive);
       },
     };
   });
@@ -380,14 +463,22 @@ export async function warmModel(model: string, keepAlive?: string) {
   (await acquire(model, { keepAlive })).release();
 }
 
-async function start(m: InstalledModel, budget: number, opts: { keepAlive?: string; signal?: AbortSignal }, retried = false, cpuOnly = false, slots?: number): Promise<boolean> {
+function freePort(): number {
+  const taken = new Set([...engines.values()].map((e) => e.port));
+  for (let i = 0; i < 32; i++) if (!taken.has(state.port + i)) return state.port + i;
+  throw new Error('Colibri: no free port for another engine');
+}
+
+async function start(m: InstalledModel, ramBytes: number, opts: { keepAlive?: string; signal?: AbortSignal }, retried = false, cpuOnly = false, slots?: number): Promise<Engine> {
   const s = { ...colibriSettings(), ...(slots && { kvSlots: slots }) };
-  const gpu = !cpuOnly && gpuUsable();
+  // One engine on the GPU at a time: the others answer from the CPU.
+  const gpu = !cpuOnly && gpuUsable() && ![...engines.values()].some((o) => o.gpu && alive(o));
+  const port = freePort();
   const launch = (state.launcher ?? defaultLauncher)({
     model: m.model,
     dir: m.dir,
-    port: state.port,
-    ramGb: Math.floor(budget / 1e9),
+    port,
+    ramGb: Math.floor(ramBytes / 1e9),
     gpu,
     vramGb: s.vramGb,
     ctx: s.ctx,
@@ -395,50 +486,53 @@ async function start(m: InstalledModel, budget: number, opts: { keepAlive?: stri
     engineDir: gpu ? cudaDir() : cpuDir(),
   });
   mkdirSync(join(config.dataDir, 'colibri'), { recursive: true });
-  // The log restarts with each model, so it shows this engine's start and not last week's.
-  writeFileSync(logFile(), `--- ${new Date().toISOString()} ${m.model} (${gpu ? 'CUDA' : 'CPU'}, ${Math.floor(budget / 1e9)} GB RAM)\n`);
-  const out = openSync(logFile(), 'a');
+  // The log restarts with each start, so it shows this engine's start and not last week's.
+  const file = logFileOf(m.model);
+  lastLog = file;
+  writeFileSync(file, `--- ${new Date().toISOString()} ${m.model} (${gpu ? 'CUDA' : 'CPU'}, ${Math.floor(ramBytes / 1e9)} GB RAM, port ${port})\n`);
+  const out = openSync(file, 'a');
   const child = spawn(launch.cmd, launch.args, { env: { ...process.env, ...launch.env }, stdio: ['ignore', out, out] });
   closeSync(out);
-  proc = child;
-  current = { model: m.model, state: 'starting', since: Date.now(), gpu, kvSlots: s.kvSlots };
+  const e: Engine = { model: m.model, port, proc: child, state: 'starting', since: Date.now(), gpu, kvSlots: s.kvSlots, ramBytes, active: 0, lastUsed: Date.now() };
+  engines.set(m.model, e);
   let exited = false;
   child.once('exit', (code, sig) => {
     exited = true;
-    if (proc === child) {
-      proc = undefined;
-      current = undefined;
-      if (code && !sig) logError({ source: 'server', message: `Colibri stopped (exit code ${code}) while serving ${m.model}`, detail: logTail(15) });
+    if (engines.get(m.model) === e) {
+      engines.delete(m.model);
+      if (e.idle) clearTimeout(e.idle);
+      if (code && !sig && e.state === 'ready') logError({ source: 'server', message: `Colibri stopped (exit code ${code}) while serving ${m.model}`, detail: logTail(15, file) });
     }
   });
   const t0 = Date.now();
   while (Date.now() - t0 < LOAD_TIMEOUT_MS) {
     if (opts.signal?.aborted) {
-      await kill(child);
+      await drop(e);
       throw new Error('Cancelled');
     }
     if (exited) {
-      const tail = logTail(15);
+      if (engines.get(m.model) === e) engines.delete(m.model);
+      const tail = logTail(15, file);
       // A model family that keeps fewer conversations: start again with what it allows.
-      const most = tail.match(/supports at most (\d+) KV slot/i);
-      if (most && !slots) return start(m, budget, opts, retried, cpuOnly, Math.max(1, Number(most[1])));
+      const fewer = tail.match(/supports at most (\d+) KV slot/i);
+      if (fewer && !slots) return start(m, ramBytes, opts, retried, cpuOnly, Math.max(1, Number(fewer[1])));
       // The CUDA build has no engine for this model family (it did not compile for CUDA): the CPU one, this time.
-      if (gpu && !retried && /engine is not built/i.test(tail)) return start(m, budget, opts, true, true);
+      if (gpu && !retried && /engine is not built/i.test(tail)) return start(m, ramBytes, opts, true, true);
       // The CUDA build can't run here (no driver, missing library, a card it was not built for): the CPU build.
       if (gpu && !retried && /error while loading shared libraries|no CUDA-capable device|CUDA driver|cuda(Get|Set|Malloc|Init)|libcu/i.test(tail)) {
         state.cudaBroken = true;
         logError({ source: 'server', message: 'Colibri: the CUDA build would not start here, using the CPU build', detail: tail });
-        return start(m, budget, opts, true);
+        return start(m, ramBytes, opts, true);
       }
       throw new Error(`Colibri could not start ${m.model}: ${tail.split('\n').slice(-4).join(' ').slice(0, 600) || 'no output'}`);
     }
-    if (await healthy(opts.signal)) {
-      if (proc === child && current) current.state = 'ready';
-      return true;
+    if (await healthy(port, opts.signal)) {
+      e.state = 'ready';
+      return e;
     }
     await new Promise((r) => setTimeout(r, 1000));
   }
-  await kill(child);
+  await drop(e);
   throw new Error(`Colibri took more than ${LOAD_TIMEOUT_MS / 60_000} minutes to load ${m.model}`);
 }
 
@@ -447,8 +541,8 @@ async function start(m: InstalledModel, budget: number, opts: { keepAlive?: stri
  * last slot to themselves, a chat the slot of its conversation (its system prompt and first question). undefined
  * with one slot.
  */
-export function cacheSlot(kind: 'chat' | 'decide', key: string): number | undefined {
-  const slots = loadedModel()?.kvSlots ?? 1;
+export function cacheSlot(kind: 'chat' | 'decide', key: string, model?: string): number | undefined {
+  const slots = loadedModel(model)?.kvSlots ?? 1;
   if (slots <= 1) return undefined;
   if (kind === 'decide') return slots - 1;
   let h = 0;
@@ -469,6 +563,7 @@ export function builtEngines(): { cpu: string[]; cuda: string[] } {
 export async function colibriStatus() {
   const b = build();
   const live = loadedModel();
+  const all = loadedModels();
   return {
     available: colibriAvailable(),
     engines: state.launcher ? undefined : builtEngines(),
@@ -481,12 +576,13 @@ export async function colibriStatus() {
     containerLimitBytes: containerLimitBytes(),
     ramBudgetBytes: ramBudgetBytes(),
     loaded: live ? { model: live.model, state: live.state, since: new Date(live.since).toISOString(), gpu: live.gpu } : undefined,
-    health: live?.state === 'ready' ? await healthy() : undefined,
+    running: all.map((e) => ({ model: e.model, state: e.state, since: new Date(e.since).toISOString(), gpu: e.gpu, ramBytes: e.ramBytes, active: e.active, pinned: isPinned(e.model) })),
+    health: live?.state === 'ready' ? await healthy(live.port) : undefined,
     log: logTail(40),
     settings: colibriSettings(),
   };
 }
 
 process.once('exit', () => {
-  proc?.kill('SIGTERM');
+  for (const e of engines.values()) e.proc.kill('SIGTERM');
 });

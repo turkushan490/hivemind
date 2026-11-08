@@ -25,6 +25,7 @@ import { Clock, useRun } from '../run/state';
 import { PausePanel } from '../components/PausePanel';
 import { History, ReplayBar } from './Replay';
 import { useStored } from '../stored';
+import { useIsPhone } from '../phone';
 import { HiveEdge } from './HiveEdge';
 import { HiveNode, InputMic, RunViews, type HiveFlowNode } from './HiveNode';
 import { BuilderPanel } from './BuilderPanel';
@@ -432,6 +433,12 @@ function Editor({ active, onProblem, followRequest }: { active: boolean; onProbl
   };
 
   const selected = nodes.find((n) => n.selected);
+  // Phone: the block palette and the inspector open as bottom sheets over the workflow.
+  const phone = useIsPhone();
+  const [sheet, setSheet] = useState<'palette' | 'panel' | null>(null);
+  useEffect(() => {
+    if (phone && selected) setSheet('panel');
+  }, [phone, selected?.id]);
   const updateNode = (id: string, patch: { label?: string; config?: Partial<NodeConfig> }) =>
     setNodes((ns) =>
       ns.map((n) =>
@@ -504,10 +511,10 @@ function Editor({ active, onProblem, followRequest }: { active: boolean; onProbl
   }, [views, shownFinal, follow, replaying]);
 
   return (
-    <div className="flex h-[calc(100vh-88px)] min-h-[520px] flex-col overflow-hidden rounded-lg border border-[#30363d]">
+    <div className="flex h-[calc(100dvh-124px)] min-h-[420px] flex-col overflow-hidden rounded-lg border border-[#30363d] md:h-[calc(100dvh-88px)] md:min-h-[520px]">
       <div className="flex flex-wrap items-center gap-2 border-b border-[#30363d] bg-[#161b22] px-3 py-2">
         <input
-          className="input w-48 py-1 font-semibold"
+          className="input w-full py-1 font-semibold sm:w-48"
           value={doc.name}
           onChange={(e) => setDoc((d) => ({ ...d, name: e.target.value }))}
           aria-label="Canvas name"
@@ -656,7 +663,7 @@ function Editor({ active, onProblem, followRequest }: { active: boolean; onProbl
           </button>
         )}
         {watching && !replaying ? (
-          <div className="ml-auto flex min-w-[320px] flex-1 basis-[420px] items-center gap-2 overflow-hidden rounded-md border border-sky-700 bg-sky-950/40 px-3 py-1.5 text-sm">
+          <div className="ml-auto flex min-w-0 basis-full flex-1 items-center md:min-w-[320px] md:basis-[420px] gap-2 overflow-hidden rounded-md border border-sky-700 bg-sky-950/40 px-3 py-1.5 text-sm">
             <span className={`shrink-0 font-semibold ${run.running ? 'text-sky-200' : 'text-slate-300'}`}>{run.running ? '● Live' : 'Finished'}</span>
             <span className="min-w-0 flex-1 truncate text-slate-300" title={watching.title}>
               {watching.title}
@@ -674,7 +681,7 @@ function Editor({ active, onProblem, followRequest }: { active: boolean; onProbl
             </button>
           </div>
         ) : replaying ? (
-          <div className="ml-auto flex min-w-[320px] flex-1 basis-[420px] items-center gap-2 overflow-hidden rounded-md border border-violet-700 bg-violet-950/40 px-3 py-1.5 text-sm">
+          <div className="ml-auto flex min-w-0 basis-full flex-1 items-center md:min-w-[320px] md:basis-[420px] gap-2 overflow-hidden rounded-md border border-violet-700 bg-violet-950/40 px-3 py-1.5 text-sm">
             <span className="shrink-0 font-semibold text-violet-200">Replay</span>
             <span className="min-w-0 flex-1 truncate text-slate-300" title={replay.run!.question}>“{replay.run!.question}”</span>
             <button className="btn-ghost shrink-0" onClick={editCopy} title="Open this run’s canvas for editing">
@@ -685,14 +692,16 @@ function Editor({ active, onProblem, followRequest }: { active: boolean; onProbl
             </button>
           </div>
         ) : (
-        <div className="ml-auto flex min-w-[320px] flex-1 items-center gap-2">
-          <QuestionBox
-            value={question}
-            onChange={setQuestion}
-            onSubmit={() => !run.running && askWithAttachments()}
-            attachments={attachments}
-            placeholder="Ask this canvas a question… (📎 pictures, PDFs, files, audio; Shift+Enter for a new line)"
-          />
+        <div className="ml-auto flex min-w-0 basis-full flex-1 flex-wrap items-center gap-2 md:min-w-[320px] md:basis-auto md:flex-nowrap">
+          <div className="flex min-w-0 flex-1 basis-full md:basis-auto">
+            <QuestionBox
+              value={question}
+              onChange={setQuestion}
+              onSubmit={() => !run.running && askWithAttachments()}
+              attachments={attachments}
+              placeholder="Ask this canvas a question… (📎 pictures, PDFs, files, audio; Shift+Enter for a new line)"
+            />
+          </div>
           <MicButton size="sm" disabled={run.running} onText={(text) => setQuestion((question ? `${question} ` : '') + text)} />
           <label className="flex shrink-0 items-center gap-1.5 text-xs text-slate-400" title="The view glides to the block that is working">
             <input type="checkbox" checked={follow} onChange={(e) => setFollow(e.target.checked)} /> Follow
@@ -726,8 +735,21 @@ function Editor({ active, onProblem, followRequest }: { active: boolean; onProbl
 
       <Clock.Provider value={replaying ? replay.now : Date.now}>
       <div className="flex min-h-0 flex-1">
-        <aside className={`w-52 shrink-0 space-y-4 overflow-y-auto border-r border-[#30363d] bg-[#11161d] p-3 ${replaying ? 'pointer-events-none opacity-40' : ''}`}>
-          <div className="text-[11px] font-semibold tracking-wider text-slate-500 uppercase">Drag onto the workflow</div>
+        <aside
+          className={`${
+            phone
+              ? `fixed inset-x-0 bottom-14 z-40 max-h-[70dvh] rounded-t-xl border-t shadow-2xl ${sheet === 'palette' ? '' : 'hidden'}`
+              : 'w-52 shrink-0 border-r'
+          } space-y-4 overflow-y-auto border-[#30363d] bg-[#11161d] p-3 ${replaying ? 'pointer-events-none opacity-40' : ''}`}
+        >
+          <div className="flex items-center text-[11px] font-semibold tracking-wider text-slate-500 uppercase">
+            {phone ? 'Tap to add a block' : 'Drag onto the workflow'}
+            {phone && (
+              <button className="btn-ghost ml-auto px-3 py-2 text-sm normal-case" onClick={() => setSheet(null)}>
+                Close
+              </button>
+            )}
+          </div>
           {PALETTE.map((g) => (
           <div key={g.group} className="space-y-1.5">
             <div className="text-xs font-semibold text-slate-500">{g.group}</div>
@@ -741,7 +763,10 @@ function Editor({ active, onProblem, followRequest }: { active: boolean; onProbl
                     e.dataTransfer.setData('application/hivemind', kind);
                     e.dataTransfer.effectAllowed = 'move';
                   }}
-                  onClick={() => addNode(kind)}
+                  onClick={() => {
+                    addNode(kind);
+                    if (phone) setSheet(null);
+                  }}
                   title={m.description}
                   className="flex w-full cursor-grab items-center gap-2 rounded-lg border border-[#30363d] bg-[#161b22] px-2.5 py-2 text-left text-sm hover:border-slate-500 active:cursor-grabbing"
                 >
@@ -788,14 +813,30 @@ function Editor({ active, onProblem, followRequest }: { active: boolean; onProbl
             >
               <Background variant={BackgroundVariant.Dots} gap={22} size={1.2} color="#30363d" />
               <Controls showInteractive={false} />
-              <MiniMap pannable zoomable nodeColor={(n) => NODE_META[(n as HiveFlowNode).data.kind]?.color ?? '#444'} maskColor="rgba(13,17,23,0.7)" />
+              {!phone && <MiniMap pannable zoomable nodeColor={(n) => NODE_META[(n as HiveFlowNode).data.kind]?.color ?? '#444'} maskColor="rgba(13,17,23,0.7)" />}
             </ReactFlow>
           </RunViews.Provider>
           </InputMic.Provider>
           {replaying && <ReplayBar replay={replay} />}
+          {phone && (
+            <div className="absolute right-2 bottom-2 z-10 flex gap-2">
+              {!replaying && (
+                <button className="btn min-h-11 px-4 shadow-lg" onClick={() => setSheet('palette')}>
+                  ＋ Block
+                </button>
+              )}
+              <button className="btn min-h-11 px-4 shadow-lg" onClick={() => setSheet('panel')}>
+                {selected ? 'Block settings' : 'Inspector'}
+              </button>
+            </div>
+          )}
         </div>
 
-        <aside className="flex w-96 shrink-0 flex-col border-l border-[#30363d] bg-[#11161d]">
+        <aside
+          className={`flex flex-col border-[#30363d] bg-[#11161d] ${
+            phone ? `fixed inset-x-0 bottom-14 z-40 h-[70dvh] rounded-t-xl border-t shadow-2xl ${sheet === 'panel' ? '' : 'hidden'}` : 'w-96 shrink-0 border-l'
+          }`}
+        >
           <div className="flex shrink-0 border-b border-[#30363d] text-sm">
             {(['inspector', 'builder'] as const).map((t) => (
               <button
@@ -806,6 +847,11 @@ function Editor({ active, onProblem, followRequest }: { active: boolean; onProbl
                 {t === 'inspector' ? 'Inspector' : '✨ Builder'}
               </button>
             ))}
+            {phone && (
+              <button className="px-4 py-2 text-slate-400" onClick={() => setSheet(null)} aria-label="Close">
+                ✕
+              </button>
+            )}
           </div>
           <div className={`min-h-0 flex-1 overflow-y-auto ${panel === 'builder' ? 'hidden' : ''}`}>
           <Inspector

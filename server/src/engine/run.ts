@@ -3,6 +3,7 @@ import { NODES, type ChatContext, type NodeInput, type NodeServices } from '../n
 import type { DecisionRequest, DecisionResult } from '../providers/decisions.js';
 import type { ChatMessage, ProviderAdapter } from '../providers/types.js';
 import { callCost } from '../services/pricing.js';
+import { seesPictures } from '@hivemind/shared';
 import { loopsOf, validateGraph, type Loop } from './graph.js';
 import { itemLabel, listItems } from '../nodes/projects.js';
 
@@ -71,6 +72,8 @@ export interface EngineDeps {
   resume?: Checkpoint;
   /** Called after every finished block (and every For each item), to store the run's progress. */
   save?(cp: Checkpoint): void;
+  /** Settings → Pictures: the model that describes pictures for models that can't see (left out: none). */
+  pictureReader?(): Promise<ModelRef | undefined>;
 }
 
 /** A run's progress, stored as it goes, so it can go on after a restart instead of starting over. */
@@ -192,6 +195,32 @@ export function withImages(messages: ChatMessage[], readFile?: (path: string) =>
 
 const stripImages = (messages: ChatMessage[]): ChatMessage[] => messages.map(({ images, ...m }) => m);
 
+/** What the picture reader is asked for every picture. */
+export const READ_PICTURE =
+  'Describe this picture for someone who cannot see it, so they can answer questions about it. ' +
+  'Write down every bit of text in it exactly as written (code, error messages, labels, numbers), then describe what is shown: ' +
+  'layout, objects, people, colours, charts and anything unusual. Plain text, no preamble.';
+
+/** The picture links in the last user message. */
+export function pictureLinks(messages: ChatMessage[]): { all: string; name: string; path: string }[] {
+  const i = messages.map((m) => m.role).lastIndexOf('user');
+  if (i < 0) return [];
+  return [...messages[i].content.matchAll(IMAGE_LINK)].slice(0, 4).map((m) => ({ all: m[0], name: m[1] || m[2].split('/').pop()!, path: m[2] }));
+}
+
+/** Replaces the picture links in the last user message with what the reader wrote about each. */
+export function withDescriptions(messages: ChatMessage[], described: Map<string, string>, reader: string): ChatMessage[] {
+  const i = messages.map((m) => m.role).lastIndexOf('user');
+  if (i < 0) return messages;
+  const content = messages[i].content.replace(IMAGE_LINK, (all, name: string, path: string) => {
+    const d = described.get(path);
+    return d ? `[Picture "${name || path.split('/').pop()}", described by ${reader}:
+${d.trim()}
+]` : all;
+  });
+  return messages.map((m, j) => (j === i ? { ...m, content } : m));
+}
+
 /** Seconds one model call may take: the block's own (10 to 86400) wins over the run limit. */
 const maxSecondsOf = (node: CanvasNode, limits: RunLimits, provider?: { callSeconds?: number }) => {
   const n = node.config.maxSeconds;
@@ -247,6 +276,32 @@ export async function runGraph(
     for (const key of deps.resume.blocked) blocked.add(key);
   }
   const loopProgress = new Map<string, { results: string[]; ok: number }>(Object.entries(deps.resume?.loops ?? {}));
+  // Pictures the reader already described in this run (path → text): every block that can't see shares them.
+  const described = new Map<string, Promise<string | undefined>>();
+  // Models that refused pictures in this run although they looked like they could see.
+  const blind = new Set<string>();
+  /** The picture reader looks at one picture and writes what it sees (at most 5 minutes). */
+  const readPicture = async (path: string, reader: ModelRef): Promise<string | undefined> => {
+    const data = deps.services!.readFile!(decodeURIComponent(path));
+    if (data.length > 20 * 1024 * 1024) throw new Error('the picture is larger than 20 MB');
+    const p = await deps.resolve(reader.providerId);
+    const timer = callTimer(signal, 300);
+    let out = '';
+    try {
+      const it = p.adapter.stream(
+        { model: reader.model, messages: [{ role: 'user', content: READ_PICTURE, images: [{ data, ext: path.split('.').pop()!.toLowerCase() }] }], think: false, maxTokens: 1500, numCtx: p.local ? 8192 : undefined, keepAlive: '10m' },
+        timer.signal,
+      )[Symbol.asyncIterator]();
+      for (;;) {
+        const next = await Promise.race([it.next(), timer.stopped]);
+        if (next.done) break;
+        if (next.value.type === 'token') out += next.value.text;
+      }
+    } finally {
+      timer.clear();
+    }
+    return out.trim() || undefined;
+  };
   const allFiles: OutputFile[] = [];
   let cost = 0;
 
@@ -312,6 +367,30 @@ export async function runGraph(
 
       const call = async (messages: ChatMessage[], ref: ModelRef, think?: boolean, json?: boolean, noImages = false): Promise<string> => {
         const p = await deps.resolve(ref.providerId);
+        const asked = messages;
+        // A model that can't see gets the picture reader's description of each picture in place of the picture.
+        if (!noImages && node.config.pictures !== 'direct' && deps.services?.readFile && deps.pictureReader) {
+          const links = pictureLinks(messages);
+          if (links.length && (blind.has(`${ref.providerId}/${ref.model}`) || !seesPictures(ref.model, await p.modelInfo(ref.model).catch(() => undefined)))) {
+            const reader = await deps.pictureReader().catch(() => undefined);
+            if (reader && !(reader.providerId === ref.providerId && reader.model === ref.model) && allowed(reader)) {
+              deps.emit({ ...base, type: 'node_progress', note: `${ref.model} can't see pictures — ${reader.model} describes ${links.length === 1 ? 'the picture' : `${links.length} pictures`} first` });
+              const texts = new Map<string, string>();
+              for (const l of links) {
+                if (!described.has(l.path)) described.set(l.path, readPicture(l.path, reader).catch((err) => {
+                  deps.emit({ ...base, type: 'node_progress', note: `${reader.model} could not read ${l.name}: ${(err as Error).message.slice(0, 160)}` });
+                  return undefined;
+                }));
+                const d = await described.get(l.path)!;
+                if (d) texts.set(l.path, d);
+              }
+              if (texts.size) {
+                messages = withDescriptions(messages, texts, reader.model);
+                noImages = true;
+              }
+            }
+          }
+        }
         // Pictures in the question (attached in the question box) go with the message to models that can see.
         if (!noImages) messages = withImages(messages, deps.services?.readFile);
         const pictures = messages.some((m) => m.images?.length);
@@ -386,6 +465,13 @@ export async function runGraph(
           // A model that can't see refuses the pictures: ask once more with the text alone.
           if (pictures && !out) {
             timer.clear();
+            // With a picture reader: it describes the pictures instead, so the model still knows what is in them.
+            const key = `${ref.providerId}/${ref.model}`;
+            if (deps.pictureReader && node.config.pictures !== 'direct' && !blind.has(key)) {
+              blind.add(key);
+              deps.emit({ ...base, type: 'node_progress', note: `${ref.model} can't read images (${(err as Error).message.slice(0, 120)}) — the picture reader describes them` });
+              return call(asked, ref, think, json, false);
+            }
             deps.emit({ ...base, type: 'node_progress', note: `${ref.model} can't read images (${(err as Error).message.slice(0, 120)}) — asking with the text only` });
             return call(stripImages(messages), ref, think, json, true);
           }

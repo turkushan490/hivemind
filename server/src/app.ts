@@ -120,7 +120,7 @@ export async function buildApp(opts: { logger?: boolean; web?: boolean; onRoute?
       root: config.webDir,
       // Never cache the page itself, so after an update the browser loads the new script files.
       setHeaders: (res, path) => {
-        if (path.endsWith('.html')) res.setHeader('cache-control', 'no-cache');
+        if (path.endsWith('.html') || path.endsWith('sw.js') || path.endsWith('.webmanifest')) res.setHeader('cache-control', 'no-cache');
       },
     });
     // Single-page app: page routes get index.html; a missing file (old script after an update) is a real 404.

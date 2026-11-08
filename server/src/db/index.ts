@@ -325,6 +325,9 @@ export const MIGRATIONS: string[] = [
   -- A canvas an app installed and keeps up to date ("hivebot"); null once someone edits it by hand.
   ALTER TABLE canvases ADD COLUMN managed_by TEXT;
   `,
+  `
+  ALTER TABLE providers ADD COLUMN cpu_only INTEGER NOT NULL DEFAULT 0;
+  `,
 ];
 
 export const db = new DatabaseSync(join(config.dataDir, 'hivemind.db'));

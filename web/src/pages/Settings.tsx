@@ -1,4 +1,6 @@
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
+import { useIsPhone } from '../phone';
+import { PictureReaderPanel } from './PictureReader';
 import { useStored } from '../stored';
 import { ColibriPanel } from './Colibri';
 import { Models } from './Models';
@@ -23,6 +25,7 @@ const SECTIONS = {
   huggingface: 'Hugging Face',
   training: 'Training',
   limits: 'Run limits',
+  pictures: 'Pictures',
   skills: 'Skills',
   github: 'GitHub',
   users: 'Users',
@@ -40,22 +43,33 @@ export function Settings({ role, meId, active, onWizard }: { role: Role; meId: s
   const isAdmin = role === 'admin';
   const section: Section = stored in SECTIONS && shown(role, stored) ? stored : role === 'viewer' ? 'tokens' : 'providers';
   const panel = (s: Section, node: ReactNode) => shown(role, s) && <div hidden={section !== s}>{node}</div>;
+  // Phone: the sections as a list; a tap opens one full screen, Back returns to the list.
+  const phone = useIsPhone();
+  const [list, setList] = useState(true);
   return (
     <div className="flex flex-col gap-4 md:flex-row">
-      <nav className="flex shrink-0 gap-1 overflow-x-auto md:w-48 md:flex-col">
+      {phone && !list && (
+        <button className="btn-ghost -mb-2 min-h-11 self-start text-sm" onClick={() => setList(true)}>
+          ← Settings
+        </button>
+      )}
+      <nav className={`flex shrink-0 gap-1 md:w-48 md:flex-col ${phone ? (list ? 'flex-col' : 'hidden') : 'overflow-x-auto'}`}>
         {(Object.keys(SECTIONS) as Section[])
           .filter((s) => shown(role, s))
           .map((s) => (
             <button
               key={s}
-              onClick={() => setSection(s)}
-              className={`shrink-0 rounded-md px-3 py-2 text-left text-sm ${section === s ? 'bg-[#21262d] text-white' : 'text-slate-400 hover:text-white'}`}
+              onClick={() => {
+                setSection(s);
+                setList(false);
+              }}
+              className={`shrink-0 rounded-md px-3 text-left text-sm ${phone ? 'min-h-11 border border-[#30363d]' : 'py-2'} ${section === s ? 'bg-[#21262d] text-white' : 'text-slate-400 hover:text-white'}`}
             >
               {SECTIONS[s]}
             </button>
           ))}
       </nav>
-      <div className="min-w-0 flex-1">
+      <div className={`min-w-0 flex-1 ${phone && list ? 'hidden' : ''}`}>
         {/* All sections stay mounted, so switching never loses a search or a half-typed key. */}
         {panel('providers', <Providers isAdmin={isAdmin} />)}
         {panel('models', <Models active={active && section === 'models'} />)}
@@ -68,6 +82,7 @@ export function Settings({ role, meId, active, onWizard }: { role: Role; meId: s
         {panel('huggingface', <HuggingFacePanel isAdmin={isAdmin} active={active && section === 'huggingface'} />)}
         {panel('training', <TrainingPanel isAdmin={isAdmin} active={active && section === 'training'} />)}
         {panel('limits', <RunLimitsPanel isAdmin={isAdmin} active={active && section === 'limits'} />)}
+        {panel('pictures', <PictureReaderPanel isAdmin={isAdmin} active={active && section === 'pictures'} />)}
         {panel('skills', <SkillsPanel isAdmin={isAdmin} active={active && section === 'skills'} />)}
         {panel('github', <GithubPanel active={active && section === 'github'} />)}
         {panel('users', <Users meId={meId} active={active && section === 'users'} />)}

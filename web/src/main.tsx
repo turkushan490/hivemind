@@ -51,3 +51,8 @@ createRoot(document.getElementById('root')!).render(
     </CrashScreen>
   </StrictMode>,
 );
+
+// Installable app (PWA): the service worker only shows an offline page when the server can't be reached.
+if ('serviceWorker' in navigator && import.meta.env.PROD) {
+  window.addEventListener('load', () => void navigator.serviceWorker.register('/sw.js').catch(() => {}));
+}

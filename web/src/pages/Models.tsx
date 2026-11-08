@@ -3,6 +3,29 @@ import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { api } from '../api';
 import { toast } from '../notify';
 import { useStored } from '../stored';
+import { filePattern, folderName } from './ColibriLibrary';
+
+/** Ollama architecture families colibri's engines read from a GGUF (qwen36 engine: Qwen3/3.5/3.6/3.8, Flint, LFM3). */
+const COLIBRI_FAMILIES = /^(qwen3|qwen3moe|qwen35|qwen35moe|qwen3next|qwen4exp|lfm2|lfm2moe|lfm3|flint|olmoe|deepseek2|glm4moe)$/i;
+/** Why colibri can't run a model, or undefined when it can. */
+function colibriNo(m: ModelInfo): string | undefined {
+  if (!/^hf\.co\//i.test(m.model)) return 'Only models from Hugging Face (hf.co/...) can be imported into colibri';
+  if (!m.family) return undefined;
+  if (!COLIBRI_FAMILIES.test(m.family)) return `Colibri has no engine for ${m.family} models; it stays in Ollama`;
+  return undefined;
+}
+
+/** "Also run in colibri": the same GGUF from Hugging Face, imported into colibri (read in place, no conversion). */
+async function alsoInColibri(m: ModelInfo) {
+  const hit = m.model.match(/^hf\.co\/([^/]+\/[^:]+):(.+)$/i);
+  if (!hit) throw new Error('Not a Hugging Face model name');
+  const [, repo, quant] = hit;
+  const files = await api<HfFile[]>(`/api/hf/files?repo=${encodeURIComponent(repo)}`);
+  const f = files.find((x) => x.quant.toLowerCase() === quant.toLowerCase());
+  if (!f) throw new Error(`No ${quant} file found in ${repo}`);
+  await api('/api/colibri/import', { body: { repo, file: filePattern(f), name: folderName(repo, quant) } });
+  toast(`Importing ${repo} ${quant} into colibri: follow it in Settings → Colibri`, 'ok');
+}
 
 const size = (b?: number) => (b === undefined ? '' : b >= 1e9 ? `${(b / 1e9).toFixed(1)} GB` : `${Math.round(b / 1e6)} MB`);
 const count = (n: number) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${Math.round(n / 1e3)}k` : String(n));
@@ -45,6 +68,11 @@ export function Models({ active }: { active: boolean }) {
   const [vram, setVram] = useStored('models.vramGb', 16);
   const [installed, setInstalled] = useState<ModelInfo[]>([]);
   const [jobs, setJobs] = useState<PullJob[]>([]);
+  // Admins with colibri in the image get "Also run in colibri" on Hugging Face models.
+  const [colibri, setColibri] = useState(false);
+  useEffect(() => {
+    if (active) void api<{ available: boolean }>('/api/colibri/status', { quiet: true }).then((s) => setColibri(!!s.available), () => setColibri(false));
+  }, [active]);
 
   const host = hosts.find((h) => h.id === hostId) ?? hosts[0];
 
@@ -178,6 +206,16 @@ export function Models({ active }: { active: boolean }) {
             {/* Cloud models are only a few KB locally; no GPU label for those. */}
             {(m.sizeBytes ?? 0) > 50e6 ? <FitBadge bytes={m.sizeBytes} vram={vram} /> : null}
             <span className="w-16 text-right text-xs text-slate-400">{size(m.sizeBytes)}</span>
+            {colibri && /^hf\.co\//i.test(m.model) && (
+              <button
+                className="btn-ghost px-2 py-0.5 text-xs"
+                disabled={!!colibriNo(m)}
+                title={colibriNo(m) ?? 'Download the same GGUF into colibri too, so it can run there (experts on the GPU, the rest in RAM)'}
+                onClick={() => void alsoInColibri(m).catch((err) => toast((err as Error).message, 'error'))}
+              >
+                Also run in colibri
+              </button>
+            )}
             <button
               className="btn-ghost px-2 py-0.5 text-xs text-red-400"
               onClick={async () => {

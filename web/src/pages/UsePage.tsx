@@ -7,6 +7,7 @@ import { ExportRun } from '../components/ExportRun';
 import { ThumbsButton } from '../components/ThumbsButton';
 import { NODE_META } from '../canvas/meta';
 import { toast } from '../notify';
+import { useIsPhone } from '../phone';
 import { IDLE, STATE_LABEL, STATE_TEXT, useRun } from '../run/state';
 import { PausePanel } from '../components/PausePanel';
 import { useStored } from '../stored';
@@ -15,6 +16,7 @@ import { QuestionBox, useAttachments } from '../components/QuestionBox';
 
 /** The simple screen: pick a saved canvas, ask, get the answer. What a phone or Home Assistant user sees. */
 export function UsePage({ active, viewer, onProblem, onBuild }: { active: boolean; viewer?: boolean; onProblem: () => void; onBuild: () => void }) {
+  const phone = useIsPhone();
   const [canvases, setCanvases] = useState<Canvas[] | null>(null);
   const [canvasId, setCanvasId] = useStored('use.canvas', '');
   const [question, setQuestion] = useState('');
@@ -102,7 +104,7 @@ export function UsePage({ active, viewer, onProblem, onBuild }: { active: boolea
     );
 
   return (
-    <div className="mx-auto max-w-3xl space-y-4">
+    <div className={`mx-auto max-w-5xl space-y-4 ${phone ? 'pb-28' : ''}`}>
       <div className="flex gap-2 overflow-x-auto pb-1">
         {canvases.map((c) => (
           <button
@@ -120,7 +122,8 @@ export function UsePage({ active, viewer, onProblem, onBuild }: { active: boolea
       </div>
 
       {routed && <div className="hm-zap -mb-2 text-xs text-indigo-300">{routed}</div>}
-      <form onSubmit={ask} className="flex items-end gap-2">
+      {/* Phone: the question box sits at the bottom, like a chat app; answers show above it. */}
+      <form onSubmit={ask} className={`flex items-end gap-2 ${phone ? 'fixed inset-x-0 bottom-14 z-30 border-t border-[#30363d] bg-[#0d1117] p-2' : ''}`}>
         <QuestionBox
           big
           value={question}
@@ -128,7 +131,7 @@ export function UsePage({ active, viewer, onProblem, onBuild }: { active: boolea
           onSubmit={() => void ask()}
           attachments={attachments}
           placeholder={`Ask “${canvas?.name}”… (📎 pictures, PDFs, files, audio)`}
-          autoFocus
+          autoFocus={!phone}
         />
         <MicButton
           disabled={run.running}

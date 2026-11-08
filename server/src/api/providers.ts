@@ -1,4 +1,4 @@
-import { PROVIDER_PRESETS, type ModelInfo, type ProviderInfo, type ProviderKind } from '@hivemind/shared';
+import { PROVIDER_PRESETS, type ModelInfo, type ModelRef, type ProviderInfo, type ProviderKind } from '@hivemind/shared';
 import type { FastifyInstance } from 'fastify';
 import { decrypt, encrypt, newId } from '../crypto.js';
 import { db, getSetting, setSetting } from '../db/index.js';
@@ -43,6 +43,7 @@ interface ProviderRow {
   enabled: number;
   local: number;
   parallel: number;
+  cpu_only?: number;
 }
 
 const toInfo = (r: ProviderRow): ProviderInfo => ({
@@ -55,6 +56,7 @@ const toInfo = (r: ProviderRow): ProviderInfo => ({
   enabled: !!r.enabled,
   local: !!r.local,
   parallel: !!r.parallel,
+  cpuOnly: !!r.cpu_only,
   shared: r.owner_id === null,
 });
 
@@ -89,6 +91,7 @@ export function adapterFor(row: ProviderRow) {
     apiKey: row.api_key_enc ? decrypt(row.api_key_enc) : undefined,
     // ComfyUI: pictures pass through its temp folder unless the admin keeps a copy (Settings → Access).
     ...(row.kind === 'comfyui' && { keepImages: keepComfyCopy() }),
+    ...(!!row.cpu_only && { cpuOnly: true }),
   });
 }
 
@@ -110,6 +113,50 @@ async function modelsOf(row: ProviderRow, fresh = false): Promise<ModelInfo[]> {
   return models;
 }
 
+// ---- Picture reader: describes pictures for models that can't see (Settings → Pictures) ----
+
+const READER_KEY = 'picture.reader';
+/** Saved choice: a model, "off", or nothing (= pick the fastest local model that sees). */
+export function pictureReaderSetting(): ModelRef | 'off' | undefined {
+  try {
+    const v = JSON.parse(getSetting(READER_KEY) ?? 'null') as ModelRef | 'off' | null;
+    return v === 'off' || (v && typeof v === 'object' && v.providerId && v.model) ? v : undefined;
+  } catch {
+    return undefined;
+  }
+}
+export function savePictureReader(v: ModelRef | 'off' | null) {
+  setSetting(READER_KEY, JSON.stringify(v ?? null));
+  readerCache.clear();
+}
+
+/** Small and fast first: these read pictures well for their size. */
+const PREFERRED_READERS = [/gemma4:e2b/i, /gemma4:e4b/i, /qwen3\.5:[0-9.]+b/i, /gemma3:4b/i, /qwen2\.5vl:3b/i, /moondream/i];
+const readerCache = new Map<string, { at: number; ref?: ModelRef }>();
+
+/** The picture reader for this person: the saved one when they may use it, else the best local model that sees. */
+export async function pictureReaderFor(user: User): Promise<ModelRef | undefined> {
+  const saved = pictureReaderSetting();
+  if (saved === 'off') return undefined;
+  const access = allowedFor(user);
+  if (saved && usableRow(user, saved.providerId, access)?.enabled && access.model(saved.providerId, saved.model)) return saved;
+  const hit = readerCache.get(user.id);
+  if (hit && Date.now() - hit.at < 5 * 60_000) return hit.ref;
+  const seeing: ModelInfo[] = [];
+  for (const row of usableRows(user, access).filter((r) => r.kind === 'ollama' && r.enabled)) {
+    const list = await allowedModelsOf(row, access).catch(() => [] as ModelInfo[]);
+    seeing.push(...list.filter((m) => m.vision));
+  }
+  const rank = (m: ModelInfo) => {
+    const i = PREFERRED_READERS.findIndex((r) => r.test(m.model));
+    return i < 0 ? PREFERRED_READERS.length : i;
+  };
+  seeing.sort((a, b) => rank(a) - rank(b) || (a.sizeBytes ?? 1e12) - (b.sizeBytes ?? 1e12));
+  const ref = seeing[0] && { providerId: seeing[0].providerId, model: seeing[0].model };
+  readerCache.set(user.id, { at: Date.now(), ref });
+  return ref;
+}
+
 export function resolverFor(user: User) {
   return async (providerId: string): Promise<ResolvedProvider> => {
     const row = rowFor(user, providerId);
@@ -119,7 +166,8 @@ export function resolverFor(user: User) {
       adapter: adapterFor(row),
       local: !!row.local,
       // Parallel on: this server's models don't wait for each other. Colibri on the CPU holds no GPU.
-      exclusive: !!row.local && !row.parallel && (!isColibri(row.preset) || gpuUsable()),
+      // CPU only (an Ollama set to num_gpu 0) holds no GPU either.
+      exclusive: !!row.local && !row.parallel && !row.cpu_only && (!isColibri(row.preset) || gpuUsable()),
       // One GPU per machine: Ollama, ComfyUI and colibri on the same host share the lock.
       hostKey: gpuHostOf(row),
       // Colibri's giant models are slow: a block without its own limit gets the colibri one.
@@ -303,16 +351,17 @@ export function providerRoutes(app: FastifyInstance) {
   app.patch('/api/providers/:id', { preHandler: requireUser }, async (req, reply) => {
     const row = rowFor(req.user!, (req.params as { id: string }).id);
     if (!row || !canEdit(req.user!, row)) return reply.code(404).send({ error: 'Not found' });
-    const body = (req.body ?? {}) as { name?: string; baseUrl?: string; apiKey?: string; enabled?: boolean; parallel?: boolean };
+    const body = (req.body ?? {}) as { name?: string; baseUrl?: string; apiKey?: string; enabled?: boolean; parallel?: boolean; cpuOnly?: boolean };
     if (body.baseUrl !== undefined && !/^https?:\/\//.test(body.baseUrl)) return reply.code(400).send({ error: 'Base URL must start with http:// or https://' });
     if (body.baseUrl !== undefined && body.baseUrl.trim().replace(/\/+$/, '') !== row.base_url.replace(/\/+$/, '') && req.user!.role !== 'admin')
       return reply.code(403).send({ error: 'Only an admin can change the address of an AI server' });
-    db.prepare('UPDATE providers SET name = ?, base_url = ?, api_key_enc = ?, enabled = ?, parallel = ? WHERE id = ?').run(
+    db.prepare('UPDATE providers SET name = ?, base_url = ?, api_key_enc = ?, enabled = ?, parallel = ?, cpu_only = ? WHERE id = ?').run(
       body.name?.trim() || row.name,
       body.baseUrl?.trim() || row.base_url,
       body.apiKey ? encrypt(body.apiKey.trim()) : row.api_key_enc,
       body.enabled === undefined ? row.enabled : body.enabled ? 1 : 0,
       body.parallel === undefined ? row.parallel : body.parallel ? 1 : 0,
+      body.cpuOnly === undefined ? (row.cpu_only ?? 0) : body.cpuOnly ? 1 : 0,
       row.id,
     );
     modelCache.delete(row.id);

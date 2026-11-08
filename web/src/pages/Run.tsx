@@ -114,7 +114,7 @@ export function RunPage({ onProblem, active }: { onProblem: () => void; active: 
             <input type="checkbox" checked={review} onChange={(e) => setReview(e.target.checked)} /> Review round
           </label>
           <span className="text-slate-400">Judge:</span>
-          <select className="input w-auto" value={judge} onChange={(e) => setJudge(e.target.value)}>
+          <select className="input w-auto max-w-full min-w-0" value={judge} onChange={(e) => setJudge(e.target.value)}>
             <option value="">— pick judge —</option>
             {shown.map((m) => (
               <option key={key(m)} value={key(m)}>

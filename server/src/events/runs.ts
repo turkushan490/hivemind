@@ -254,6 +254,8 @@ export function startRun(opts: {
       resolve: opts.resolve,
       emit,
       limits: runLimits(),
+      // Loaded on demand: api/providers imports this module.
+      pictureReader: () => import('../api/providers.js').then((m) => m.pictureReaderFor(fileUser as Parameters<typeof m.pictureReaderFor>[0])),
       ...(opts.resume && { resume: opts.resume.checkpoint }),
       save: saveCheckpoint,
       lockLabel: source.includes(': ') ? source.slice(source.indexOf(': ') + 2) : (canvasName ?? source),

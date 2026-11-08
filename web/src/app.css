@@ -6,6 +6,8 @@
 
 html {
   color-scheme: dark;
+  /* Room for the scrollbar on every tab, so the frame doesn't jump between short and long pages. */
+  scrollbar-gutter: stable;
 }
 
 @layer components {

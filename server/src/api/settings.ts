@@ -6,6 +6,7 @@ import { homeAssistantConnection, homeAssistantSettings, saveHomeAssistantSettin
 import { saveSearchSettings, searchSettings, webSearch } from '../services/search.js';
 import { runLimits, saveRunLimits } from '../services/runLimits.js';
 import { requireAdmin, requireUser } from './auth.js';
+import { pictureReaderFor, pictureReaderSetting, savePictureReader } from './providers.js';
 import { memoryAllowed } from './scope.js';
 
 export function settingsRoutes(app: FastifyInstance) {
@@ -18,6 +19,23 @@ export function settingsRoutes(app: FastifyInstance) {
     } catch (err) {
       return reply.code((err as { statusCode?: number }).statusCode ?? 400).send({ error: (err as Error).message });
     }
+  });
+
+  // Settings → Pictures: who describes pictures for models that can't see. "auto" = the fastest local model that sees.
+  app.get('/api/settings/picture-reader', { preHandler: requireUser }, async (req) => {
+    const saved = pictureReaderSetting();
+    return { choice: saved ?? 'auto', using: saved === 'off' ? null : ((await pictureReaderFor(req.user!).catch(() => undefined)) ?? null) };
+  });
+
+  app.put('/api/settings/picture-reader', { preHandler: requireAdmin }, async (req, reply) => {
+    const { choice } = (req.body ?? {}) as { choice?: unknown };
+    if (choice === 'auto' || choice === 'off') savePictureReader(choice === 'off' ? 'off' : null);
+    else if (choice && typeof choice === 'object' && typeof (choice as { providerId?: unknown }).providerId === 'string' && typeof (choice as { model?: unknown }).model === 'string') {
+      const c = choice as { providerId: string; model: string };
+      savePictureReader({ providerId: c.providerId, model: c.model });
+    } else return reply.code(400).send({ error: 'choice must be "auto", "off" or { providerId, model }' });
+    const saved = pictureReaderSetting();
+    return { choice: saved ?? 'auto', using: saved === 'off' ? null : ((await pictureReaderFor(req.user!).catch(() => undefined)) ?? null) };
   });
 
   app.get('/api/settings/search', { preHandler: requireUser }, async () => searchSettings());

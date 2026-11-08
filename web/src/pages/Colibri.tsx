@@ -12,6 +12,8 @@ interface Settings {
   gpuHost?: string;
   ctx: number;
   kvSlots: number;
+  maxEngines: number;
+  pinned?: string[];
 }
 
 export interface Job {
@@ -37,6 +39,8 @@ interface Status {
   containerLimitBytes: number;
   ramBudgetBytes: number;
   loaded?: { model: string; state: 'starting' | 'ready'; since: string; gpu: boolean };
+  /** Every loaded model (several at once when they fit). */
+  running?: { model: string; state: 'starting' | 'ready'; since: string; gpu: boolean; ramBytes: number; active: number; pinned: boolean }[];
   health?: Record<string, number>;
   log: string;
   settings: Settings;
@@ -144,7 +148,8 @@ export function ColibriPanel({ active }: { active: boolean }) {
   const save = async () => {
     if (!form) return;
     try {
-      const next = await api<Settings>('/api/colibri/settings', { method: 'PUT', body: form });
+      const { pinned: _pinned, ...rest } = form;
+      const next = await api<Settings>('/api/colibri/settings', { method: 'PUT', body: rest });
       setForm(next);
       toast('Colibri settings saved (they apply the next time a model loads)', 'ok');
       await loadStatus();
@@ -193,23 +198,25 @@ export function ColibriPanel({ active }: { active: boolean }) {
         <p className="text-xs text-slate-500">
           More RAM: raise <code>--memory</code> in HiveMind&apos;s Docker template (Unraid: Edit → Extra Parameters) and restart it; this page reads the new limit by itself.
         </p>
-        <div className="flex flex-wrap items-center gap-2 rounded border border-[#30363d] p-2 text-sm">
-          {status.loaded ? (
-            <>
-              <span className={status.loaded.state === 'ready' ? 'text-emerald-300' : 'text-amber-300'}>{status.loaded.state === 'ready' ? 'Loaded' : 'Loading…'}</span>
-              <b>{status.loaded.model}</b>
-              <span className="text-xs text-slate-500">{status.loaded.gpu ? 'GPU + RAM' : 'CPU'}</span>
-              {status.health && (
+        <div className="space-y-1 rounded border border-[#30363d] p-2 text-sm">
+          {(status.running ?? []).length ? (
+            (status.running ?? []).map((e) => (
+              <div key={e.model} className="flex flex-wrap items-center gap-2">
+                <span className={e.state === 'ready' ? 'text-emerald-300' : 'text-amber-300'}>{e.state === 'ready' ? (e.active ? 'Answering' : 'Loaded') : 'Loading…'}</span>
+                <b className="break-all">{e.model}</b>
                 <span className="text-xs text-slate-500">
-                  {status.health.active ?? 0} answering, {status.health.queued ?? 0} waiting
+                  {e.gpu ? 'GPU + RAM' : 'CPU'} · {gb(e.ramBytes)} RAM{e.pinned ? ' · always loaded' : ''}
                 </span>
-              )}
-              <button className="btn ml-auto" disabled={!!busy} onClick={() => act('unload', () => api('/api/colibri/unload', { method: 'POST' }))}>
-                Unload
-              </button>
-            </>
+                <button className="btn ml-auto py-0.5 text-xs" disabled={!!busy || e.active > 0} onClick={() => act('unload', () => api('/api/colibri/unload', { body: { model: e.model } }))}>
+                  Unload
+                </button>
+              </div>
+            ))
           ) : (
-            <span className="text-slate-400">Nothing loaded. A model loads when a block uses it, and unloads after {status.settings.keepAliveMin} min without calls.</span>
+            <span className="text-slate-400">
+              Nothing loaded. A model loads when a block uses it, and unloads after {status.settings.keepAliveMin} min without calls. Up to {status.settings.maxEngines} stay loaded together when they fit in
+              the RAM.
+            </span>
           )}
         </div>
       </div>
@@ -222,7 +229,21 @@ export function ColibriPanel({ active }: { active: boolean }) {
             <span className="font-medium">{m.name}</span>
             {m.sizeBytes !== undefined && <span className="text-xs text-slate-500">{gb(m.sizeBytes)}</span>}
             <span className="ml-auto flex gap-2">
-              <button className="btn" disabled={!!busy || status.loaded?.model === m.model} onClick={() => act(`load ${m.model}`, () => api('/api/colibri/load', { body: { model: m.model } }))}>
+              <label className="flex items-center gap-1 text-xs text-slate-400" title="Stays loaded (no unload timer) and comes back after a bigger model pushed it out">
+                <input
+                  type="checkbox"
+                  checked={(status.settings.pinned ?? []).includes(m.model)}
+                  disabled={!!busy}
+                  onChange={(e) => {
+                    const pinned = new Set(status.settings.pinned ?? []);
+                    if (e.target.checked) pinned.add(m.model);
+                    else pinned.delete(m.model);
+                    void act('pin', () => api('/api/colibri/settings', { method: 'PUT', body: { pinned: [...pinned] } }));
+                  }}
+                />
+                always loaded
+              </label>
+              <button className="btn" disabled={!!busy || !!status.running?.some((e) => e.model === m.model)} onClick={() => act(`load ${m.model}`, () => api('/api/colibri/load', { body: { model: m.model } }))}>
                 {busy === `load ${m.model}` ? 'Loading…' : 'Load now'}
               </button>
               <button
@@ -327,6 +348,10 @@ export function ColibriPanel({ active }: { active: boolean }) {
             <label className="space-y-1">
               <span className="text-slate-400">Conversations kept in memory (1–16): each keeps its prompt, so a repeat answers faster</span>
               <input className="input" type="number" min={1} max={16} value={form.kvSlots} onChange={(e) => setForm({ ...form, kvSlots: Number(e.target.value) })} />
+            </label>
+            <label className="space-y-1">
+              <span className="text-slate-400">Models loaded at once (1–8): they share the RAM; the one used longest ago makes room</span>
+              <input className="input" type="number" min={1} max={8} value={form.maxEngines} onChange={(e) => setForm({ ...form, maxEngines: Number(e.target.value) })} />
             </label>
             <label className="space-y-1 sm:col-span-2">
               <span className="text-slate-400">GPU queue: the machine of the Ollama/ComfyUI that use the same GPU (empty = the first Ollama)</span>

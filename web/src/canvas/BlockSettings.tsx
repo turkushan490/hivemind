@@ -31,7 +31,7 @@ export function BlockSettings(p: Props) {
 }
 
 const KEEP_OPTIONS: [string, string][] = [
-  ['', 'Ollama default'],
+  ['', 'Default (Ollama 5 min, colibri 30 min)'],
   ['5m', '5 minutes'],
   ['30m', '30 minutes'],
   ['1h', '1 hour'],
@@ -53,7 +53,8 @@ function KeepLoaded(p: Props) {
         {c.keepAlive && !KEEP_OPTIONS.some(([v]) => v === c.keepAlive) && <option value={c.keepAlive}>{c.keepAlive}</option>}
       </select>
       <span className="text-xs text-slate-500">
-        Local (Ollama) models only, also the Auto model's decider. Longer keeps the next answer fast but holds GPU memory that ComfyUI or training may want.
+        Local models (Ollama and colibri), also the Auto model's decider. Longer keeps the next answer fast but holds memory that ComfyUI or training may want.
+        Colibri models marked “always loaded” (Settings → Colibri) stay loaded whatever this says.
       </span>
     </label>
   );
@@ -140,7 +141,19 @@ function ModelOptions(p: Props) {
             ))}
           </select>
           <span className={`text-xs ${c.numCtx && c.numCtx > 32768 ? 'text-amber-300' : 'text-slate-500'}`}>
-            Local (Ollama) models only. More context fits longer prompts but needs more GPU memory (VRAM); too little cuts the prompt off silently.
+            Ollama models only (colibri sets its context in Settings → Colibri). More context fits longer prompts but needs more GPU memory (VRAM); too little cuts
+            the prompt off silently.
+          </span>
+        </label>
+      )}
+      {p.kind === 'llm' && (
+        <label className="flex items-start gap-2 text-xs text-slate-300">
+          <input type="checkbox" className="mt-0.5" checked={c.pictures === 'direct'} onChange={(e) => p.onChange({ pictures: e.target.checked ? 'direct' : undefined })} />
+          <span>
+            <span className="font-semibold">Send pictures straight to this model</span>
+            <span className="block text-slate-500">
+              Off: a model that can&apos;t see gets the picture reader&apos;s description instead (Settings → Pictures). On: the picture always goes to this model itself.
+            </span>
           </span>
         </label>
       )}

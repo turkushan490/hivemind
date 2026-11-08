@@ -190,6 +190,27 @@ function ProviderCard(props: {
                 </span>
               </label>
             )}
+            {p.local && (p.kind === 'ollama' || (p.kind === 'decision' && p.preset.startsWith('ollama'))) && (
+              <label className="flex items-start gap-2 rounded-md border border-[#30363d] px-2 py-1.5 text-xs">
+                <input
+                  type="checkbox"
+                  className="mt-0.5"
+                  checked={!!p.cpuOnly}
+                  onChange={async (e) => {
+                    await api(`/api/providers/${p.id}`, { method: 'PATCH', body: { cpuOnly: e.target.checked } });
+                    toast(e.target.checked ? 'This server now runs its models on the CPU' : 'This server uses the GPU again', 'ok');
+                    props.onChanged();
+                  }}
+                />
+                <span>
+                  <span className="font-medium text-slate-200">CPU only</span>
+                  <span className="block text-slate-500">
+                    Its models run on the processor and never wait for the GPU, so they can answer while the GPU is busy (for example Jev deciding while colibri or
+                    ComfyUI holds the GPU). Slower per word than the GPU for big models.
+                  </span>
+                </span>
+              </label>
+            )}
             {tested[p.id] && (
               <div className="hm-pop space-y-1 rounded-md border border-indigo-900/60 bg-indigo-950/20 p-2">
                 <p className="text-[11px] text-slate-400">Spam example from the Jev guide (a scam comment):</p>

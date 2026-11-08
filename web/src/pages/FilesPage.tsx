@@ -64,8 +64,8 @@ export function FilesPage({ active, isAdmin = false }: { active: boolean; isAdmi
   const shown = files.filter((f) => f.path.toLowerCase().includes(q.toLowerCase()) && (!isAdmin || !owner || (owner === '-' ? !f.owner : f.owner === owner)));
 
   return (
-    <div className="grid gap-4 lg:grid-cols-[1fr_1.2fr]">
-      <div className="space-y-3">
+    <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1fr_1.2fr]">
+      <div className="min-w-0 space-y-3">
         <label
           onDragOver={(e) => {
             e.preventDefault();
@@ -81,7 +81,7 @@ export function FilesPage({ active, isAdmin = false }: { active: boolean; isAdmi
           <span className="mt-1 text-xs text-slate-500">Stored in appdata/hivemind/files · what blocks save goes to outputs/ · only you see your files{isAdmin ? ' (admins see all)' : ''}</span>
         </label>
         <div className="flex gap-2">
-          <input className="input" placeholder={`Search ${files.length} files…`} value={q} onChange={(e) => setQ(e.target.value)} />
+          <input className="input min-w-0" placeholder={`Search ${files.length} files…`} value={q} onChange={(e) => setQ(e.target.value)} />
           {isAdmin && (
             <select className="input w-auto" value={owner} onChange={(e) => setOwner(e.target.value)} title="Owner">
               <option value="">Everyone</option>

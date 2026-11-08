@@ -26,6 +26,8 @@ export interface LibModel {
   catalog?: string;
   gguf?: string;
   convert?: boolean;
+  /** A family in many sizes: one button per size, each searching its own GGUF files (Q4 size in GB for the fit label). */
+  sizes?: { label: string; query: string; gb: number }[];
   speed?: string;
   license?: string;
 }
@@ -103,6 +105,16 @@ export const LIBRARY: LibModel[] = [
     engine: 'qwen36',
     hf: 'Qwen',
     gguf: 'Qwen3 GGUF',
+    sizes: [
+      { label: '0.6B', query: 'Qwen3-0.6B GGUF', gb: 0.5 },
+      { label: '1.7B', query: 'Qwen3-1.7B GGUF', gb: 1.1 },
+      { label: '4B', query: 'Qwen3-4B GGUF', gb: 2.5 },
+      { label: '8B', query: 'Qwen3-8B GGUF', gb: 5 },
+      { label: '14B', query: 'Qwen3-14B GGUF', gb: 9 },
+      { label: '32B', query: 'Qwen3-32B GGUF', gb: 20 },
+      { label: '30B-A3B', query: 'Qwen3-30B-A3B GGUF', gb: 18.6 },
+      { label: '235B-A22B', query: 'Qwen3-235B-A22B GGUF', gb: 142 },
+    ],
   },
   {
     id: 'olmoe',

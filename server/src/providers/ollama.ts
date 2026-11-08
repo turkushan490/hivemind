@@ -16,7 +16,7 @@ export function ollamaAdapter(cfg: ProviderConfig): ProviderAdapter {
       const res = await fetch(`${base}/api/tags`, { signal: AbortSignal.timeout(20_000) });
       await checkResponse(res, 'Ollama /api/tags');
       const data = (await res.json()) as {
-        models?: { name: string; size?: number; modified_at?: string; capabilities?: string[]; details?: { parameter_size?: string; quantization_level?: string } }[];
+        models?: { name: string; size?: number; modified_at?: string; capabilities?: string[]; details?: { parameter_size?: string; quantization_level?: string; family?: string } }[];
       };
       // Decision models can't chat: they are listed under the Ollama decision models provider.
       return (data.models ?? []).filter((m) => !m.capabilities?.includes('decision')).map((m) => ({
@@ -27,6 +27,8 @@ export function ollamaAdapter(cfg: ProviderConfig): ProviderAdapter {
         sizeBytes: m.size,
         quant: m.details?.quantization_level,
         modifiedAt: m.modified_at,
+        ...(m.capabilities && { vision: m.capabilities.includes('vision') }),
+        ...(m.details?.family && { family: m.details.family }),
       }));
     },
 
@@ -51,7 +53,7 @@ export function ollamaAdapter(cfg: ProviderConfig): ProviderAdapter {
         method: 'POST',
         signal: AbortSignal.timeout(300_000),
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ model, prompt: '', keep_alive: keepAlive(keep) ?? '30m' }),
+        body: JSON.stringify({ model, prompt: '', keep_alive: keepAlive(keep) ?? '30m', ...(cfg.cpuOnly && { options: { num_gpu: 0 } }) }),
       });
       await checkResponse(res, `Ollama load ${model}`);
     },
@@ -115,6 +117,8 @@ export function ollamaAdapter(cfg: ProviderConfig): ProviderAdapter {
               ...(req.temperature !== undefined && { temperature: req.temperature }),
               ...(req.maxTokens !== undefined && { num_predict: req.maxTokens }),
               ...(req.numCtx !== undefined && { num_ctx: req.numCtx }),
+              // CPU only: no layers on the GPU.
+              ...(cfg.cpuOnly && { num_gpu: 0 }),
             },
           }),
         });

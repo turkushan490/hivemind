@@ -65,6 +65,8 @@ export interface ProviderConfig {
   apiKey?: string;
   /** ComfyUI: save pictures in its output folder too (SaveImage); off, they only pass through its temp folder (PreviewImage). */
   keepImages?: boolean;
+  /** Ollama: run on the CPU only (num_gpu 0). */
+  cpuOnly?: boolean;
 }
 
 export interface ProviderAdapter {

@@ -14,6 +14,7 @@ import { Stats } from './pages/Stats';
 import { SetupWizard } from './pages/SetupWizard';
 import { UsePage } from './pages/UsePage';
 import { useStored } from './stored';
+import { useIsPhone } from './phone';
 import { LabPage } from './lab/LabPage';
 
 interface Me {
@@ -26,6 +27,8 @@ const TABS = { use: 'Use', canvas: 'Workflow', projects: 'Projects', files: 'Fil
 type Tab = keyof typeof TABS;
 /** Viewers only use canvases. */
 const VIEWER_TABS: Tab[] = ['use', 'activity', 'settings', 'problems'];
+/** Phone: these four sit in the bottom bar; the rest are under "More". */
+const PHONE_TABS: Tab[] = ['use', 'canvas', 'activity', 'settings'];
 
 export function App() {
   const [me, setMe] = useState<Me | null | undefined>(undefined);
@@ -43,6 +46,8 @@ export function App() {
   const [serverDown, setServerDown] = useState(false);
   const [wizard, setWizard] = useState(false);
   const [build, setBuild] = useState<{ version: string; release: string }>();
+  const phone = useIsPhone();
+  const [more, setMore] = useState(false);
 
   useEffect(() => {
     api<{ version: string; release: string }>('/api/health', { quiet: true }).then(setBuild).catch(() => {});
@@ -97,6 +102,11 @@ export function App() {
     </div>
   );
 
+  const logout = async () => {
+    await api('/api/auth/logout', { method: 'POST' });
+    setMe(null);
+  };
+
   if (me === undefined) return banner || null;
   if (!me)
     return (
@@ -110,47 +120,43 @@ export function App() {
   return (
     <>
       {banner}
-      <div className={`mx-auto p-4 ${tab === 'canvas' ? 'max-w-none' : 'max-w-7xl'}`}>
-        <header className="mb-4 flex flex-wrap items-center gap-3">
-          <img src="/icon.svg" className="h-8 w-8" alt="" />
-          <h1 className="text-xl font-semibold">HiveMind</h1>
+      {/* Every tab has the same full-width frame, so nothing jumps when you switch. */}
+      <div className={`mx-auto max-w-none p-2 sm:p-4 ${phone ? 'pb-20' : ''}`}>
+        <header className="mb-3 flex flex-wrap items-center gap-2 sm:mb-4 sm:gap-3">
+          <img src="/icon.svg" className="h-7 w-7 sm:h-8 sm:w-8" alt="" />
+          <h1 className="text-lg font-semibold sm:text-xl">HiveMind</h1>
           {build && (
             <span className="rounded bg-amber-500/15 px-1.5 py-0.5 text-xs font-medium text-amber-300" title={`Commit ${build.version.slice(0, 7)}`}>
               Beta · v{build.release}
             </span>
           )}
-          <nav className="ml-4 flex gap-1">
-            {(Object.keys(TABS) as Tab[]).filter(allowed).map((t) => (
-              <button
-                key={t}
-                onClick={() => setTab(t)}
-                className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm ${tab === t ? 'bg-[#21262d] text-white' : 'text-slate-400 hover:text-white'}`}
-              >
-                {TABS[t]}
-                {t === 'problems' && unseen > 0 && <span className="rounded-full bg-red-600 px-1.5 text-xs font-semibold text-white">{unseen}</span>}
-                {t === 'activity' && waiting > 0 && (
-                  <span className="rounded-full bg-orange-500 px-1.5 text-xs font-semibold text-white" title="Runs waiting for you at a Pause block">
-                    {waiting}
-                  </span>
-                )}
-              </button>
-            ))}
-          </nav>
+          {!phone && (
+            <nav className="ml-2 flex min-w-0 flex-1 gap-0.5 overflow-x-auto [scrollbar-width:none] 2xl:ml-4 2xl:gap-1">
+              {(Object.keys(TABS) as Tab[]).filter(allowed).map((t) => (
+                <button
+                  key={t}
+                  onClick={() => setTab(t)}
+                  className={`flex shrink-0 items-center gap-1.5 rounded-md px-2 py-1.5 text-sm 2xl:px-3 ${tab === t ? 'bg-[#21262d] text-white' : 'text-slate-400 hover:text-white'}`}
+                >
+                  {TABS[t]}
+                  <Badge t={t} unseen={unseen} waiting={waiting} />
+                </button>
+              ))}
+            </nav>
+          )}
           <span className="ml-auto" />
           {me.role !== 'viewer' && <MemoryButton />}
-          <span className="text-sm text-slate-400" title={`Role: ${me.role}`}>
-            {me.username}
-            {me.role !== 'user' && <span className="ml-1.5 rounded bg-[#21262d] px-1.5 py-0.5 text-xs text-slate-400">{me.role}</span>}
-          </span>
-          <button
-            className="btn-ghost"
-            onClick={async () => {
-              await api('/api/auth/logout', { method: 'POST' });
-              setMe(null);
-            }}
-          >
-            Log out
-          </button>
+          {!phone && (
+            <span className="hidden text-sm text-slate-400 2xl:inline" title={`Role: ${me.role}`}>
+              {me.username}
+              {me.role !== 'user' && <span className="ml-1.5 rounded bg-[#21262d] px-1.5 py-0.5 text-xs text-slate-400">{me.role}</span>}
+            </span>
+          )}
+          {!phone && (
+            <button className="btn-ghost" onClick={logout}>
+              Log out
+            </button>
+          )}
         </header>
         {opened.has('use') && (
           <div hidden={tab !== 'use'}>
@@ -211,8 +217,80 @@ export function App() {
           </div>
         )}
       </div>
+      {phone && (
+        <>
+          {more && <div className="fixed inset-0 z-40 bg-black/50" onClick={() => setMore(false)} />}
+          {more && (
+            <div className="fixed inset-x-0 bottom-16 z-50 mx-2 grid grid-cols-2 gap-2 rounded-xl border border-[#30363d] bg-[#161b22] p-3 shadow-2xl">
+              {(Object.keys(TABS) as Tab[])
+                .filter((t) => allowed(t) && !PHONE_TABS.includes(t))
+                .map((t) => (
+                  <button
+                    key={t}
+                    className={`flex min-h-11 items-center gap-2 rounded-lg px-3 text-left text-sm ${tab === t ? 'bg-[#21262d] text-white' : 'text-slate-300'}`}
+                    onClick={() => {
+                      setTab(t);
+                      setMore(false);
+                    }}
+                  >
+                    {TABS[t]}
+                    <Badge t={t} unseen={unseen} waiting={waiting} />
+                  </button>
+                ))}
+              <div className="col-span-2 flex items-center pt-1 text-xs text-slate-500">
+                Signed in as {me.username}
+                <button className="btn-ghost ml-auto min-h-11 text-sm" onClick={logout}>
+                  Log out
+                </button>
+              </div>
+            </div>
+          )}
+          <nav className="fixed inset-x-0 bottom-0 z-50 flex border-t border-[#30363d] bg-[#0d1117]/95 pb-[env(safe-area-inset-bottom)] backdrop-blur">
+            {PHONE_TABS.filter(allowed).map((t) => (
+              <button
+                key={t}
+                onClick={() => {
+                  setTab(t);
+                  setMore(false);
+                }}
+                className={`flex min-h-14 flex-1 flex-col items-center justify-center gap-0.5 text-xs ${tab === t ? 'text-white' : 'text-slate-400'}`}
+              >
+                <span className="text-lg leading-none">{PHONE_ICONS[t]}</span>
+                <span className="flex items-center gap-1">
+                  {TABS[t]}
+                  <Badge t={t} unseen={unseen} waiting={waiting} />
+                </span>
+              </button>
+            ))}
+            <button
+              onClick={() => setMore((m) => !m)}
+              className={`flex min-h-14 flex-1 flex-col items-center justify-center gap-0.5 text-xs ${more || !PHONE_TABS.includes(tab) ? 'text-white' : 'text-slate-400'}`}
+            >
+              <span className="text-lg leading-none">☰</span>
+              <span className="flex items-center gap-1">
+                More
+                {unseen > 0 && <span className="h-2 w-2 rounded-full bg-red-600" />}
+              </span>
+            </button>
+          </nav>
+        </>
+      )}
       {wizard && <SetupWizard onDone={() => setWizard(false)} onOpen={(t) => setTab(t)} />}
       <Toasts />
     </>
   );
+}
+
+const PHONE_ICONS: Partial<Record<Tab, string>> = { use: '💬', canvas: '🕸', activity: '⏱', settings: '⚙' };
+
+/** Problems not seen yet; runs waiting at a Pause block. */
+function Badge({ t, unseen, waiting }: { t: Tab; unseen: number; waiting: number }) {
+  if (t === 'problems' && unseen > 0) return <span className="rounded-full bg-red-600 px-1.5 text-xs font-semibold text-white">{unseen}</span>;
+  if (t === 'activity' && waiting > 0)
+    return (
+      <span className="rounded-full bg-orange-500 px-1.5 text-xs font-semibold text-white" title="Runs waiting for you at a Pause block">
+        {waiting}
+      </span>
+    );
+  return null;
 }

@@ -18,14 +18,14 @@ const SIZES = {
 type SizeFilter = keyof typeof SIZES;
 
 /** A model folder name from a repo and a quant: "unsloth/Qwen3.6-35B-A3B-GGUF" + Q4_K_M → qwen3.6-35b-a3b-q4_k_m. */
-const folderName = (repo: string, quant: string) =>
+export const folderName = (repo: string, quant: string) =>
   `${repo.split('/')[1].replace(/-?gguf$/i, '')}-${quant}`
     .toLowerCase()
     .replace(/[^a-z0-9._-]+/g, '-')
     .slice(0, 80);
 
 /** The files of a quant: one file, or every part of a split one ("x (6 parts)" in the list). */
-const filePattern = (f: HfFile) => {
+export const filePattern = (f: HfFile) => {
   const m = f.file.match(/^(.*) \((\d+) parts\)$/);
   return m ? `${m[1]}-*-of-${String(Number(m[2])).padStart(5, '0')}.gguf` : f.file;
 };
@@ -46,6 +46,7 @@ export function ColibriLibrary(p: {
   onImport: (body: { repo: string; file: string; name: string }) => void;
 }) {
   const [query, setQuery] = useState('');
+  const [sizeOf, setSizeOf] = useState<Record<string, string>>({});
   const [size, setSize] = useStored<SizeFilter>('colibri.size', 'all');
   const [open, setOpen] = useState<string | null>(null);
 
@@ -131,7 +132,29 @@ export function ColibriLibrary(p: {
                       )}
                     </div>
                   )}
-                  {m.gguf && <GgufPicker model={m} busy={p.busy} diskFree={p.diskFree} onImport={p.onImport} />}
+                  {m.sizes && (
+                    <div className="space-y-1">
+                      <div className="text-xs text-slate-400">Pick a size, then a GGUF of it:</div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {m.sizes.map((z) => {
+                          const ok = (z.gb + 1) * 1e9 <= p.ramBytes;
+                          return (
+                            <button
+                              key={z.label}
+                              className={`rounded border px-2 py-1 text-xs ${sizeOf[m.id] === z.query ? 'border-indigo-400 bg-indigo-500/20 text-indigo-100' : 'border-[#30363d] text-slate-300'}`}
+                              onClick={() => setSizeOf((s) => ({ ...s, [m.id]: z.query }))}
+                            >
+                              {z.label} <span className="text-slate-500">~{z.gb} GB</span>{' '}
+                              <span className={ok ? 'text-emerald-300' : 'text-red-300'}>{ok ? 'fits' : 'too big'}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                  {m.gguf && (!m.sizes || sizeOf[m.id]) && (
+                    <GgufPicker key={sizeOf[m.id] ?? m.id} model={m} query={sizeOf[m.id]} busy={p.busy} diskFree={p.diskFree} onImport={p.onImport} />
+                  )}
                   {m.convert && (
                     <p className="text-xs text-amber-300">
                       This one only runs after a conversion with PyTorch (colibri&apos;s converter), which HiveMind can&apos;t do inside its container yet. See the Hugging Face page.
@@ -149,7 +172,20 @@ export function ColibriLibrary(p: {
 }
 
 /** GGUF repositories of one model on Hugging Face, then their quants with sizes; a click imports one. */
-function GgufPicker({ model, busy, diskFree, onImport }: { model: LibModel; busy: boolean; diskFree?: number; onImport: (b: { repo: string; file: string; name: string }) => void }) {
+function GgufPicker({
+  model,
+  query,
+  busy,
+  diskFree,
+  onImport,
+}: {
+  model: LibModel;
+  /** A size of the family (its own search), else the family's. */
+  query?: string;
+  busy: boolean;
+  diskFree?: number;
+  onImport: (b: { repo: string; file: string; name: string }) => void;
+}) {
   const [repos, setRepos] = useState<HfRepo[] | null>(null);
   const [repo, setRepo] = useState('');
   const [files, setFiles] = useState<HfFile[] | null>(null);
@@ -158,7 +194,7 @@ function GgufPicker({ model, busy, diskFree, onImport }: { model: LibModel; busy
   const search = async () => {
     setErr('');
     try {
-      setRepos((await api<HfRepo[]>(`/api/hf/search?q=${encodeURIComponent(model.gguf!.replace(/\s*GGUF$/i, ''))}`, { quiet: true })).slice(0, 8));
+      setRepos((await api<HfRepo[]>(`/api/hf/search?q=${encodeURIComponent((query ?? model.gguf!).replace(/\s*GGUF$/i, ''))}`, { quiet: true })).slice(0, 8));
     } catch (e) {
       setErr((e as Error).message);
     }

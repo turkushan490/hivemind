@@ -1,5 +1,5 @@
 import type { LoadedModel, ModelInfo } from '@hivemind/shared';
-import { acquire, cacheSlot, colibriAvailable, colibriBase, colibriSettings, installedModels, loadedModel, stopEngine, warmModel } from '../colibri/engine.js';
+import { acquire, cacheSlot, colibriAvailable, colibriBase, colibriSettings, installedModels, loadedModel, loadedModels, stopEngine, warmModel } from '../colibri/engine.js';
 import { catalog, type CatalogModel } from '../colibri/models.js';
 import { fromSystemOne, post } from './decisions.js';
 import { readSSE } from './lines.js';
@@ -34,28 +34,27 @@ async function installedInfo(providerId: string, kind?: 'decision'): Promise<Mod
     const c = names.get(m.model);
     // Giant models stream from the disk: well under a word per second, for overnight work.
     const name = c ? `${c.name}${c.size_class === 'large' ? ' (colibri, slow)' : ' (colibri)'}` : `${m.model} (colibri)`;
-    return { providerId, model: m.model, name, free: true, sizeBytes: m.sizeBytes, ...(kind && { kind }) };
+    // Colibri runs text only (no picture projector), whatever the model could do elsewhere.
+    return { providerId, model: m.model, name, free: true, sizeBytes: m.sizeBytes, vision: false, ...(kind && { kind }) };
   });
 }
 
 function loaded(): LoadedModel[] {
-  const l = loadedModel();
-  if (!l) return [];
-  const m = installedModels().find((x) => x.model === l.model);
-  return [{ model: l.model, sizeBytes: m?.sizeBytes ?? 0, vramBytes: 0 }];
+  const installed = installedModels();
+  return loadedModels().map((l) => ({ model: l.model, sizeBytes: installed.find((x) => x.model === l.model)?.sizeBytes ?? l.ramBytes, vramBytes: 0 }));
 }
 
-/** Shared by both providers: unloading one unloads the engine. */
+/** Shared by both providers: they serve the same engines. */
 const engineParts = {
   async loaded() {
     return loaded();
   },
-  async unload() {
-    await stopEngine();
+  async unload(model: string) {
+    await stopEngine(model);
   },
-  // Only a model on the GPU has to make room; on the CPU it holds no VRAM.
+  // Only the model on the GPU has to make room; the ones on the CPU hold no VRAM.
   async freeMemory() {
-    if (loadedModel()?.gpu) await stopEngine();
+    for (const l of loadedModels()) if (l.gpu && !l.active) await stopEngine(l.model);
   },
   async warm(model: string, keep: string) {
     await warmModel(model, keep);
@@ -69,7 +68,7 @@ export function colibriChatAdapter(cfg: ProviderConfig): ProviderAdapter {
 
     async *stream(req: ChatRequest, signal: AbortSignal): AsyncIterable<StreamChunk> {
       const t0 = Date.now();
-      yield { type: loadedModel()?.model !== req.model ? 'loading' : 'warm' };
+      yield { type: loadedModel(req.model)?.state !== 'ready' ? 'loading' : 'warm' };
       const hold = await acquire(req.model, { keepAlive: req.keepAlive, signal });
       try {
         yield* chat(req, signal, hold.loaded ? Date.now() - t0 : undefined);
@@ -83,11 +82,11 @@ export function colibriChatAdapter(cfg: ProviderConfig): ProviderAdapter {
 /** A conversation's slot: the same system prompt and first question land on the same cached prompt. */
 const slotOf = (req: ChatRequest) => {
   const firstUser = req.messages.findIndex((m) => m.role === 'user');
-  return cacheSlot('chat', JSON.stringify(req.messages.slice(0, firstUser + 1).map((m) => [m.role, m.role === 'user' && req.messages.length - 1 === firstUser ? '' : m.content])));
+  return cacheSlot('chat', JSON.stringify(req.messages.slice(0, firstUser + 1).map((m) => [m.role, m.role === 'user' && req.messages.length - 1 === firstUser ? '' : m.content])), req.model);
 };
 
 async function* chat(req: ChatRequest, signal: AbortSignal, loadMs: number | undefined): AsyncIterable<StreamChunk> {
-  const res = await fetch(`${colibriBase()}/v1/chat/completions`, {
+  const res = await fetch(`${colibriBase(req.model)}/v1/chat/completions`, {
     method: 'POST',
     signal,
     headers: { 'content-type': 'application/json' },
@@ -142,7 +141,8 @@ export function colibriDecisionAdapter(cfg: ProviderConfig): ProviderAdapter {
       type Reply = { model?: string; answers?: Record<string, Record<string, unknown>>; usage?: { input_tokens?: number | null; output_tokens?: number | null } };
       let data: Reply;
       try {
-        data = (await post(`${colibriBase()}/v1/systemone`, { model: req.model, state: req.state, questions, ...(cacheSlot('decide', '') !== undefined && { cache_slot: cacheSlot('decide', '') }) }, {}, signal, 'Colibri', colibriSettings().callSeconds * 1000)) as Reply;
+        const slot = cacheSlot('decide', '', req.model);
+        data = (await post(`${colibriBase(req.model)}/v1/systemone`, { model: req.model, state: req.state, questions, ...(slot !== undefined && { cache_slot: slot }) }, {}, signal, 'Colibri', colibriSettings().callSeconds * 1000)) as Reply;
       } finally {
         hold.release();
       }

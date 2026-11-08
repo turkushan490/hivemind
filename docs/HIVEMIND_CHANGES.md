@@ -911,6 +911,33 @@ which project it works on, and can make a new one.
 - **`think: false` for cloud reasoning models:** `reasoning_effort` `none` (Gemini), `low` (gpt-oss), `minimal` (OpenAI o-series/gpt-5). A model that refuses the setting is asked again without it.
 - Tests: `server/test/colibri.test.ts`, which uses a fake `coli serve` (`server/test/fake-coli.mjs`).
 
+## M17 — Picture reader, several colibri models at once, CPU-only Ollama, phone layout
+
+- **Picture reader** (every AI block, so every workflow):
+  - `seesPictures(model, info)` in `@hivemind/shared`: what the provider says first (`ModelInfo.vision`: Ollama's `vision` capability; colibri says no, it runs text only), else the name (Gemini, GPT-4o/4.1/5, Claude, gemma3/4, Qwen-VL, Pixtral, Llama 4, ...; never gpt-oss or coders).
+  - A model that can't see gets the reader's description of each picture in place of the picture: `[Picture "name", described by <reader>: …]`, text in the picture written down exactly. Each picture is described once per run and shared by every block.
+  - A model that was thought to see but refuses the picture is asked again with the description. Without a reader it is asked with the text only, as before.
+  - Settings → **Pictures**: automatic (the fastest local Ollama model that sees: gemma4:e2b first), off, or a chosen model. `GET/PUT /api/settings/picture-reader` (`{ choice: 'auto' | 'off' | ModelRef }`).
+  - LLM block → **Send pictures straight to this model** (`NodeConfig.pictures: 'direct'`).
+- **Several colibri models loaded at once:**
+  - Each loaded model has its own `coli serve` on its own port (from the base port up). `maxEngines` (Settings → Colibri, default 3).
+  - They share the RAM budget: a model gets its file size plus 2 GB, or everything there is when it doesn't fit. A model that doesn't fit unloads the one used longest ago (pinned ones last); one that is answering is never stopped.
+  - Only one engine uses the GPU; the others run on the CPU.
+  - **Always loaded** (`pinned`): no unload timer, and it comes back after a bigger model pushed it out and was unloaded.
+  - `POST /api/colibri/unload` takes `{ model }` for one model. Status has `running[]`; logs are per model (`/data/colibri/engine-<model>.log`).
+- **CPU only** for Ollama providers (`cpu_only` column, `ProviderInfo.cpuOnly`): `num_gpu: 0` on chat, load and Ollama decision calls. Such a provider holds no GPU lock, so for example Jev can decide while colibri or ComfyUI holds the GPU.
+- **Also run in colibri** (Settings → Download models, admins): for an installed `hf.co/owner/repo:QUANT` model whose architecture colibri reads, the same GGUF is imported into colibri (`/api/colibri/import`). Families colibri can't run say why.
+- **One frame on every tab:** full width everywhere (the Use page keeps a wide reading column inside).
+- **Phone (narrower than 768 px):**
+  - bottom bar with Use, Workflow, Activity, Settings and More;
+  - Use: the question box at the bottom like a chat app;
+  - Workflow: no side panels; **＋ Block** and **Block settings** open as bottom sheets (tapping a block opens its settings); pinch to zoom, drag to move, fit button; no minimap;
+  - Settings: the sections as a list, a tap opens one full screen.
+- **Installable (PWA):** `manifest.webmanifest`, `sw.js` (pages always from the server; only an offline page is cached), `offline.html`.
+- Colibri library: the Qwen family card has size buttons (0.6B to 235B-A22B), each with its own fit label and GGUF search.
+- Block settings texts: "Keep model loaded" applies to colibri too; "Context size" is Ollama only (colibri sets it in Settings → Colibri).
+- Tests: `server/test/pictures.test.ts`; several engines in `server/test/colibri.test.ts`.
+
 ---
 
 ## The DungeonMind canvases (installed by DungeonMind, documented here)

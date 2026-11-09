@@ -335,6 +335,29 @@ export const MIGRATIONS: string[] = [
   -- A project that is a folder of another app (T3 Code's /projects/x), opened in place instead of files/projects/<id>.
   ALTER TABLE projects ADD COLUMN external TEXT;
   `,
+  `
+  -- HiveBot robots: each with its own token (api_tokens, scope.robot = its id), what it last reported, and its config.
+  CREATE TABLE robots (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    token_id TEXT,
+    board TEXT,
+    room TEXT,
+    home_ssids TEXT NOT NULL DEFAULT '[]',
+    wifi_enc TEXT,
+    last_seen TEXT,
+    battery REAL,
+    firmware TEXT,
+    ip TEXT,
+    ssid TEXT,
+    rssi REAL,
+    last_event TEXT,
+    config_version INTEGER NOT NULL DEFAULT 1,
+    firmware_target TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  `,
 ];
 
 export const db = new DatabaseSync(join(config.dataDir, 'hivemind.db'));

@@ -7,6 +7,7 @@ import { activityRoutes } from './api/activity.js';
 import { authRoutes, viewerGuard } from './api/auth.js';
 import { builderRoutes } from './api/builder.js';
 import { colibriRoutes } from './api/colibri.js';
+import { robotRoutes } from './api/robots.js';
 import { exportRoutes } from './api/exports.js';
 import { fileRoutes } from './api/files.js';
 import { labRoutes } from './api/lab.js';
@@ -62,7 +63,8 @@ export async function buildApp(opts: { logger?: boolean; web?: boolean; onRoute?
         (/^\/api\/projects\/[^/]+\/file/.test(req.url) && type.startsWith('application/octet-stream')) ||
         (/^\/api\/projects\/[^/]+\/zip/.test(req.url) && type.startsWith('application/zip')) ||
         (req.url.startsWith('/api/skills/import') && !req.url.startsWith('/api/skills/import/github') && type.startsWith('application/zip')) ||
-        (req.url.startsWith('/api/voice/transcribe') && /^(audio\/|video\/|application\/octet-stream)/.test(type));
+        (req.url.startsWith('/api/voice/transcribe') && /^(audio\/|video\/|application\/octet-stream)/.test(type)) ||
+        (req.method === 'PUT' && req.url.startsWith('/api/installers/') && type.startsWith('application/octet-stream'));
       if (hasBody && !upload && !type.startsWith('application/json')) return reply.code(415).send({ error: 'Send JSON' });
     }
   });
@@ -114,6 +116,7 @@ export async function buildApp(opts: { logger?: boolean; web?: boolean; onRoute?
   projectRoutes(app);
   skillRoutes(app);
   colibriRoutes(app);
+  robotRoutes(app);
 
   if (opts.web !== false && existsSync(config.webDir)) {
     await app.register(staticFiles, {

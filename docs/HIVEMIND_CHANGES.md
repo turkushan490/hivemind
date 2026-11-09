@@ -1034,6 +1034,32 @@ which project it works on, and can make a new one.
 - Not built (yet): music removal (Demucs), the two-speaker check, fine-tuning on ≥ 30 min, VoxCPM2 as a second engine.
 - Tests: `server/test/voiceTraining.test.ts` (a stand-in worker).
 
+## M21 — Robots and installers (HiveBot S16 + S17 / R1)
+
+- **Robots** (Settings → Robots & installers, admins; table `robots`): add a robot (name, board, home Wi-Fi); it
+  gets **its own token** (`api_tokens`, `scope.robot = <id>`, canvases/memory `hivebot*`), shown once. A robot token may
+  only use `/api/robot/*`, the voice API (`/api/voice/transcribe`, `/speak`, `/voices`), its workflows and memory, and
+  download its own firmware. New token / remove (revokes it). The list shows online (heartbeat < 2 min), battery,
+  firmware, Wi-Fi, IP and when it was last seen.
+- **Robot API:** `POST /api/robot/heartbeat {battery, ssid, rssi, firmware, board?, moved?}` → `{configVersion,
+  config}`; `GET /api/robot/config` → Wi-Fi networks (with passwords, encrypted at rest), the HiveMind addresses
+  (`PUT /api/settings/robot-urls {home, public}`), room, home networks, characters with wake words, standby times and
+  the firmware it should run (`{version, url, sha256}`); `POST /api/robot/event {type, character?}`. Any change to a
+  robot raises its config version. An ordinary token gets a clear 403 on the robot API.
+- **Installers:** `/data/installers/<app>/<version>/<file>` (exe, msi, zip, apk, bin, elf, uf2, json, md, txt; at
+  most 200 MB each, with a .sha256 next to it). `PUT /api/installers/:app/:version/:file` (raw body) by an admin or a
+  token with the **installers** permission (`scope.installers`, at creation or `PATCH /api/tokens/:id`);
+  `GET /api/installers` (admins), downloads for admins (and a robot for its own firmware), delete a version, a GitHub
+  repository per app with **Get newest from GitHub** (the latest release's files, private repositories with the
+  owner's GitHub token).
+- **Robot firmware** lives in the app `hivebot-robot` as `<board>-bootloader.bin`, `<board>-partitions.bin`,
+  `<board>-ota_data_initial.bin`, `<board>-firmware.bin` (boards `cores3`, `t-dongle-s3`, `sticks3`).
+  `GET /api/installers/firmware-manifest?board=` is the esp-web-tools manifest (offsets 0x0, 0x8000, 0xf000, 0x20000).
+  **Install a robot**: Espressif's esp-web-tools (loaded from unpkg) flashes it over USB (Chrome/Edge, HTTPS or
+  localhost), then the setup form sends `wifi add`, `url`, `token` and `pin` over the same serial port; the PIN goes
+  only to the robot. Per robot, **Firmware: newest / a version** sets what it is told to run (OTA is the robot's part).
+- Tests: `server/test/robots.test.ts`.
+
 ---
 
 ## The DungeonMind canvases (installed by DungeonMind, documented here)

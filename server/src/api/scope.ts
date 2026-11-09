@@ -46,6 +46,17 @@ const SCOPED_ROUTES = new Set([
   'DELETE /api/workflows/:id/schedule',
 ]);
 
+/** A robot's own token: the robot API and the voice API (besides its workflows and memory in SCOPED_ROUTES). */
+const ROBOT_ROUTES = new Set([
+  'POST /api/robot/heartbeat',
+  'GET /api/robot/config',
+  'POST /api/robot/event',
+  'POST /api/voice/transcribe',
+  'POST /api/voice/speak',
+  'GET /api/voice/voices',
+  'GET /api/installers/:app/:version/:file',
+]);
+
 /** Only for tokens with skills: true (their user's own skills; the routes check ownership themselves). */
 const SKILL_ROUTES = new Set([
   'GET /api/skills/:id',
@@ -105,6 +116,14 @@ export async function scopeGuard(req: FastifyRequest, reply: FastifyReply) {
         | undefined;
       if (row && !datasetAllowed(user, row.name)) return deny(`use dataset "${row.name}"`);
     }
+    return;
+  }
+  if (ROBOT_ROUTES.has(route)) {
+    if (!user.scope.robot) return deny('use the robot API (only a robot token may)');
+    return;
+  }
+  if (route === 'PUT /api/installers/:app/:version/:file') {
+    if (user.scope.installers !== true) return deny('upload installers');
     return;
   }
   if (SKILL_ROUTES.has(route)) {

@@ -32,6 +32,10 @@ export interface TokenScope {
   skills?: boolean;
   /** /v1 offers it single models too ("colibri/qwen36-35b"), not only its canvases: for coding agents. */
   models?: boolean;
+  /** A robot's own token (Settings → Robots): the robot's id; it may use /api/robot/*, the voice API and its workflows. */
+  robot?: string;
+  /** May upload releases to Installers (an app's build script). */
+  installers?: boolean;
 }
 
 declare module 'fastify' {
@@ -255,7 +259,7 @@ export function authRoutes(app: FastifyInstance) {
   );
 
   app.post('/api/tokens', { preHandler: requireUser }, async (req, reply) => {
-    const body = (req.body ?? {}) as { name?: string; canvases?: unknown; memory?: unknown; training?: unknown; datasets?: unknown; skills?: unknown; models?: unknown; profileId?: unknown };
+    const body = (req.body ?? {}) as { name?: string; canvases?: unknown; memory?: unknown; training?: unknown; datasets?: unknown; skills?: unknown; models?: unknown; installers?: unknown; profileId?: unknown };
     const name = String(body.name ?? '').trim();
     if (!name) return reply.code(400).send({ error: 'Give the token a name' });
     // A limited token can't make tokens with more rights than itself.
@@ -275,8 +279,17 @@ export function authRoutes(app: FastifyInstance) {
       if (body.skills !== undefined && typeof body.skills !== 'boolean') throw new Error('skills must be true or false');
       const skills = body.skills === true;
       const models = body.models === true;
-      if (canvases || memory || datasets || training || skills || models)
-        scope = { canvases: canvases ?? [], memory: memory ?? [], ...(training && { training }), ...(datasets && { datasets }), ...(skills && { skills }), ...(models && { models }) };
+      const installers = body.installers === true;
+      if (canvases || memory || datasets || training || skills || models || installers)
+        scope = {
+          canvases: canvases ?? [],
+          memory: memory ?? [],
+          ...(training && { training }),
+          ...(datasets && { datasets }),
+          ...(skills && { skills }),
+          ...(models && { models }),
+          ...(installers && { installers }),
+        };
     } catch (err) {
       return reply.code(400).send({ error: (err as Error).message });
     }
@@ -301,9 +314,10 @@ export function authRoutes(app: FastifyInstance) {
   /** A limited token's skills permission, switched on or off later (the rest of its scope stays as made). */
   app.patch('/api/tokens/:id', { preHandler: requireUser }, async (req, reply) => {
     if (req.user!.scope) return reply.code(403).send({ error: 'A limited API token cannot change tokens' });
-    const { skills, models } = (req.body ?? {}) as { skills?: unknown; models?: unknown };
-    if ((skills !== undefined && typeof skills !== 'boolean') || (models !== undefined && typeof models !== 'boolean') || (skills === undefined && models === undefined))
-      return reply.code(400).send({ error: 'Send skills and/or models as true or false' });
+    const { skills, models, installers } = (req.body ?? {}) as { skills?: unknown; models?: unknown; installers?: unknown };
+    const flags = [skills, models, installers];
+    if (flags.some((f) => f !== undefined && typeof f !== 'boolean') || flags.every((f) => f === undefined))
+      return reply.code(400).send({ error: 'Send skills, models and/or installers as true or false' });
     const row = db.prepare('SELECT scope FROM api_tokens WHERE id = ? AND user_id = ?').get((req.params as { id: string }).id, req.user!.id) as { scope: string | null } | undefined;
     if (!row) return reply.code(404).send({ error: 'No such token' });
     if (!row.scope) return reply.code(400).send({ error: 'This token is not limited: it may already do everything its user may' });
@@ -312,6 +326,8 @@ export function authRoutes(app: FastifyInstance) {
     else if (skills === false) delete scope.skills;
     if (models === true) scope.models = true;
     else if (models === false) delete scope.models;
+    if (installers === true) scope.installers = true;
+    else if (installers === false) delete scope.installers;
     db.prepare('UPDATE api_tokens SET scope = ? WHERE id = ?').run(JSON.stringify(scope), (req.params as { id: string }).id);
     return { ok: true, scope };
   });

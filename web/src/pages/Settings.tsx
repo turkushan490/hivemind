@@ -3,6 +3,7 @@ import { useIsPhone } from '../phone';
 import { PictureReaderPanel } from './PictureReader';
 import { useStored } from '../stored';
 import { ColibriPanel } from './Colibri';
+import { RobotsPanel } from './Robots';
 import { Models } from './Models';
 import { Providers } from './Providers';
 import { BuilderSettings, HomeAssistantPanel, HuggingFacePanel, VoicePanel, MemorySettings, OpenAIApiSettings, SearchSettingsPanel, TrainingPanel, RunLimitsPanel } from './SettingsExtra';
@@ -17,6 +18,7 @@ const SECTIONS = {
   providers: 'AI providers',
   models: 'Download models',
   colibri: 'Colibri',
+  robots: 'Robots & installers',
   builder: 'Builder AI',
   search: 'Web search',
   memory: 'Memory',
@@ -36,7 +38,7 @@ const SECTIONS = {
 type Section = keyof typeof SECTIONS;
 
 /** Viewers only get their API tokens; users everything but Users and Access. */
-const shown = (role: Role, s: Section) => (role === 'viewer' ? s === 'tokens' || s === 'api' : (s !== 'users' && s !== 'access' && s !== 'colibri') || role === 'admin');
+const shown = (role: Role, s: Section) => (role === 'viewer' ? s === 'tokens' || s === 'api' : (s !== 'users' && s !== 'access' && s !== 'colibri' && s !== 'robots') || role === 'admin');
 
 export function Settings({ role, meId, active, onWizard }: { role: Role; meId: string; active: boolean; onWizard: () => void }) {
   const [stored, setSection] = useStored<Section>('settings.section', 'providers');
@@ -74,6 +76,7 @@ export function Settings({ role, meId, active, onWizard }: { role: Role; meId: s
         {panel('providers', <Providers isAdmin={isAdmin} />)}
         {panel('models', <Models active={active && section === 'models'} />)}
         {panel('colibri', <ColibriPanel active={active && section === 'colibri'} />)}
+        {panel('robots', <RobotsPanel active={active && section === 'robots'} />)}
         {panel('builder', <BuilderSettings active={active && section === 'builder'} onWizard={onWizard} />)}
         {panel('search', <SearchSettingsPanel isAdmin={isAdmin} />)}
         {panel('memory', <MemorySettings active={active && section === 'memory'} />)}

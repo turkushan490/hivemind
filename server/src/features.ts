@@ -52,4 +52,10 @@ export const FEATURES: readonly string[] = [
   'hivebot',
   // M15: colibri inside the container (Settings → Colibri; providers "colibri" and "colibri-decisions").
   'colibri',
+  // M20: voice training (HiveBot's Voice trainer): the blocks Audio prep, Voice dataset, Voice clone and Speak, and
+  // cloned voices ("clone:<name>") in /api/voice/speak, listed by GET /api/voice/voices.
+  'audioPrep',
+  'voiceDataset',
+  'voiceClone',
+  'speak',
 ];

@@ -78,6 +78,10 @@ const BLOCKS: Record<NodeType, string> = {
   collect: 'ends a For each: gathers the result of every item, in order, and passes them on.',
   deepSearch: 'RESEARCH: searches the web for the question (or the text wired in; "searchList": true searches each line or {"research": [...]}), reads "pageBatch" sites per round and decides after each round (with "decider", a decision model, else its own "model") to stop, read more sites, or search with new words, up to "maxPages" sites. Its output is {"items": [{url, title, text}]}: put a For each after it to review each site.',
   panel: 'RESEARCH: "count" (default 2) different models, picked at random from "models" (2 or more), each review the text wired in with "prompt"/"system"; a failing one is replaced from the pool. Use it to have several AIs judge each source.',
+  audioPrep: 'VOICE: cuts the recordings attached to the question (mp3/mp4/wav/m4a) into clean 3-15 s clips. The character comes from {{vars.character}} or the question. Only for training a voice.',
+  voiceDataset: 'VOICE: after Audio prep: writes down what is said in each clip and keeps them in the voice "dataset" (default hivebot-voice-{{vars.character}}).',
+  voiceClone: 'VOICE: after Voice dataset: builds the voice "voice" (default clone:{{vars.character}}) from the best "count" (3) clips.',
+  speak: 'VOICE: says "prompt" (one sentence per line) or the text wired in, in "voice" (a built-in voice like bm_george, or clone:<name>), as audio files in the run.',
 };
 
 const ref = (m: ModelInfo) => `${m.providerId}|${m.model}`;

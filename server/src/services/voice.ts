@@ -2,6 +2,7 @@ import type { VoiceSettings } from '@hivemind/shared';
 import { decrypt, encrypt } from '../crypto.js';
 import { db, getSetting, setSetting } from '../db/index.js';
 import { ensureKokoro, KOKORO_VOICES, kokoroAvailable } from './kokoro.js';
+import { isCloneVoice, speakClone } from './voiceTraining.js';
 
 /**
  * Voice, pluggable like providers: speech to text through any OpenAI-compatible /audio/transcriptions
@@ -175,8 +176,22 @@ export interface SpeakOptions {
 }
 
 /** Text to speech on the server: returns the audio and its type. */
-export async function speak(input: string, userId: string, opts: SpeakOptions = {}): Promise<{ audio: Buffer; type: string }> {
+export async function speak(input: string, userId: string, opts: SpeakOptions = {}): Promise<{ audio: Buffer; type: string; note?: string }> {
   const s = load();
+  // A cloned voice ("clone:jarvis", or a Voices-for-apps name that points to one): the voice engine. When it can't
+  // speak (no voice yet, engine off), the built-in voice says it instead, and the answer says why.
+  const wanted = opts.voice?.trim();
+  const mapped = (wanted && s.appVoices?.[wanted.toLowerCase()]) || wanted || s.ttsVoice || '';
+  if (isCloneVoice(mapped)) {
+    try {
+      const out = await speakClone(input, mapped, { ...(opts.speed !== undefined && { speed: opts.speed }) });
+      return { audio: out.audio, type: out.type };
+    } catch (err) {
+      if (!kokoroAvailable()) throw err;
+      const r = await speak(input, userId, { ...opts, voice: 'af_heart' });
+      return { ...r, note: `${mapped} could not speak (${(err as Error).message.slice(0, 160)}); the built-in voice said it` };
+    }
+  }
   // The built-in voice (Kokoro in this container): chosen in Settings, or for apps when no speech server is set.
   const builtin = kokoroAvailable() && (s.ttsMode === 'builtin' || (!!opts.app && s.ttsMode !== 'server' && !s.ttsUrl));
   if (!builtin) {

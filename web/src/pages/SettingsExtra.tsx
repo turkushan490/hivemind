@@ -615,6 +615,8 @@ function VoiceSettingsPanel({ isAdmin, active }: { isAdmin: boolean; active: boo
         )}
       </section>
 
+      <VoiceEngine isAdmin={isAdmin} />
+
       <section className="space-y-2">
         <h3 className="text-sm font-semibold">Voices for apps</h3>
         <p className="text-xs text-slate-400">
@@ -771,5 +773,80 @@ export function RunLimitsPanel({ isAdmin, active }: { isAdmin: boolean; active: 
         <p className="text-xs text-slate-500">Only an admin can change them.</p>
       )}
     </div>
+  );
+}
+
+interface ClonedVoice {
+  id: string;
+  name: string;
+  created: string;
+  minutes: number;
+  versions: number;
+}
+
+/**
+ * Settings → Voice → Voice engine: cloned voices (HiveBot · Voice trainer) made inside HiveMind with Qwen3-TTS.
+ * On/off, CPU or the GPU when it has room, how long it stays loaded, and the voices built so far.
+ */
+function VoiceEngine({ isAdmin }: { isAdmin: boolean }) {
+  const [eng, setEng] = useState<{ available: boolean; enabled: boolean; device: 'auto' | 'cpu'; keepMin: number } | null>(null);
+  const [voices, setVoices] = useState<ClonedVoice[]>([]);
+  const load = async () => {
+    const v = await api<{ voiceEngine?: { available: boolean; enabled: boolean; device: 'auto' | 'cpu'; keepMin: number } }>('/api/settings/voice', { quiet: true }).catch(() => ({}) as { voiceEngine?: undefined });
+    setEng(v.voiceEngine ?? null);
+    setVoices((await api<{ cloned: ClonedVoice[] }>('/api/voice/voices', { quiet: true }).catch(() => ({ cloned: [] }))).cloned);
+  };
+  useEffect(() => {
+    void load();
+  }, []);
+  if (!eng?.available) return null;
+  const save = async (p: Partial<typeof eng>) => {
+    await api('/api/settings/voice-engine', { method: 'PUT', body: p }).catch(() => {});
+    await load();
+  };
+  return (
+    <section className="space-y-2 text-sm">
+      <div className="text-xs font-semibold tracking-wider text-slate-500 uppercase">Voice engine (cloned voices)</div>
+      <p className="text-xs text-slate-400">
+        Voices built from recordings with the <b>HiveBot · Voice trainer</b> workflow (Audio prep → Voice dataset → Voice clone), made inside HiveMind with Qwen3-TTS. Apps ask for them as{' '}
+        <code>clone:jarvis</code>, or by name through Voices for apps (<code>jarvis = clone:jarvis</code>). When a cloned voice can&apos;t speak, the built-in voice says it.
+      </p>
+      <div className="flex flex-wrap items-center gap-3">
+        <label className="flex items-center gap-2">
+          <input type="checkbox" disabled={!isAdmin} checked={eng.enabled} onChange={(e) => save({ enabled: e.target.checked })} />
+          On
+        </label>
+        <select className="input w-auto py-1" disabled={!isAdmin} value={eng.device} onChange={(e) => save({ device: e.target.value as 'auto' | 'cpu' })}>
+          <option value="auto">GPU when it has 4 GB free, else the CPU</option>
+          <option value="cpu">CPU only (never touches the GPU)</option>
+        </select>
+        <label className="flex items-center gap-2 text-xs text-slate-400">
+          keep loaded
+          <input className="input w-16 py-1" type="number" min={1} disabled={!isAdmin} value={eng.keepMin} onChange={(e) => save({ keepMin: Number(e.target.value) })} />
+          min
+        </label>
+      </div>
+      {voices.length === 0 && <p className="text-xs text-slate-500">No cloned voices yet.</p>}
+      {voices.map((v) => (
+        <div key={v.id} className="flex flex-wrap items-center gap-2 rounded-md border border-[#30363d] px-2 py-1 text-xs">
+          <b>{v.id}</b>
+          <span className="text-slate-500">
+            {v.minutes} min of recordings · built {v.created.slice(0, 16).replace('T', ' ')}
+          </span>
+          {isAdmin && v.versions > 0 && (
+            <button
+              className="btn-ghost ml-auto px-2 py-0.5"
+              onClick={async () => {
+                await api(`/api/voice/voices/${encodeURIComponent(v.name)}/previous`, { method: 'POST' }).catch(() => {});
+                toast(`${v.id} is back to its previous version`, 'ok');
+                await load();
+              }}
+            >
+              Use previous voice
+            </button>
+          )}
+        </div>
+      ))}
+    </section>
   );
 }

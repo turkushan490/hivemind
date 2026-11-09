@@ -6,6 +6,7 @@ import { ACTION_NODES } from './actions.js';
 import { TRAINING_NODES } from './training.js';
 import { PROJECT_NODES, type PauseServices, type ProjectServices } from './projects.js';
 import { RESEARCH_NODES } from './research.js';
+import { VOICE_NODES } from './voice.js';
 
 /** What a model about to load needs, so other AI servers on the GPU only give memory back when it doesn't fit. */
 export interface GpuNeed {
@@ -77,6 +78,25 @@ export interface NodeServices {
   pause?: PauseServices;
   /** Puts a line in the Problems tab (something went wrong, but the run went on). */
   logProblem?(message: string): void;
+  /** Voice blocks (HiveBot's Voice trainer): only for the person who runs it (not viewers or limited tokens). */
+  voice?: {
+    character(vars: Record<string, string> | undefined, question: string): string;
+    files(question: string, folder?: string): string[];
+    prep(files: string[], character: string, opts: { minSec?: number; maxSec?: number }): Promise<{
+      clips: { path: string; seconds: number; db: number; source: string }[];
+      dropped: Record<string, number>;
+      files: { file: string; minutes: number; clips: number }[];
+    }>;
+    dataset(
+      dataset: string,
+      character: string,
+      clips: { path: string; seconds: number; db: number; source: string }[],
+      progress: (note: string) => void,
+      signal?: AbortSignal,
+    ): Promise<{ character: string; dataset: string; added: number; skipped: number; failed: number; clips: number; minutes: number }>;
+    clone(dataset: string, name: string, count: number): { id: string; refs: { text: string }[]; minutes: number };
+    speak(text: string, voice: string): Promise<{ file: OutputFile; note?: string }>;
+  };
   /** Skills (Settings → Skills): your own and the shared ones, by name. */
   skills?: { list(): { name: string; description: string }[]; load(name: string): string | undefined };
 }
@@ -773,4 +793,7 @@ export const NODES: Record<NodeType, NodeDefinition> = {
 
   // ---- Research ----
   ...RESEARCH_NODES,
+
+  // ---- Voice ----
+  ...VOICE_NODES,
 };

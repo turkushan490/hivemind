@@ -56,7 +56,12 @@ export function FileChips({ files, onPreviewHtml }: { files: OutputFile[]; onPre
   return (
     <div className="flex flex-wrap gap-2">
       {files.map((f) =>
-        f.kind === 'image' ? (
+        /\.(wav|mp3|m4a|ogg|flac)$/i.test(f.path) ? (
+          <span key={f.path} className="flex items-center gap-2 rounded-md border border-[#30363d] bg-[#0d1117] px-2 py-1 text-xs" title={f.path}>
+            🔊 {f.path.split('/').pop()}
+            <audio controls preload="none" src={fileUrl(f.path)} className="h-8 max-w-full" />
+          </span>
+        ) : f.kind === 'image' ? (
           <a key={f.path} href={fileUrl(f.path)} target="_blank" rel="noreferrer" title={f.path}>
             <img src={fileUrl(f.path)} alt="" className="hm-pop h-24 w-24 rounded-md border border-[#30363d] object-cover" />
           </a>

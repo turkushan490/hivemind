@@ -361,6 +361,62 @@ function KindSettings(p: Props) {
       );
     case 'image':
       return <ImageSettings {...p} />;
+    case 'audioPrep':
+      return (
+        <div className="space-y-2">
+          <p className="text-xs text-slate-400">Attach the recordings to the question (📎) and type the character, e.g. &quot;Jarvis&quot; — or send it as <code>{'{{vars.character}}'}</code>.</p>
+          <label className="block space-y-1">
+            <Label>Also every recording in this Files folder (optional)</Label>
+            <input className="input" placeholder="uploads/jarvis" value={p.config.folder ?? ''} onChange={(e) => p.onChange({ folder: e.target.value || undefined })} />
+          </label>
+          <div className="grid grid-cols-2 gap-2">
+            <label className="block space-y-1">
+              <Label>Shortest clip (s)</Label>
+              <input className="input" type="number" min={1} max={30} value={p.config.minSec ?? 3} onChange={(e) => p.onChange({ minSec: Number(e.target.value) || undefined })} />
+            </label>
+            <label className="block space-y-1">
+              <Label>Longest clip (s)</Label>
+              <input className="input" type="number" min={3} max={60} value={p.config.maxSec ?? 15} onChange={(e) => p.onChange({ maxSec: Number(e.target.value) || undefined })} />
+            </label>
+          </div>
+        </div>
+      );
+    case 'voiceDataset':
+      return (
+        <label className="block space-y-1">
+          <Label>Voice dataset</Label>
+          <input className="input" placeholder="hivebot-voice-{{vars.character}}" value={p.config.dataset ?? ''} onChange={(e) => p.onChange({ dataset: e.target.value || undefined })} />
+          <span className="text-xs text-slate-500">Uses speech to text from Settings → Voice. A clip already in the dataset is skipped.</span>
+        </label>
+      );
+    case 'voiceClone':
+      return (
+        <div className="space-y-2">
+          <label className="block space-y-1">
+            <Label>Voice</Label>
+            <input className="input" placeholder="clone:{{vars.character}}" value={p.config.voice ?? ''} onChange={(e) => p.onChange({ voice: e.target.value || undefined })} />
+          </label>
+          <label className="block space-y-1">
+            <Label>Clips it learns from</Label>
+            <input className="input" type="number" min={1} max={6} value={p.config.count ?? 3} onChange={(e) => p.onChange({ count: Number(e.target.value) || undefined })} />
+            <span className="text-xs text-slate-500">The cleanest clips of 6–12 seconds with the most words. The previous version of the voice is kept 7 days.</span>
+          </label>
+        </div>
+      );
+    case 'speak':
+      return (
+        <div className="space-y-2">
+          <label className="block space-y-1">
+            <Label>Voice</Label>
+            <input className="input" placeholder="clone:jarvis, bm_george, af_heart…" value={p.config.voice ?? ''} onChange={(e) => p.onChange({ voice: e.target.value || undefined })} />
+            <span className="text-xs text-slate-500">Empty: the voice the block before it built. Names from Settings → Voice → Voices for apps (jarvis) work too.</span>
+          </label>
+          <label className="block space-y-1">
+            <Label>Text (one sentence per line; empty = what is wired in)</Label>
+            <textarea className="input min-h-20" value={p.config.prompt ?? ''} onChange={(e) => p.onChange({ prompt: e.target.value || undefined })} />
+          </label>
+        </div>
+      );
     case 'generate':
     case 'dataset':
     case 'train':

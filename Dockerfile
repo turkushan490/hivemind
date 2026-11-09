@@ -55,6 +55,11 @@ COPY server/colibri/helper.py ./server/colibri/helper.py
 # files (~350 MB) are downloaded into /data/kokoro the first time a voice is needed.
 RUN /opt/unsloth-venv/bin/pip install --no-cache-dir --quiet --target /opt/kokoro-lib kokoro-onnx==0.6.1  && rm -rf /opt/kokoro-lib/bin && PYTHONPATH=/opt/kokoro-lib /opt/unsloth-venv/bin/python -c 'import kokoro_onnx, soundfile; print("kokoro ok")'
 COPY server/kokoro/serve.py ./server/kokoro/serve.py
+# Voice engine for cloned voices (HiveBot's Voice trainer): Qwen3-TTS with the transformers it was made for, in its own
+# folder (the training stack keeps its own versions); onnxruntime and soundfile come from /opt/kokoro-lib. Its model
+# (~2.5 GB) is downloaded into /data/models/voice the first time a voice speaks.
+RUN /opt/unsloth-venv/bin/pip install --no-cache-dir --quiet --target /opt/voice-lib --no-deps qwen-tts==0.1.1 transformers==4.57.3 accelerate==1.12.0 sox==1.5.0 tokenizers==0.22.1 'huggingface_hub<1.0'  && rm -rf /opt/voice-lib/bin && PYTHONPATH=/opt/voice-lib:/opt/kokoro-lib /opt/unsloth-venv/bin/python -c 'import qwen_tts; print("voice engine ok")'
+COPY server/voice/worker.py ./server/voice/worker.py
 # Skills that come with HiveMind (the workflow guide), installed and shared at start.
 COPY server/skills ./server/skills
 RUN (ldconfig -p | grep -q 'libgomp.so.1' || (apt-get update && apt-get install -y --no-install-recommends libgomp1 && rm -rf /var/lib/apt/lists/*))  && (cat /opt/colibri/build.json 2>/dev/null || echo 'colibri: not in this image')

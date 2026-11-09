@@ -14,6 +14,7 @@ import { allowedFor, checkGraph, type Access } from '../services/access.js';
 import { homeAssistantConnection } from '../services/homeassistant.js';
 import { projectServicesFor } from '../services/projectRun.js';
 import { skillsForRun } from '../services/skills.js';
+import { voiceServicesFor } from '../services/voiceRun.js';
 
 type Listener = (ev: RunEvent) => void;
 
@@ -288,6 +289,8 @@ export function startRun(opts: {
         ...(!opts.user?.scope && { projects: projectServicesFor(fileUser, { id, source: canvasName ? `Run: ${canvasName}` : `Run: ${source}` }) }),
         pause: { wait: (info, signal) => waitAtPause(run, info, emit, signal) },
         skills: skillsForRun(fileUser),
+        // Voice blocks: the person who runs it (not viewers, not limited API tokens).
+        ...(!opts.user?.scope && fileUser.role !== 'viewer' && { voice: voiceServicesFor(fileUser) }),
         logProblem: (message) => logError({ source: 'run', message, userId: opts.ownerId, runId: id }),
       },
     }, run.abort.signal, opts.vars ?? {}, opts.chat)

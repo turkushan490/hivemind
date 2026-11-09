@@ -1003,6 +1003,37 @@ which project it works on, and can make a new one.
   `GET/PUT /api/outside-folders`, `POST /api/projects/outside { path, name? }` (admins).
 - Tests: `server/test/v1models.test.ts`, `server/test/outsideFolders.test.ts`.
 
+## M20 — Voice training for HiveBot (recordings → a cloned voice per character)
+
+- **Voice engine** inside the container: Qwen3-TTS-12Hz-0.6B-Base (Apache 2.0) in `/opt/voice-lib` (with the
+  transformers it needs, apart from the training stack), run by `server/voice/worker.py` on 127.0.0.1:8881, started on
+  demand and stopped after `keepMin` minutes. The model (~2.5 GB) downloads into `/data/models/voice` on first use.
+  Device: the GPU only when it has 4 GB free (float32; the T4 can't run it in float16), else the CPU (~9 s for a
+  sentence on the 9950X), so ComfyUI and Ollama are never pushed out. Settings → Voice → **Voice engine**: on/off,
+  CPU only or auto, keep loaded; the cloned voices with **Use previous voice**.
+- **Blocks** (group Voice):
+  - **Audio prep** (`audioPrep`): the recordings linked in the question (the question box now attaches audio and video
+    files as files: `[name.mp3](hm-file:uploads/…)`, short audio also as its words) and optionally a Files folder →
+    ffmpeg to 24 kHz mono → split on pauses into 3–15 s clips → about −20 dB; too quiet, clipped or mostly silent
+    clips are thrown away. Clips go to `files/voices/<character>/clip_NNNN.wav` (owned by the runner). The character is
+    `vars.character`, else jev/jarvis/ultron/vision in the question, else its first word.
+  - **Voice dataset** (`voiceDataset`): writes down what is said in each clip (Settings → Voice speech to text, with
+    retries on rate limits) and adds it to the Lab dataset of kind `voice` (`hivebot-voice-<character>`; the audio
+    hash is the item's ref, so a clip already in it is skipped and deleted); writes `metadata.csv` (LJSpeech style).
+  - **Voice clone** (`voiceClone`): picks the best `count` (3) clips (6–12 s, about −20 dB, most words, different
+    sources) and writes `/data/voices/<name>/voice.json` with copies of them; the previous version stays 7 days.
+  - **Speak** (`speak`): says the block's text (one sentence per line) or what is wired in, in any voice, as WAV files
+    with players in the run output.
+- **API:** `/api/voice/speak` takes `clone:<name>` (directly or through Voices for apps, `jarvis = clone:jarvis`);
+  when a cloned voice can't speak, the built-in voice says it and the `x-voice-note` header says why.
+  `GET /api/voice/voices` (built-in and cloned), `PUT /api/settings/voice-engine`,
+  `POST /api/voice/voices/:name/previous`. Feature flags `audioPrep`, `voiceDataset`, `voiceClone`, `speak` (HiveBot
+  installs its Voice trainer and Voice test workflows when it sees them).
+- Files: `.wav`, `.mp3`, `.m4a`, `.ogg`, `.flac`, `.mp4`, `.webm` are served with their media type, so they play in
+  the browser.
+- Not built (yet): music removal (Demucs), the two-speaker check, fine-tuning on ≥ 30 min, VoxCPM2 as a second engine.
+- Tests: `server/test/voiceTraining.test.ts` (a stand-in worker).
+
 ---
 
 ## The DungeonMind canvases (installed by DungeonMind, documented here)

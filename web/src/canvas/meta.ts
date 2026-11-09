@@ -1,6 +1,6 @@
 import type { NodeType } from '@hivemind/shared';
 
-export type NodeGroup = 'Core' | 'Logic' | 'Data' | 'Create' | 'Action' | 'Project' | 'Train';
+export type NodeGroup = 'Core' | 'Logic' | 'Data' | 'Create' | 'Action' | 'Project' | 'Train' | 'Voice';
 
 export interface NodeMeta {
   title: string;
@@ -319,6 +319,42 @@ export const NODE_META: Record<NodeType, NodeMeta> = {
     hasInput: true,
     hasOutput: true,
   },
+  audioPrep: {
+    title: 'Audio prep',
+    color: '#f472b6',
+    group: 'Voice',
+    description: 'Cuts the recordings attached to the question (mp3, mp4, wav, m4a) into clean clips of 3–15 seconds and throws away the bad ones (too quiet, clipped, mostly silence). Type the character with the files (e.g. "Jarvis").',
+    usesModel: false,
+    hasInput: true,
+    hasOutput: true,
+  },
+  voiceDataset: {
+    title: 'Voice dataset',
+    color: '#f472b6',
+    group: 'Voice',
+    description: 'After Audio prep: writes down what is said in every clip (speech to text) and keeps the clips in a voice dataset. Running it again adds only what is new.',
+    usesModel: false,
+    hasInput: true,
+    hasOutput: true,
+  },
+  voiceClone: {
+    title: 'Voice clone',
+    color: '#f472b6',
+    group: 'Voice',
+    description: 'After Voice dataset: builds a voice (clone:<character>) from the best clips, inside HiveMind (Qwen3-TTS). The app and the robot can then speak with it.',
+    usesModel: false,
+    hasInput: true,
+    hasOutput: true,
+  },
+  speak: {
+    title: 'Speak',
+    color: '#f472b6',
+    group: 'Voice',
+    description: 'Says text (one sentence per line, or what is wired in) in a voice — a built-in one or a cloned one — as audio files you can play in the run.',
+    usesModel: false,
+    hasInput: true,
+    hasOutput: true,
+  },
 };
 
 export const PALETTE: { group: NodeGroup; types: NodeType[] }[] = [
@@ -329,6 +365,7 @@ export const PALETTE: { group: NodeGroup; types: NodeType[] }[] = [
   { group: 'Action', types: ['homeassistant', 'webhook', 'discord'] },
   { group: 'Project', types: ['readProject', 'writeFiles', 'updateNotes', 'build', 'git'] },
   { group: 'Train', types: ['generate', 'dataset', 'train', 'evaluate', 'deploy'] },
+  { group: 'Voice', types: ['audioPrep', 'voiceDataset', 'voiceClone', 'speak'] },
 ];
 
 /** Planned blocks, shown in the palette so the roadmap is visible. */

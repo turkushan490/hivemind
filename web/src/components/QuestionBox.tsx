@@ -58,7 +58,11 @@ export function useAttachments() {
   const add = (files: FileList | File[]) => {
     for (const file of Array.from(files)) {
       const id = Math.random().toString(36).slice(2);
-      const kind: Attachment['kind'] = file.type.startsWith('image/') ? 'image' : file.type.startsWith('audio/') || /\.(mp3|wav|m4a|ogg|webm|flac)$/i.test(file.name) ? 'audio' : 'text';
+      const kind: Attachment['kind'] = file.type.startsWith('image/')
+        ? 'image'
+        : file.type.startsWith('audio/') || file.type.startsWith('video/') || /\.(mp3|wav|m4a|ogg|webm|flac|mp4|mov|mkv|aac)$/i.test(file.name)
+          ? 'audio'
+          : 'text';
       if (kind === 'text' && !file.name.toLowerCase().endsWith('.pdf') && !TEXT_FILE.test(file.name) && !file.type.startsWith('text/')) {
         toast(`${file.name}: pictures, PDFs, text/code files and audio can go with a question`, 'info');
         continue;
@@ -70,8 +74,11 @@ export function useAttachments() {
             const path = await upload(file);
             patch(id, { busy: false, text: `![${file.name}](hm-file:${path})`, preview: `/api/files/raw?inline=1&path=${encodeURIComponent(path)}` });
           } else if (kind === 'audio') {
-            const said = await transcribe(file);
-            patch(id, { busy: false, text: `--- Audio "${file.name}" (what is said in it) ---\n${clip(said, file.name)}` });
+            // The file itself goes along (a Voice trainer needs the recording); a short voice note also as its words.
+            const path = await upload(file);
+            const link = `[${file.name}](hm-file:${path})`;
+            const said = file.size < 5 * 1024 * 1024 && file.type.startsWith('audio/') ? await transcribe(file).catch(() => '') : '';
+            patch(id, { busy: false, text: said ? `${link}\n--- Audio "${file.name}" (what is said in it) ---\n${clip(said, file.name)}` : link });
           } else {
             const text = clip(file.name.toLowerCase().endsWith('.pdf') ? await pdfText(file) : await file.text(), file.name);
             if (!text) throw new Error('no text found in it (a scanned PDF has only pictures)');
@@ -196,7 +203,7 @@ export function QuestionBox(p: {
           type="file"
           multiple
           hidden
-          accept="image/*,audio/*,.pdf,.txt,.md,.csv,.json,.html,.xml,.log,.py,.js,.ts,.tsx,.java,.c,.cpp,.cs,.go,.rs,.sh,.yaml,.yml,.sql"
+          accept="image/*,audio/*,video/*,.mp4,.m4a,.pdf,.txt,.md,.csv,.json,.html,.xml,.log,.py,.js,.ts,.tsx,.java,.c,.cpp,.cs,.go,.rs,.sh,.yaml,.yml,.sql"
           onChange={(e) => {
             if (e.target.files) a.add(e.target.files);
             e.target.value = '';

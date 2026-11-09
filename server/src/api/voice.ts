@@ -2,6 +2,8 @@ import type { FastifyInstance } from 'fastify';
 import { logError } from '../errors.js';
 import { saveVoiceSettings, speak, speakable, transcribe, TtsNotConfigured, voiceSettings } from '../services/voice.js';
 import { requireAdmin, requireUser } from './auth.js';
+import { KOKORO_VOICES, kokoroAvailable } from '../services/kokoro.js';
+import { listClonedVoices, previousVoice, saveVoiceEngineSettings, voiceEngineAvailable, voiceEngineSettings } from '../services/voiceTraining.js';
 
 const MAX_AUDIO = 25 * 1024 * 1024;
 const MAX_SPEAK = 4096;
@@ -10,7 +12,28 @@ export function voiceRoutes(app: FastifyInstance) {
   // Recordings arrive as raw audio (audio/webm from Chrome/Firefox, audio/mp4 from Safari, any file from a phone).
   app.addContentTypeParser(/^(audio|video)\//, { parseAs: 'buffer', bodyLimit: MAX_AUDIO }, (_req, body, done) => done(null, body));
 
-  app.get('/api/settings/voice', { preHandler: requireUser }, async () => voiceSettings());
+  app.get('/api/settings/voice', { preHandler: requireUser }, async () => ({ ...voiceSettings(), voiceEngine: { available: voiceEngineAvailable(), ...voiceEngineSettings() } }));
+
+  /** Every voice there is: the built-in ones (Kokoro) and the cloned ones (Voice trainer). */
+  app.get('/api/voice/voices', { preHandler: requireUser }, async () => ({
+    builtin: kokoroAvailable() ? KOKORO_VOICES.map((id) => ({ id, engine: 'kokoro' })) : [],
+    cloned: listClonedVoices(),
+  }));
+
+  /** Settings → Voice → Voice engine (on/off, CPU or GPU when free, keep loaded). */
+  app.put('/api/settings/voice-engine', { preHandler: requireAdmin }, async (req) => {
+    const b = (req.body ?? {}) as { enabled?: boolean; device?: 'auto' | 'cpu'; keepMin?: number };
+    return saveVoiceEngineSettings(b);
+  });
+
+  /** Goes back to the voice before the last build ("Use previous voice"). */
+  app.post('/api/voice/voices/:name/previous', { preHandler: requireAdmin }, async (req, reply) => {
+    try {
+      return previousVoice((req.params as { name: string }).name);
+    } catch (err) {
+      return reply.code(404).send({ error: (err as Error).message });
+    }
+  });
 
   app.put('/api/settings/voice', { preHandler: requireAdmin }, async (req, reply) => {
     try {
@@ -42,7 +65,7 @@ export function voiceRoutes(app: FastifyInstance) {
     const text = speakable(String(b.text ?? '')).slice(0, MAX_SPEAK);
     if (!text) return reply.code(400).send({ error: 'Nothing to say' });
     try {
-      const { audio, type } = await speak(text, req.user!.id, {
+      const { audio, type, note } = await speak(text, req.user!.id, {
         ...(typeof b.voice === 'string' && { voice: b.voice.slice(0, 100) }),
         ...(typeof b.model === 'string' && { model: b.model.slice(0, 100) }),
         ...(typeof b.speed === 'number' && { speed: b.speed }),
@@ -50,6 +73,7 @@ export function voiceRoutes(app: FastifyInstance) {
         // An app with an API token (a robot) has no browser to speak with.
         app: !!req.user!.tokenId,
       });
+      if (note) reply.header('x-voice-note', encodeURIComponent(note));
       return reply.header('content-type', type).header('cache-control', 'no-store').send(audio);
     } catch (err) {
       if (err instanceof TtsNotConfigured) return reply.code(502).send({ error: err.message, code: err.code });

@@ -1,7 +1,7 @@
 // Types shared by the server, the web UI and (later) the Android app.
 // The canvas format and run events are the contract between them.
 
-export const NODE_TYPES = ['input', 'llm', 'review', 'judge', 'output', 'router', 'debate', 'vote', 'decide', 'template', 'file', 'search', 'memory', 'save', 'image', 'homeassistant', 'webhook', 'discord', 'generate', 'dataset', 'train', 'evaluate', 'deploy', 'readProject', 'writeFiles', 'updateNotes', 'git', 'build', 'pause', 'foreach', 'collect', 'deepSearch', 'panel'] as const;
+export const NODE_TYPES = ['input', 'llm', 'review', 'judge', 'output', 'router', 'debate', 'vote', 'decide', 'template', 'file', 'search', 'memory', 'save', 'image', 'homeassistant', 'webhook', 'discord', 'generate', 'dataset', 'train', 'evaluate', 'deploy', 'readProject', 'writeFiles', 'updateNotes', 'git', 'build', 'pause', 'foreach', 'collect', 'deepSearch', 'panel', 'audioPrep', 'voiceDataset', 'voiceClone', 'speak'] as const;
 export type NodeType = (typeof NODE_TYPES)[number];
 
 /** Which model a node uses: a configured provider plus a model id on it. */
@@ -40,6 +40,12 @@ export interface NodeConfig {
   keepAlive?: string;
   /** LLM: send the chat history from /v1 as real messages instead of one prompt. */
   useMessages?: boolean;
+  /** Audio prep: a folder in Files with recordings (besides the files attached to the question); clip length. */
+  folder?: string;
+  minSec?: number;
+  maxSec?: number;
+  /** Voice clone / Speak: the voice ("clone:{{vars.character}}", "bm_george"). Voice clone uses `count` clips. */
+  voice?: string;
   /**
    * Pictures in the question: "auto" (default) sends them to models that can see and lets the picture reader
    * describe them for models that can't; "direct" always sends them to this block's model.

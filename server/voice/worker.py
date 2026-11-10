@@ -200,7 +200,12 @@ def speak(body: dict):
         model = load_model("cpu")
     p = prompt_for(model, body["voiceFile"])
     t = time.time()
-    wavs, sr = model.generate_voice_clone(text=text, language=body.get("language", "English"), voice_clone_prompt=p)
+    # A length limit (12 codes a second): without it the model may not stop and makes up to 2048 codes (~170 s of
+    # audio, many minutes on this machine), blocking every other voice job. About 0.5 s a word, twice that as room.
+    words = max(1, len(text.split()))
+    max_tokens = int(min(2048, max(96, 12 * (words * 0.5 + 2) * 2)))
+    wavs, sr = model.generate_voice_clone(text=text, language=body.get("language", "English"), voice_clone_prompt=p,
+                                          max_new_tokens=max_tokens)
     w = wavs[0]
     speed = float(body.get("speed") or 1)
     if abs(speed - 1) > 0.05:

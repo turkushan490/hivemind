@@ -67,9 +67,11 @@ let starting: Promise<string> | undefined;
 let idle: NodeJS.Timeout | undefined;
 let lastOut = '';
 
+let inFlight = 0; // voice jobs waiting on or running in the engine: it is never stopped for being idle under them
+
 function touch() {
   if (idle) clearTimeout(idle);
-  idle = setTimeout(() => void stopVoiceWorker(), voiceEngineSettings().keepMin * 60_000);
+  idle = setTimeout(() => (inFlight > 0 ? touch() : void stopVoiceWorker()), voiceEngineSettings().keepMin * 60_000);
   idle.unref();
 }
 
@@ -131,7 +133,17 @@ process.once('exit', () => proc?.kill('SIGTERM'));
 
 async function call(path: string, body: unknown, timeoutMs: number): Promise<Response> {
   const base = await ensureWorker();
-  const res = await fetch(`${base}${path}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body), signal: AbortSignal.timeout(timeoutMs) });
+  inFlight++;
+  let res: Response;
+  try {
+    res = await fetch(`${base}${path}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body), signal: AbortSignal.timeout(timeoutMs) });
+  } catch (err) {
+    // The engine does one job at a time; "fetch failed" alone said nothing.
+    const why = (err as Error).name === 'TimeoutError' ? 'took too long' : proc ? 'was busy too long with other voice jobs, or stopped' : 'stopped';
+    throw new Error(`The voice engine ${why} (${(err as Error).message})`);
+  } finally {
+    inFlight--;
+  }
   touch();
   if (!res.ok) throw new Error(`Voice engine: ${((await res.json().catch(() => ({}))) as { error?: string }).error ?? `HTTP ${res.status}`}`);
   return res;

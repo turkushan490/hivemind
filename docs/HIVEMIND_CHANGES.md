@@ -1035,6 +1035,10 @@ which project it works on, and can make a new one.
 - **Automatic:** `/api/voice/speak` with a name that has a cloned voice of its own (`jarvis` and `clone:jarvis`
   exists) speaks in it without any setting, even when Voices for apps still says a built-in voice (that one is then the
   fallback). So the robot and the app get the new voice as soon as the Voice trainer builds it. Feature `autoCloneVoice`.
+- Fix: Speak could hang for minutes ("fetch failed" after 5 min, and every voice job behind it failed too): the model
+  had no length limit and could make up to ~170 s of audio. Now about 0.5 s a word with twice that as room
+  (`max_new_tokens`); the engine is never stopped for being idle while a job waits or runs; a clear message instead of
+  "fetch failed".
 - Fix: a second upload of the same file is saved as `x (2).mp3`; the space and brackets broke the link, so Audio
   prep found no recordings. The question box now writes the path encoded (`x%20%282%29.mp3`) and Audio prep also reads
   the old raw links.

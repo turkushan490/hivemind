@@ -1032,6 +1032,9 @@ which project it works on, and can make a new one.
 - Files: `.wav`, `.mp3`, `.m4a`, `.ogg`, `.flac`, `.mp4`, `.webm` are served with their media type, so they play in
   the browser.
 - Not built (yet): music removal (Demucs), the two-speaker check, fine-tuning on ≥ 30 min, VoxCPM2 as a second engine.
+- Fix: a second upload of the same file is saved as `x (2).mp3`; the space and brackets broke the link, so Audio
+  prep found no recordings. The question box now writes the path encoded (`x%20%282%29.mp3`) and Audio prep also reads
+  the old raw links.
 - Tests: `server/test/voiceTraining.test.ts` (a stand-in worker).
 
 ## M21 — Robots and installers (HiveBot S16 + S17 / R1)

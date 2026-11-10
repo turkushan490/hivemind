@@ -43,6 +43,9 @@ async function upload(file: File): Promise<string> {
   return data.path;
 }
 
+/** A file path that fits in a markdown link: "x (2).mp3" becomes "x%20%282%29.mp3" (spaces and brackets broke the link). */
+const linkPath = (path: string) => path.replace(/[%\s()]/g, (c) => '%' + c.charCodeAt(0).toString(16).toUpperCase().padStart(2, '0'));
+
 const clip = (text: string, name: string) => {
   const t = text.replace(/\u0000/g, '').trim();
   if (t.length <= MAX_TEXT) return t;
@@ -72,11 +75,11 @@ export function useAttachments() {
         try {
           if (kind === 'image') {
             const path = await upload(file);
-            patch(id, { busy: false, text: `![${file.name}](hm-file:${path})`, preview: `/api/files/raw?inline=1&path=${encodeURIComponent(path)}` });
+            patch(id, { busy: false, text: `![${file.name}](hm-file:${linkPath(path)})`, preview: `/api/files/raw?inline=1&path=${encodeURIComponent(path)}` });
           } else if (kind === 'audio') {
             // The file itself goes along (a Voice trainer needs the recording); a short voice note also as its words.
             const path = await upload(file);
-            const link = `[${file.name}](hm-file:${path})`;
+            const link = `[${file.name}](hm-file:${linkPath(path)})`;
             const said = file.size < 5 * 1024 * 1024 && file.type.startsWith('audio/') ? await transcribe(file).catch(() => '') : '';
             patch(id, { busy: false, text: said ? `${link}\n--- Audio "${file.name}" (what is said in it) ---\n${clip(said, file.name)}` : link });
           } else {

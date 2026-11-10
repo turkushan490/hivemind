@@ -93,6 +93,19 @@ describe('voice training (HiveBot · Voice trainer)', () => {
     expect(readFileSync(join(dataDir, 'files', spoken[0].path), 'utf8')).toMatch(/^WAV:.*voice\.json:Good evening, sir\.$/);
   });
 
+  it('finds an upload with a space and brackets in its name ("x (2).mp3"), raw or encoded', async () => {
+    const { setOwner } = await import('../src/services/files.js');
+    const { audioFilesOf } = await import('../src/services/voiceTraining.js');
+    writeFileSync(join(dataDir, 'files', 'uploads', 'friend (2).mp3'), 'mp3 data');
+    setOwner('uploads/friend (2).mp3', 'u1');
+    const u = { id: 'u1', role: 'user' };
+    expect(audioFilesOf(u, 'jarvis\n\n[friend.mp3](hm-file:uploads/friend (2).mp3)')).toEqual(['uploads/friend (2).mp3']);
+    expect(audioFilesOf(u, 'jarvis\n\n[friend.mp3](hm-file:uploads/friend%20%282%29.mp3)\n[b.mp3](hm-file:uploads/friend.mp3)')).toEqual([
+      'uploads/friend (2).mp3',
+      'uploads/friend.mp3',
+    ]);
+  });
+
   it('a second run with the same recording adds nothing twice, and keeps the previous voice', async () => {
     const r = await runAndWait(app, { graph: trainer, question: 'Jarvis [friend.mp3](hm-file:uploads/friend.mp3)' });
     const ds = JSON.parse(r.outputs!.ds.text);

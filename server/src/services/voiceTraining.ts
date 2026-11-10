@@ -168,8 +168,12 @@ export function characterOf(vars: Record<string, string> | undefined, question: 
 const AUDIO = /\.(mp3|mp4|m4a|wav|ogg|flac|webm|aac|mov|mkv)$/i;
 export function audioFilesOf(user: FileUser, question: string, folder?: string): string[] {
   const out = new Set<string>();
-  for (const m of question.matchAll(/!?\[[^\]]*\]\(hm-file:([^)\s]+)\)/g)) {
-    const rel = decodeURIComponent(m[1]);
+  // Encoded links (x%20%282%29.mp3) and older raw ones with spaces / brackets in the name (x (2).mp3).
+  for (const m of question.matchAll(/!?\[[^\]]*\]\(hm-file:([^\n]+?)\)(?=\s|$)/g)) {
+    let rel = m[1];
+    try {
+      rel = decodeURIComponent(rel);
+    } catch {}
     if (AUDIO.test(rel)) out.add(rel);
   }
   if (folder?.trim()) {

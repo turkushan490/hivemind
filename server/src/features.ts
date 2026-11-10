@@ -58,4 +58,6 @@ export const FEATURES: readonly string[] = [
   'voiceDataset',
   'voiceClone',
   'speak',
+  // A voice name with a cloned voice of its own ("jarvis" -> clone:jarvis) speaks in it without a setting.
+  'autoCloneVoice',
 ];

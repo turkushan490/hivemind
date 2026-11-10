@@ -2,7 +2,7 @@ import type { VoiceSettings } from '@hivemind/shared';
 import { decrypt, encrypt } from '../crypto.js';
 import { db, getSetting, setSetting } from '../db/index.js';
 import { ensureKokoro, KOKORO_VOICES, kokoroAvailable } from './kokoro.js';
-import { isCloneVoice, speakClone } from './voiceTraining.js';
+import { isCloneVoice, listClonedVoices, speakClone } from './voiceTraining.js';
 
 /**
  * Voice, pluggable like providers: speech to text through any OpenAI-compatible /audio/transcriptions
@@ -181,14 +181,19 @@ export async function speak(input: string, userId: string, opts: SpeakOptions = 
   // A cloned voice ("clone:jarvis", or a Voices-for-apps name that points to one): the voice engine. When it can't
   // speak (no voice yet, engine off), the built-in voice says it instead, and the answer says why.
   const wanted = opts.voice?.trim();
-  const mapped = (wanted && s.appVoices?.[wanted.toLowerCase()]) || wanted || s.ttsVoice || '';
+  const pinned = (wanted && s.appVoices?.[wanted.toLowerCase()]) || '';
+  // A name with a cloned voice of its own ("jarvis" and clone:jarvis exists) speaks in it by itself, so a voice the
+  // Voice trainer builds reaches the apps and robots without a setting; Voices for apps only picks another clone.
+  const own = wanted && !isCloneVoice(wanted) && !isCloneVoice(pinned) && listClonedVoices().some((v) => v.id.toLowerCase() === `clone:${wanted.toLowerCase()}`);
+  const mapped = own ? `clone:${wanted!.toLowerCase()}` : pinned || wanted || s.ttsVoice || '';
   if (isCloneVoice(mapped)) {
     try {
       const out = await speakClone(input, mapped, { ...(opts.speed !== undefined && { speed: opts.speed }) });
       return { audio: out.audio, type: out.type };
     } catch (err) {
       if (!kokoroAvailable()) throw err;
-      const r = await speak(input, userId, { ...opts, voice: 'af_heart' });
+      // The voice it had before the clone (Voices for apps, e.g. jarvis = bm_george), else the default.
+      const r = await speak(input, userId, { ...opts, voice: pinned && !isCloneVoice(pinned) ? pinned : 'af_heart' });
       return { ...r, note: `${mapped} could not speak (${(err as Error).message.slice(0, 160)}); the built-in voice said it` };
     }
   }

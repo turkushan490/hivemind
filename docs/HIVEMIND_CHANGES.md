@@ -1032,6 +1032,9 @@ which project it works on, and can make a new one.
 - Files: `.wav`, `.mp3`, `.m4a`, `.ogg`, `.flac`, `.mp4`, `.webm` are served with their media type, so they play in
   the browser.
 - Not built (yet): music removal (Demucs), the two-speaker check, fine-tuning on ≥ 30 min, VoxCPM2 as a second engine.
+- **Automatic:** `/api/voice/speak` with a name that has a cloned voice of its own (`jarvis` and `clone:jarvis`
+  exists) speaks in it without any setting, even when Voices for apps still says a built-in voice (that one is then the
+  fallback). So the robot and the app get the new voice as soon as the Voice trainer builds it. Feature `autoCloneVoice`.
 - Fix: a second upload of the same file is saved as `x (2).mp3`; the space and brackets broke the link, so Audio
   prep found no recordings. The question box now writes the path encoded (`x%20%282%29.mp3`) and Audio prep also reads
   the old raw links.

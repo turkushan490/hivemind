@@ -120,6 +120,13 @@ describe('voice training (HiveBot · Voice trainer)', () => {
     expect(res.body).toMatch(/^WAV:.*jarvis.*voice\.json:Hello, sir\.$/);
     const voices = (await app.inject({ method: 'GET', url: '/api/voice/voices', headers: bearer() })).json();
     expect(voices.cloned.map((v: { id: string }) => v.id)).toEqual(['clone:jarvis']);
-    expect((await app.inject({ method: 'GET', url: '/api/health' })).json().features).toEqual(expect.arrayContaining(['audioPrep', 'voiceDataset', 'voiceClone', 'speak']));
+    expect((await app.inject({ method: 'GET', url: '/api/health' })).json().features).toEqual(expect.arrayContaining(['audioPrep', 'voiceDataset', 'voiceClone', 'speak', 'autoCloneVoice']));
+  });
+
+  it('a name with its own cloned voice speaks in it by itself, even when Voices for apps still says a built-in voice', async () => {
+    await app.inject({ method: 'PUT', url: '/api/settings/voice', headers: bearer(), payload: { appVoices: { jarvis: 'bm_george' } } });
+    const res = await app.inject({ method: 'POST', url: '/api/voice/speak', headers: bearer(), payload: { text: 'Good evening.', voice: 'Jarvis', format: 'wav' } });
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toMatch(/^WAV:.*jarvis.*voice\.json:Good evening\.$/);
   });
 });

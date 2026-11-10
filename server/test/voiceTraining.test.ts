@@ -23,7 +23,11 @@ http.createServer((req, res) => {
   req.on('data', (d) => chunks.push(d));
   req.on('end', () => {
     const raw = Buffer.concat(chunks);
-    if (req.url === '/v1/audio/transcriptions') return res.end(JSON.stringify({ text: 'hello from the clip' }));
+    if (req.url === '/v1/audio/transcriptions') {
+      // A spoken test line ("WAV:<voice>:<text>", or "NOISE" when the voice failed) is heard as its text.
+      const said = raw.toString().match(/WAV:[^\\r\\n]*:([^\\r\\n]+)/);
+      return res.end(JSON.stringify({ text: said ? said[1] : /NOISE/.test(raw.toString()) ? 'crash bang' : 'hello from the clip' }));
+    }
     const b = JSON.parse(raw.toString() || '{}');
     if (req.url === '/prep') {
       fs.mkdirSync(b.outDir, { recursive: true });
@@ -37,7 +41,12 @@ http.createServer((req, res) => {
       }
       return res.end(JSON.stringify({ clips, dropped: { quiet: 1, clipped: 0, silence: 0, short: 0 }, files: b.inputs.map((f) => ({ file: path.basename(f), minutes: 1, clips: 3 })) }));
     }
-    if (req.url === '/speak') { res.setHeader('content-type', 'audio/wav'); return res.end('WAV:' + b.voiceFile + ':' + b.text); }
+    if (req.url === '/speak') {
+      res.setHeader('content-type', 'audio/wav');
+      // "noisy …": the first try is noise (HiveMind hears it and asks again).
+      if (/noisy/.test(b.text) && !(globalThis.noisy = (globalThis.noisy || 0) + 1, globalThis.noisy > 1)) return res.end('NOISE'.padEnd(300, '~'));
+      return res.end('WAV:' + b.voiceFile + ':' + b.text);
+    }
     res.statusCode = 404; res.end('{}');
   });
 }).listen(Number(process.argv[2]), '127.0.0.1');
@@ -106,6 +115,15 @@ describe('voice training (HiveBot · Voice trainer)', () => {
     ]);
   });
 
+  it('keeps out what speech to text made up, and checks what a cloned voice said', async () => {
+    const { badTranscript, wordsHeard } = await import('../src/services/voiceTraining.js');
+    expect(badTranscript('Terima kasih telah menonton!', 7)).toBeTruthy();
+    expect(badTranscript('Thanks for watching!', 5)).toBeTruthy();
+    expect(badTranscript('Good evening, sir. All systems are ready.', 4)).toBeUndefined();
+    expect(wordsHeard('Shall I run the diagnostics?', 'shall i run the diagnostics')).toBe(1);
+    expect(wordsHeard('Shall I run the diagnostics?', 'crash bang')).toBe(0);
+  });
+
   it('a second run with the same recording adds nothing twice, and keeps the previous voice', async () => {
     const r = await runAndWait(app, { graph: trainer, question: 'Jarvis [friend.mp3](hm-file:uploads/friend.mp3)' });
     const ds = JSON.parse(r.outputs!.ds.text);
@@ -128,5 +146,11 @@ describe('voice training (HiveBot · Voice trainer)', () => {
     const res = await app.inject({ method: 'POST', url: '/api/voice/speak', headers: bearer(), payload: { text: 'Good evening.', voice: 'Jarvis', format: 'wav' } });
     expect(res.statusCode).toBe(200);
     expect(res.body).toMatch(/^WAV:.*jarvis.*voice\.json:Good evening\.$/);
+  });
+
+  it('noise instead of words is made again', async () => {
+    const res = await app.inject({ method: 'POST', url: '/api/voice/speak', headers: bearer(), payload: { text: 'A noisy line, sir.', voice: 'jarvis', format: 'wav' } });
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toMatch(/^WAV:.*:A noisy line, sir\.$/);
   });
 });

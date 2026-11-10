@@ -44,16 +44,28 @@ def db(x: np.ndarray) -> float:
     return float(20 * np.log10(np.sqrt(np.mean(x ** 2)) + 1e-9))
 
 
+def quietest(audio: np.ndarray, a: int, b: int) -> int:
+    """The quietest 20 ms in audio[a:b] (where a forced cut hurts least)."""
+    n = int(0.02 * SR)
+    seg = audio[a:b]
+    if len(seg) < 2 * n:
+        return b
+    fr = seg[: len(seg) // n * n].reshape(-1, n)
+    return a + int(np.argmin((fr ** 2).mean(axis=1))) * n + n // 2
+
+
 def split(audio: np.ndarray, min_sec: float, max_sec: float) -> list:
-    """Speech pieces between pauses (librosa's energy split), merged into clips of min..max seconds."""
+    """Speech pieces between pauses (librosa's energy split), glued into clips of about 8 s (never over max_sec).
+    A cloned voice wants one clean 5-10 s reference; clips glued up to 15 s gave long, mixed references."""
     import librosa
 
+    target = min(8.0, max_sec)
     parts = librosa.effects.split(audio, top_db=35, frame_length=1024, hop_length=256)
     clips, cur = [], None
     for s, e in parts:
         if cur is None:
             cur = [s, e]
-        elif (e - cur[0]) / SR <= max_sec and (s - cur[1]) / SR < 0.8:
+        elif (e - cur[0]) / SR <= max_sec and (s - cur[1]) / SR < 0.8 and (cur[1] - cur[0]) / SR < target:
             cur[1] = e
         else:
             clips.append(cur)
@@ -62,19 +74,35 @@ def split(audio: np.ndarray, min_sec: float, max_sec: float) -> list:
         clips.append(cur)
     out = []
     for s, e in clips:
-        # Too long: cut into max_sec pieces.
+        # Too long: cut at the quietest moment between 60 % of the target and max_sec, not in the middle of a word.
         while (e - s) / SR > max_sec:
-            out.append((s, s + int(max_sec * SR)))
-            s += int(max_sec * SR)
+            cut = quietest(audio, s + int(target * 0.6 * SR), s + int(max_sec * SR))
+            out.append((s, cut))
+            s = cut
         out.append((s, e))
     pad = int(0.15 * SR)
     return [(max(0, s - pad), min(len(audio), e + pad)) for s, e in out if (e - s) / SR >= min_sec]
 
 
+def quality(x: np.ndarray) -> tuple:
+    """(snr, flat): loud speech vs. the quiet parts in dB, and the spectral flatness of the loud parts (hiss, music,
+    sound effects score high, a clean voice low). Used to pick the cleanest clip for a cloned voice."""
+    n = int(0.03 * SR)
+    fr = x[: len(x) // n * n].reshape(-1, n)
+    if not len(fr):
+        return 0.0, 1.0
+    e = 20 * np.log10(np.sqrt((fr ** 2).mean(axis=1)) + 1e-9)
+    peak = np.percentile(e, 95)
+    spec = np.abs(np.fft.rfft(fr * np.hanning(n), axis=1)) + 1e-9
+    flat = np.exp(np.log(spec).mean(axis=1)) / spec.mean(axis=1)
+    loud = e > peak - 25
+    return round(float(peak - np.percentile(e, 10)), 1), round(float(flat[loud].mean() if loud.any() else 1.0), 3)
+
+
 def prep(body: dict) -> dict:
     """Files → clean clips (WAV, 24 kHz mono 16-bit, about -20 dB), with what was thrown away and why."""
     out_dir, prefix = body["outDir"], body.get("prefix", "clip")
-    min_sec, max_sec = float(body.get("minSec", 3)), float(body.get("maxSec", 15))
+    min_sec, max_sec = float(body.get("minSec", 3)), float(body.get("maxSec", 12))
     os.makedirs(out_dir, exist_ok=True)
     clips, dropped, files = [], {"quiet": 0, "clipped": 0, "silence": 0, "short": 0}, []
     n = int(body.get("start", 1))
@@ -96,10 +124,12 @@ def prep(body: dict) -> dict:
             if np.mean(20 * np.log10(np.sqrt(np.mean(frames ** 2, axis=1)) + 1e-9) > level - 15) < 0.4:
                 dropped["silence"] += 1
                 continue
+            snr, flat = quality(x)
             x = np.clip(x * (10 ** ((-20 - level) / 20)), -1, 1)
             path = os.path.join(out_dir, f"{prefix}_{n:04d}.wav")
             sf.write(path, x, SR, subtype="PCM_16")
-            clips.append({"path": path, "seconds": round(len(x) / SR, 2), "db": round(level, 1), "source": os.path.basename(src)})
+            clips.append({"path": path, "seconds": round(len(x) / SR, 2), "db": round(level, 1), "snr": snr, "flat": flat,
+                          "source": os.path.basename(src)})
             n += 1
             kept_here += 1
         files.append({"file": os.path.basename(src), "minutes": round(len(audio) / SR / 60, 2), "clips": kept_here, "pieces": len(pieces)})
@@ -204,8 +234,10 @@ def speak(body: dict):
     # audio, many minutes on this machine), blocking every other voice job. About 0.5 s a word, twice that as room.
     words = max(1, len(text.split()))
     max_tokens = int(min(2048, max(96, 12 * (words * 0.5 + 2) * 2)))
+    # A bit calmer than the model's own 0.9: fewer made-up noises (HiveMind also checks what was said, and asks again).
+    temp = float(body.get("temperature") or 0.7)
     wavs, sr = model.generate_voice_clone(text=text, language=body.get("language", "English"), voice_clone_prompt=p,
-                                          max_new_tokens=max_tokens)
+                                          max_new_tokens=max_tokens, temperature=temp, subtalker_temperature=temp)
     w = wavs[0]
     speed = float(body.get("speed") or 1)
     if abs(speed - 1) > 0.05:

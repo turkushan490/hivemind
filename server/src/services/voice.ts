@@ -188,7 +188,9 @@ export async function speak(input: string, userId: string, opts: SpeakOptions = 
   const mapped = own ? `clone:${wanted!.toLowerCase()}` : pinned || wanted || s.ttsVoice || '';
   if (isCloneVoice(mapped)) {
     try {
-      const out = await speakClone(input, mapped, { ...(opts.speed !== undefined && { speed: opts.speed }) });
+      // What it said is checked with speech to text (when set up): noises instead of words are made again.
+      const check = s.sttUrl ? (wav: Buffer) => transcribe(wav, 'audio/wav', userId) : undefined;
+      const out = await speakClone(input, mapped, { ...(opts.speed !== undefined && { speed: opts.speed }), ...(check && { check }) });
       return { audio: out.audio, type: out.type };
     } catch (err) {
       if (!kokoroAvailable()) throw err;

@@ -68,7 +68,7 @@ export const VOICE_NODES: Record<'audioPrep' | 'voiceDataset' | 'voiceClone' | '
       const character = ds?.character || v.character(ctx.vars, ctx.question);
       const name = fill(ctx.node.config.voice || 'clone:{{vars.character}}', { ...ctx, vars: { ...ctx.vars, character } });
       const dataset = ds?.dataset || fill(ctx.node.config.dataset || 'hivebot-voice-{{vars.character}}', { ...ctx, vars: { ...ctx.vars, character } });
-      const def = v.clone(dataset, name, ctx.node.config.count ?? 3);
+      const def = v.clone(dataset, name, ctx.node.config.count ?? 1);
       ctx.progress(`Voice ${def.id} built from ${def.refs.length} clips (${def.minutes} min in the dataset)`);
       return JSON.stringify({ voice: def.id, character, refs: def.refs.map((r) => r.text), minutes: def.minutes });
     },

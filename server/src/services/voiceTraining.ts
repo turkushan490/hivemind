@@ -214,10 +214,29 @@ export interface Clip {
   path: string;
   seconds: number;
   db: number;
+  /** Loud speech vs. the quiet parts (dB) and spectral flatness of the speech (noise, music, effects: high). */
+  snr?: number;
+  flat?: number;
   source: string;
 }
 
-/** Cuts recordings into clean 3–15 s clips under files/voices/<name>/ (owned by the runner). */
+/**
+ * What speech to text writes for silence, music or effects (Whisper's well-known inventions), or words that can't fit
+ * the clip: such a clip never goes in the dataset, and is never a voice's reference.
+ */
+const MADE_UP = /thank(s| you) (so much )?for watching|terima kasih|subtitles? (by|from)|amara\.org|please subscribe|like and subscribe|untertitel|sous-titres/i;
+export function badTranscript(text: string, seconds: number): string | undefined {
+  const t = text.trim();
+  if (!t) return 'no words';
+  if (MADE_UP.test(t)) return 'made up by speech to text';
+  const letters = t.replace(/[^\p{L}]/gu, '');
+  if (letters.length && letters.replace(/[a-z]/gi, '').length / letters.length > 0.2) return 'not English';
+  const wps = t.split(/\s+/).length / Math.max(1, seconds);
+  if (seconds >= 3 && (wps < 0.35 || wps > 5.5)) return 'words do not fit the clip';
+  return undefined;
+}
+
+/** Cuts recordings into clean clips of about 8 s (3–12 s) under files/voices/<name>/ (owned by the runner). */
 export async function prepAudio(user: FileUser, files: string[], name: string, opts: { minSec?: number; maxSec?: number } = {}) {
   if (!files.length) throw new Error('No recordings: attach mp3 / mp4 / wav / m4a files to the question (or set the block\'s folder)');
   const relDir = `voices/${name}`;
@@ -225,7 +244,7 @@ export async function prepAudio(user: FileUser, files: string[], name: string, o
   mkdirSync(dir, { recursive: true });
   // Numbers go on after the clips that are already there.
   const start = readdirSync(dir).filter((f) => /^clip_\d+\.wav$/.test(f)).length + 1;
-  const res = await call('/prep', { inputs: files.map((f) => ownPath(user, f)), outDir: dir, prefix: 'clip', start, minSec: opts.minSec ?? 3, maxSec: opts.maxSec ?? 15 }, 60 * 60_000);
+  const res = await call('/prep', { inputs: files.map((f) => ownPath(user, f)), outDir: dir, prefix: 'clip', start, minSec: opts.minSec ?? 3, maxSec: opts.maxSec ?? 12 }, 60 * 60_000);
   const out = (await res.json()) as { clips: (Omit<Clip, 'path'> & { path: string })[]; dropped: Record<string, number>; files: { file: string; minutes: number; clips: number }[] };
   const clips = out.clips.map((c) => {
     const rel = relative(filesDir, c.path).split(sep).join('/');
@@ -280,11 +299,12 @@ export async function addToVoiceDataset(
         }
       }
     }
-    if (!text) {
+    if (!text || badTranscript(text, c.seconds)) {
       failed++;
+      if (text) rmSync(full, { force: true });
       continue;
     }
-    addItems(ds.id, 'block', [{ input: text, output: '', files: [c.path], ref, meta: { seconds: c.seconds, db: c.db, source: c.source } }]);
+    addItems(ds.id, 'block', [{ input: text, output: '', files: [c.path], ref, meta: { seconds: c.seconds, db: c.db, snr: c.snr, flat: c.flat, source: c.source } }]);
     have.add(ref);
     added++;
   }
@@ -309,22 +329,39 @@ export interface VoiceDef {
 
 const voiceFile = (name: string) => join(state.voicesDir, voiceName(name), 'voice.json');
 
-/** Builds (or rebuilds) a cloned voice from the best clips of a voice dataset: clean, 6–12 s, with the most words. */
-export function buildVoice(user: FileUser, dataset: string, name: string, count = 3): VoiceDef {
+/**
+ * Builds (or rebuilds) a cloned voice from the best clip(s) of a voice dataset. One clean 5–10 s clip of normal speech
+ * works best for this model: several long clips joined made it unstable (noises, effects copied from the recording).
+ */
+export function buildVoice(user: FileUser, dataset: string, name: string, count = 1): VoiceDef {
   const ds = ensureDataset(user.id, dataset, 'voice');
   const rows = db.prepare("SELECT input, files, meta FROM dataset_items WHERE dataset_id = ? AND (review IS NULL OR review = 'accepted')").all(ds.id) as { input: string; files: string | null; meta: string | null }[];
   if (!rows.length) throw new Error(`The voice dataset "${dataset}" is empty: run the recordings through Audio prep and Voice dataset first`);
   const items = rows
     .map((r) => {
-      const meta = JSON.parse(r.meta ?? '{}') as { seconds?: number; db?: number };
-      return { text: r.input, file: (JSON.parse(r.files ?? '[]') as string[])[0], seconds: meta.seconds ?? 0, db: meta.db ?? -30 };
+      const meta = JSON.parse(r.meta ?? '{}') as { seconds?: number; db?: number; snr?: number; flat?: number; source?: string };
+      return { text: r.input, file: (JSON.parse(r.files ?? '[]') as string[])[0], seconds: meta.seconds ?? 0, db: meta.db ?? -30, snr: meta.snr, flat: meta.flat, source: meta.source ?? '' };
     })
     .filter((it) => it.file && existsSync(safePath(it.file)));
-  const score = (it: (typeof items)[0]) => (it.seconds >= 6 && it.seconds <= 12 ? 10 : 0) - Math.abs(it.db + 20) * 0.3 + Math.min(it.text.split(/\s+/).length, 30) * 0.2;
-  // Varied: no two refs from the same source file when there is a choice.
-  const sorted = [...items].sort((a, b) => score(b) - score(a));
+  const usable = items.filter((it) => !badTranscript(it.text, it.seconds));
+  if (!usable.length) throw new Error(`The voice dataset "${dataset}" has no clip with clear speech`);
+  const score = (it: (typeof items)[0]) => {
+    const wps = it.text.split(/\s+/).length / Math.max(1, it.seconds);
+    const digits = (it.text.match(/\d+/g) ?? []).length;
+    return (
+      (it.seconds >= 5 && it.seconds <= 10 ? 10 : it.seconds > 10 && it.seconds <= 12 ? 5 : 0) +
+      (wps >= 2 && wps <= 3.6 ? 4 : 0) - // normal speech, not lists of numbers or single words
+      Math.min(digits, 10) * 0.5 -
+      Math.abs(it.db + 20) * 0.3 +
+      (it.snr !== undefined ? Math.min(it.snr, 50) * 0.15 : 0) - // clean: loud speech over a quiet background
+      (it.flat !== undefined ? it.flat * 30 : 0) // noise, music, effects
+    );
+  };
+  // Varied: no two refs from the same recording when there is a choice.
+  const sorted = [...usable].sort((a, b) => score(b) - score(a));
   const picked: typeof items = [];
-  for (const it of sorted) if (picked.length < count && !picked.some((p) => p.file === it.file)) picked.push(it);
+  for (const it of sorted) if (picked.length < count && !picked.some((p) => p.source && p.source === it.source)) picked.push(it);
+  for (const it of sorted) if (picked.length < count && !picked.includes(it)) picked.push(it);
   const dir = join(state.voicesDir, voiceName(name));
   mkdirSync(dir, { recursive: true });
   // The previous version stays 7 days ("Use previous voice").
@@ -371,10 +408,42 @@ export function listClonedVoices(): { id: string; name: string; engine: string; 
 
 export const isCloneVoice = (voice: string) => /^(clone|ft):/i.test(voice.trim());
 
-/** One sentence (or a few) in a cloned voice: WAV. */
-export async function speakClone(text: string, voice: string, opts: { speed?: number } = {}): Promise<{ audio: Buffer; type: string; device: string }> {
+/** How many of the words that should be said were heard (0–1). */
+export function wordsHeard(expected: string, heard: string): number {
+  const words = (t: string) => t.toLowerCase().replace(/[^\p{L}\p{N}\s']/gu, ' ').split(/\s+/).filter(Boolean);
+  const want = words(expected);
+  if (!want.length) return 1;
+  const got = new Set(words(heard));
+  return want.filter((w) => got.has(w)).length / want.length;
+}
+
+/**
+ * One sentence (or a few) in a cloned voice: WAV. With `check` (speech to text), what came out is written down and
+ * compared with the text: noises or wrong words are made again, at most 3 times, and the best one is kept; when even
+ * that is mostly wrong it throws, so the caller's built-in voice says it.
+ */
+export async function speakClone(
+  text: string,
+  voice: string,
+  opts: { speed?: number; check?: (wav: Buffer) => Promise<string> } = {},
+): Promise<{ audio: Buffer; type: string; device: string; heard?: number }> {
   const file = voiceFile(voice);
   if (!existsSync(file)) throw new Error(`There is no voice "${voice}" yet: build it with the HiveBot · Voice trainer workflow`);
-  const res = await call('/speak', { text, voiceFile: file, device: voiceEngineSettings().device, ...(opts.speed && { speed: opts.speed }) }, 10 * 60_000);
-  return { audio: Buffer.from(await res.arrayBuffer()), type: 'audio/wav', device: res.headers.get('x-voice-device') ?? '' };
+  let best: { audio: Buffer; device: string; heard: number } | undefined;
+  for (let attempt = 0; attempt < (opts.check ? 3 : 1); attempt++) {
+    const res = await call('/speak', { text, voiceFile: file, device: voiceEngineSettings().device, ...(opts.speed && { speed: opts.speed }) }, 10 * 60_000);
+    const audio = Buffer.from(await res.arrayBuffer());
+    const device = res.headers.get('x-voice-device') ?? '';
+    if (!opts.check) return { audio, type: 'audio/wav', device };
+    let heard: number;
+    try {
+      heard = wordsHeard(text, await opts.check(audio));
+    } catch {
+      return { audio, type: 'audio/wav', device }; // speech to text is down: no check
+    }
+    if (!best || heard > best.heard) best = { audio, device, heard };
+    if (heard >= 0.75) break;
+  }
+  if (best!.heard < 0.4) throw new Error(`the cloned voice made noise instead of the words (${Math.round(best!.heard * 100)} % heard after 3 tries)`);
+  return { audio: best!.audio, type: 'audio/wav', device: best!.device, heard: best!.heard };
 }

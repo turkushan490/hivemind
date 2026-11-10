@@ -1035,6 +1035,14 @@ which project it works on, and can make a new one.
 - **Automatic:** `/api/voice/speak` with a name that has a cloned voice of its own (`jarvis` and `clone:jarvis`
   exists) speaks in it without any setting, even when Voices for apps still says a built-in voice (that one is then the
   fallback). So the robot and the app get the new voice as soon as the Voice trainer builds it. Feature `autoCloneVoice`.
+- **Cleaner cloned voices** (the first Jarvis voice made noises, falling objects and robot sounds): one clean 5-10 s
+  reference clip instead of three 12-15 s clips joined. Audio prep glues pauses into clips of about 8 s (3-12 s, a
+  forced cut at the quietest moment) and measures each clip (`snr`, spectral `flat`ness: noise, music and effects are
+  high); Voice clone (`count` 1 by default) picks the clip with normal speech (2-3.6 words a second, few numbers), a
+  quiet background and the least noise. Clips whose words speech to text made up ("Thanks for watching", "Terima kasih
+  ...", not English, words that can't fit the clip) never go in the dataset and are never a reference. Speaking is a
+  bit calmer (temperature 0.7) and checked: what the voice said is written down and compared with the text; noise or
+  wrong words are made again (at most 3 tries, the best is kept; under 40 % heard -> the built-in voice says it).
 - Fix: Speak could hang for minutes ("fetch failed" after 5 min, and every voice job behind it failed too): the model
   had no length limit and could make up to ~170 s of audio. Now about 0.5 s a word with twice that as room
   (`max_new_tokens`); the engine is never stopped for being idle while a job waits or runs; a clear message instead of

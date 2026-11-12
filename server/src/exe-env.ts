@@ -3,7 +3,13 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
-import { webAssets, webBuildId } from './web-assets.generated.js';
+import { appRelease, webAssets, webBuildId } from './web-assets.generated.js';
+
+// The version the exe reports at /api/health (baked in at build time); real env wins if the user set it.
+if (appRelease) {
+  if (!process.env.APP_RELEASE) process.env.APP_RELEASE = appRelease;
+  if (!process.env.APP_VERSION) process.env.APP_VERSION = appRelease;
+}
 
 // Data (database, encrypted keys, files) lives where a normal user may write — not next to the .exe (Program Files is read-only).
 const localAppData = process.env.LOCALAPPDATA || join(homedir(), 'AppData', 'Local');

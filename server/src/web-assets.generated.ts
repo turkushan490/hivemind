@@ -8,3 +8,5 @@
 export const webAssets: Record<string, string> = {};
 /** Changes with each build so the exe re-extracts the UI only when it is new. */
 export const webBuildId = '';
+/** The version the exe reports at /api/health (set by the embed script from APP_RELEASE / package.json). */
+export const appRelease = '';

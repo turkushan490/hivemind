@@ -17,6 +17,7 @@ import { getJob, jobsDone, jobView, listJobs, markSeen, moveJob, resumeCheckpoin
 import { cancelRun, startRun } from '../events/runs.js';
 import { gpuFreerFor, resolverFor, trainingFor } from './providers.js';
 import { sourceOf } from './runs.js';
+import { priorityFor } from '../services/priority.js';
 import { db } from '../db/index.js';
 import type { User } from './auth.js';
 import { requireAdmin, requireUser } from './auth.js';
@@ -138,6 +139,7 @@ export function robotRoutes(app: FastifyInstance) {
         training: trainingFor(u),
         source: sourceOf(u, '/v1'),
         timeLimitMin: 60,
+        priority: priorityFor(u, (req.body as { priority?: unknown } | undefined)?.priority),
         resumable: { userId: u.id, providerUserId: u.id },
         startFrom: r.checkpoint,
       });

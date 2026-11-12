@@ -14,6 +14,7 @@ import { canvasAllowed } from './scope.js';
 import { gpuFreerFor, resolverFor, trainingFor } from './providers.js';
 import { batchStatus, startBatch, stopBatch } from '../services/batch.js';
 import { allowedFor, checkGraph } from '../services/access.js';
+import { priorityFor } from '../services/priority.js';
 
 export interface CanvasRow {
   id: string;
@@ -121,6 +122,7 @@ export function startCanvasRun(user: User, body: RunRequest, opts: { scheduled?:
   const graph = applyModels(chosen, body.models);
   as400(() => validateGraph(graph));
   if (body.cancelWhenAlone !== undefined && typeof body.cancelWhenAlone !== 'boolean') throw bad('cancelWhenAlone must be true or false');
+  if (body.priority !== undefined && (typeof body.priority !== 'number' || !Number.isFinite(body.priority))) throw bad('priority must be a number from 1 (first) to 200');
   return startRun({
     ownerId: user.id,
     user,
@@ -133,6 +135,7 @@ export function startCanvasRun(user: User, body: RunRequest, opts: { scheduled?:
     training: trainingFor(user, opts),
     source: opts.source ?? (opts.scheduled ? 'Schedule' : sourceOf(user)),
     cancelWhenAlone: body.cancelWhenAlone === true,
+    priority: priorityFor(user, body.priority),
     // Runs of a limited API token are not picked up again (its scope isn't stored).
     ...(!user.scope && { resumable: { userId: user.id, providerUserId: providerUser.id } }),
   });
@@ -164,6 +167,7 @@ export function resumeStoppedRuns(): number {
         freeGpu: gpuFreerFor(providerUser),
         training: trainingFor(user),
         source: meta.source,
+        priority: meta.priority,
         resumable: { userId: meta.userId, providerUserId: meta.providerUserId },
         resume: { runId: r.id, checkpoint: state, events, startedAt: Date.parse(`${r.startedAt.replace(' ', 'T')}Z`) || Date.now() },
       });
@@ -277,7 +281,7 @@ export function runRoutes(app: FastifyInstance) {
     (
       db
         .prepare(
-          `SELECT r.id, r.canvas_id, r.question, r.status, r.started_at, r.finished_at, r.final, r.cost, r.source, c.name AS canvas_name
+          `SELECT r.id, r.canvas_id, r.question, r.status, r.started_at, r.finished_at, r.final, r.cost, r.source, r.priority, c.name AS canvas_name
            FROM runs r LEFT JOIN canvases c ON c.id = r.canvas_id
            WHERE r.owner_id = ? ORDER BY r.started_at DESC LIMIT 200`,
         )
@@ -293,6 +297,7 @@ export function runRoutes(app: FastifyInstance) {
       final: r.final ?? undefined,
       cost: r.cost ?? undefined,
       source: r.source ?? undefined,
+      priority: r.priority ?? undefined,
     })),
   );
 

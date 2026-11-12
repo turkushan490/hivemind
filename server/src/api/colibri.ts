@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { colibriStatus, deleteModel, isInstalled, saveColibriSettings, stopEngine, warmModel, type ColibriSettings } from '../colibri/engine.js';
 import { cancelJob, catalog, listJobs, setHfTokenSource, startDownload, startGguf } from '../colibri/models.js';
 import { db } from '../db/index.js';
-import { withHostLock } from '../engine/run.js';
+import { DEFAULT_PRIORITY, withHostLock } from '../engine/run.js';
 import { token as hfToken } from '../lab/hf.js';
 import { requireAdmin } from './auth.js';
 import { colibriGpuHost, forgetModels, gpuFreerFor } from './providers.js';
@@ -79,7 +79,7 @@ export function colibriRoutes(app: FastifyInstance) {
           await gpuFreerFor(req.user!)(host, row?.id, { model }).catch(() => {});
           await warmModel(model);
         },
-        { label: `Colibri: loading ${model}` },
+        { label: `Colibri: loading ${model}`, priority: DEFAULT_PRIORITY },
       );
       return { ok: true };
     } catch (err) {

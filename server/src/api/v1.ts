@@ -13,6 +13,7 @@ import { allowedModelsOf, gpuFreerFor, isColibri, resolverFor, trainingFor, usab
 import { canvasesFor, runSetup, sourceOf } from './runs.js';
 import { noteRun } from '../services/activity.js';
 import { allowedFor, notAllowed } from '../services/access.js';
+import { priorityFor } from '../services/priority.js';
 import { noteCall } from '../services/activity.js';
 import { createJob } from '../services/robotJobs.js';
 
@@ -76,6 +77,8 @@ export function v1Routes(app: FastifyInstance) {
   app.post('/v1/chat/completions', { preHandler: requireToken }, async (req, reply) => {
     const body = (req.body ?? {}) as { model?: string; messages?: unknown; stream?: boolean; hivemind_vars?: unknown };
     if (!body.model) return reply.code(400).send(apiError('"model" is required: the id or name of a saved canvas (see GET /v1/models)'));
+    // GPU priority: hivemind_vars.priority (1 = first … 200). T3 Code is pinned at 100; HiveBot (robot token) wins by default.
+    const priority = priorityFor(req.user!, (body.hivemind_vars as { priority?: unknown } | undefined)?.priority);
     // A single model ("colibri/qwen36-35b"): called directly, tools and all (a canvas id never has a slash).
     const single = body.model.includes('/') && !findCanvas(canvasesFor(req.user!), body.model) ? splitModelId(body.model.replace(/^hivemind\//i, '')) : undefined;
     if (single) {
@@ -84,7 +87,7 @@ export function v1Routes(app: FastifyInstance) {
       const row = usableRow(req.user!, single.providerId);
       if (!row?.enabled) return reply.code(404).send(apiError(`No model "${body.model}". GET /v1/models lists them.`, 'invalid_request_error', 'model_not_found'));
       const provider = await resolverFor(req.user!)(single.providerId);
-      return callApiModel(req, reply, { user: req.user!, id: body.model, ...single, provider, freeGpu: gpuFreerFor(req.user!), body: req.body as Record<string, unknown> });
+      return callApiModel(req, reply, { user: req.user!, id: body.model, ...single, provider, freeGpu: gpuFreerFor(req.user!), body: req.body as Record<string, unknown>, priority });
     }
     let question: string;
     let vars: Record<string, string>;
@@ -93,6 +96,8 @@ export function v1Routes(app: FastifyInstance) {
       // HiveMind extra: named values for {{vars.name}}, as with POST /api/runs.
       // background / progress may come as true/false: they are switches here, not text for the workflow.
       const hv = { ...((body.hivemind_vars ?? {}) as Record<string, unknown>) };
+      // priority is a queue switch (handled above), not a {{vars.priority}} value.
+      delete hv.priority;
       for (const k of ['background', 'progress']) if (typeof hv[k] === 'boolean') hv[k] = String(hv[k]);
       vars = checkVars(hv);
       const c = chatFrom(body.messages);
@@ -141,6 +146,7 @@ export function v1Routes(app: FastifyInstance) {
         freeGpu: gpuFreerFor(providerUser),
         training: trainingFor(user),
         source: sourceOf(user, '/v1'),
+        priority,
         // A background job may take an hour, and goes on after a restart.
         ...(vars.background === 'true' && { timeLimitMin: 60, resumable: { userId: user.id, providerUserId: providerUser.id } }),
       });

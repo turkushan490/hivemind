@@ -824,6 +824,8 @@ export interface RunRequest {
   models?: Record<string, ModelRef>;
   /** Cancel the run when nobody has followed /api/runs/:id/events for 30 seconds (also from the start, for a client that never connects). */
   cancelWhenAlone?: boolean;
+  /** GPU priority, 1 (runs first) … 200, default 100: when a local GPU is busy, the waiting run with the lowest number goes next. */
+  priority?: number;
 }
 
 export interface RunSummary {
@@ -838,6 +840,8 @@ export interface RunSummary {
   cost?: number;
   /** Who or what started it: "Screen", "API: <token>", "/v1: <token>", "Schedule", "Batch". */
   source?: string;
+  /** GPU priority it ran at (1 = first … 200). */
+  priority?: number;
 }
 
 /** Settings → Run limits (GET/PUT /api/settings/run-limits). */
@@ -872,6 +876,8 @@ export interface ActiveRun {
   owner: string;
   mine: boolean;
   startedAt: number;
+  /** GPU priority (1 = first … 200): which waiting run takes a shared GPU next. */
+  priority?: number;
   /** The first 200 characters of the question. */
   question: string;
   blocks: ActiveBlock[];

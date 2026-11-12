@@ -135,6 +135,8 @@ export async function callApiModel(
     provider: ResolvedProvider;
     freeGpu: (host: string, providerId?: string, need?: { model?: string; bytes?: number }) => Promise<unknown>;
     body: Record<string, unknown>;
+    /** GPU priority (1 = first … 200): T3 Code and other coding agents share the same queue as runs. */
+    priority?: number;
   },
 ) {
   const { user, id, providerId, model, provider: p, body } = o;
@@ -277,7 +279,7 @@ export async function callApiModel(
           await o.freeGpu(p.hostKey, providerId, { model, bytes: info?.sizeBytes }).catch(() => {});
           await work();
         },
-        { signal: stop.signal, label: `API: ${model}` },
+        { signal: stop.signal, label: `API: ${model}`, priority: o.priority },
       );
     } else await work();
   } catch (err) {

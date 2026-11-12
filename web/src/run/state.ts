@@ -168,7 +168,7 @@ export function useRun(onProblem?: () => void) {
     return () => clearInterval(t);
   }, [running]);
 
-  const start = async (body: { question: string; graph: CanvasGraph; canvasId?: string }) => {
+  const start = async (body: { question: string; graph: CanvasGraph; canvasId?: string; priority?: number }) => {
     const { runId } = await api<{ runId: string }>('/api/runs', { body });
     listen(runId, body.graph);
   };

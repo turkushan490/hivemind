@@ -141,6 +141,14 @@ function Editor({ active, onProblem, followRequest }: { active: boolean; onProbl
   /** A run started elsewhere (the API, DungeonMind, a schedule) that the canvas shows live. */
   const [watching, setWatching] = useState<{ runId: string; title: string }>();
   const [showFile, setShowFile] = useState(false);
+  // GPU priority for this run (1 = first … 200), remembered per browser. Run several canvases and the lower number goes first.
+  const [priority, setPriority] = useState<number>(() => {
+    const n = Number(localStorage.getItem('hivemind.priority'));
+    return Number.isFinite(n) && n >= 1 && n <= 200 ? Math.round(n) : 100;
+  });
+  useEffect(() => {
+    localStorage.setItem('hivemind.priority', String(priority));
+  }, [priority]);
   const [panel, setPanel] = useStored<'inspector' | 'builder'>('canvas.panel', 'inspector');
   /** PC only: the blocks panel and the Inspector/Builder panel fold away to a thin edge with an arrow. */
   const [blocksOpen, setBlocksOpen] = useStored('canvas.blocksOpen', true);
@@ -471,7 +479,7 @@ function Editor({ active, onProblem, followRequest }: { active: boolean; onProbl
     }
     setNodes((ns) => ns.map((n) => ({ ...n, selected: false })));
     try {
-      await run.start({ question: q.trim(), graph, canvasId: doc.id });
+      await run.start({ question: q.trim(), graph, canvasId: doc.id, priority });
     } catch {}
   };
 
@@ -709,6 +717,20 @@ function Editor({ active, onProblem, followRequest }: { active: boolean; onProbl
           <MicButton size="sm" disabled={run.running} onText={(text) => setQuestion((question ? `${question} ` : '') + text)} />
           <label className="flex shrink-0 items-center gap-1.5 text-xs text-slate-400" title="The view glides to the block that is working">
             <input type="checkbox" checked={follow} onChange={(e) => setFollow(e.target.checked)} /> Follow
+          </label>
+          <label
+            className="flex shrink-0 items-center gap-1 text-xs text-slate-400"
+            title="GPU priority: 1 runs first, 200 last (default 100). When a local GPU is busy, the waiting run with the lowest number goes next. T3 Code runs at 100."
+          >
+            Prio
+            <input
+              type="number"
+              min={1}
+              max={200}
+              value={priority}
+              onChange={(e) => setPriority(Math.min(200, Math.max(1, Math.round(Number(e.target.value) || 100))))}
+              className="w-14 rounded border border-[#30363d] bg-[#0d1117] px-1 py-0.5 text-slate-200"
+            />
           </label>
           {run.running ? (
             <button className="btn bg-red-600 hover:bg-red-500" onClick={run.cancel}>

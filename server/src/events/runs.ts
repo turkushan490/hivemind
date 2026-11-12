@@ -1,7 +1,7 @@
 import type { ActiveBlock, ActiveRun, CanvasGraph, PauseAction, PauseInfo, ResumeRequest, RunEvent, RunStatus } from '@hivemind/shared';
 import { newId } from '../crypto.js';
 import { db } from '../db/index.js';
-import { cancelText, hostHolder, runGraph, type Checkpoint, type EngineDeps } from '../engine/run.js';
+import { cancelText, clampPriority, hostHolder, runGraph, type Checkpoint, type EngineDeps } from '../engine/run.js';
 import { runLimits } from '../services/runLimits.js';
 import type { ChatContext, NodeServices } from '../nodes/index.js';
 import { logError } from '../errors.js';
@@ -27,6 +27,8 @@ export interface ResumeMeta {
   question: string;
   vars: Record<string, string>;
   source: string;
+  /** GPU priority (1 = first … 200), so a run picked up after a restart keeps its place in the queue. */
+  priority?: number;
 }
 
 /** runs.checkpoint: how it was started, how far it got, and its events so far. */
@@ -59,6 +61,8 @@ interface LiveRun {
   source: string;
   startedAt: number;
   question: string;
+  /** GPU priority (1 = first … 200): which waiting run takes the GPU next. */
+  priority: number;
   events: RunEvent[];
   listeners: Set<Listener>;
   abort: AbortController;
@@ -117,8 +121,11 @@ export function startRun(opts: {
   timeLimitMin?: number;
   /** A new run that keeps these block outputs and runs the rest (a background job started again from a block). */
   startFrom?: Checkpoint;
+  /** GPU priority (1 = first … 200, default 100): a lower number takes a shared GPU before a higher one. */
+  priority?: number;
 }): string {
   const access = opts.access ?? (opts.user ? allowedFor(opts.user) : undefined);
+  const priority = clampPriority(opts.priority);
   if (access) checkGraph(opts.graph, access);
   // Files: what the run saves belongs to whoever runs it; it reads only their files (an admin's: all).
   const fileUser = opts.user ?? { id: opts.ownerId, role: 'user' as const };
@@ -137,6 +144,7 @@ export function startRun(opts: {
     source,
     startedAt: opts.resume?.startedAt ?? Date.now(),
     question: opts.question,
+    priority,
     events: opts.resume?.events ?? [],
     listeners: new Set(),
     abort: new AbortController(),
@@ -150,18 +158,19 @@ export function startRun(opts: {
   live.set(id, run);
   // What it takes to start this run again after a restart; its progress is added as blocks finish.
   const meta: ResumeMeta | undefined = opts.resumable && !opts.cancelWhenAlone && !opts.chat
-    ? { ...opts.resumable, graph: opts.graph, canvasId: opts.canvasId, question: opts.question, vars: opts.vars ?? {}, source }
+    ? { ...opts.resumable, graph: opts.graph, canvasId: opts.canvasId, question: opts.question, vars: opts.vars ?? {}, source, priority }
     : undefined;
   if (opts.resume) {
     db.prepare("UPDATE runs SET status = 'running' WHERE id = ?").run(id);
   } else {
-    db.prepare("INSERT INTO runs (id, owner_id, canvas_id, question, status, vars, source) VALUES (?, ?, ?, ?, 'running', ?, ?)").run(
+    db.prepare("INSERT INTO runs (id, owner_id, canvas_id, question, status, vars, source, priority) VALUES (?, ?, ?, ?, 'running', ?, ?, ?)").run(
       id,
       opts.ownerId,
       opts.canvasId ?? null,
       opts.question,
       opts.vars && Object.keys(opts.vars).length ? JSON.stringify(opts.vars) : null,
       source,
+      priority,
     );
   }
   const saveCheckpoint = (cp: Checkpoint) => {
@@ -265,6 +274,7 @@ export function startRun(opts: {
       ...(opts.startFrom && !opts.resume && { resume: opts.startFrom, startFrom: true }),
       save: saveCheckpoint,
       lockLabel: source.includes(': ') ? source.slice(source.indexOf(': ') + 2) : (canvasName ?? source),
+      priority,
       access,
       // Stats: every model call and every Judge/Vote pick, kept even when the run is deleted from History.
       record: {
@@ -514,6 +524,7 @@ export function activeRuns(user: Pick<User, 'id' | 'role' | 'scope'>): ActiveRun
       owner: nameOf(r.ownerId),
       mine: r.ownerId === user.id,
       startedAt: r.startedAt,
+      priority: r.priority,
       question: r.question.slice(0, 200),
       ...(r.pauses.size && { paused: [...r.pauses.values()].map((p) => p.info) }),
       blocks: [...r.blocks.values()].map((b): ActiveBlock => {

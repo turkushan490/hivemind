@@ -63,6 +63,8 @@ export interface EngineDeps {
   limits?: RunLimits;
   /** Who this run is, for "Waiting for the GPU behind …" ("DungeonMind", a workflow name); the block's name is added. */
   lockLabel?: string;
+  /** This run's GPU priority (1 = first … 200, default 100): a lower number takes the GPU before a higher one. */
+  priority?: number;
   /**
    * Settings → Access: what the person who started the run may use. Checked again on every call, because Auto
    * model blocks and Routers pick models while the run goes. Left out: everything (engine tests).
@@ -100,56 +102,104 @@ export interface RunResult {
 /** Settings → Run limits when nothing is saved (services/runLimits.ts). 600 s: a cold load counts, and a slow model needs ~400 s for 4096 tokens. */
 export const DEFAULT_LIMITS: RunLimits = { maxSeconds: 600, maxTokens: 4096, numCtx: 16384 };
 
-/** One lock per local host, so a 16 GB GPU never loads two models at once. */
-const hostLocks = new Map<string, Promise<void>>();
-/** Who holds each host's lock right now ("DungeonMind: chronicler", "Training: dm-v3"). */
-const holders = new Map<string, { label?: string }>();
+/** Priority 1..200, 1 = runs first on the GPU; a run without one (or a bad value) sits in the middle. */
+export const DEFAULT_PRIORITY = 100;
+/** Keeps a priority inside 1..200 (rounded); anything that isn't a real number gets the default. */
+export const clampPriority = (n: unknown, def = DEFAULT_PRIORITY): number =>
+  typeof n === 'number' && Number.isFinite(n) ? Math.round(Math.min(200, Math.max(1, n))) : def;
+
+/** One job waiting for a host's GPU. */
+interface Waiter {
+  /** 1 (soonest) … 200. */
+  priority: number;
+  /** Arrival order, so jobs with the same priority stay first-come-first-served. */
+  seq: number;
+  label?: string;
+  /** Called when it is this job's turn (the GPU is now its to hold). */
+  wake: () => void;
+}
+/** Per local host: whether the GPU is held, by whom, and who waits for it. */
+interface HostQueue {
+  busy: boolean;
+  holder?: { label?: string; priority: number };
+  waiters: Waiter[];
+}
+/** One queue per local host, so a 16 GB GPU never loads two models at once, and the most urgent job goes first. */
+const queues = new Map<string, HostQueue>();
+/** Global arrival counter (the first-come tiebreaker between same-priority jobs). */
+let arrivals = 0;
 
 /** The label of whoever holds this host's GPU right now. */
-export const hostHolder = (key: string): string | undefined => holders.get(key)?.label;
+export const hostHolder = (key: string): string | undefined => queues.get(key)?.holder?.label;
+
+/** What this host's GPU is doing now (Activity): who holds it and who waits, best priority first. */
+export function hostQueue(key: string): { holder?: { label?: string; priority: number }; waiting: { label?: string; priority: number }[] } {
+  const q = queues.get(key);
+  if (!q) return { waiting: [] };
+  const waiting = [...q.waiters].sort((a, b) => a.priority - b.priority || a.seq - b.seq).map((w) => ({ label: w.label, priority: w.priority }));
+  return { ...(q.holder && { holder: q.holder }), waiting };
+}
 
 /** The text a cancelled run shows: the reason given to abort() ("Stopped by Unload"), else "Cancelled". */
 export const cancelText = (signal: AbortSignal): string => (typeof signal.reason === 'string' && signal.reason ? signal.reason : 'Cancelled');
 
-/**
- * Runs fn once every earlier job on this host is done. With a signal, a cancel while waiting rejects at once
- * with "Cancelled"; the queue stays intact (this slot is let go only after the job in front of it ends).
- */
-export async function withHostLock<T>(key: string, fn: () => Promise<T>, opts: { signal?: AbortSignal; label?: string } = {}): Promise<T> {
-  const prev = hostLocks.get(key) ?? Promise.resolve();
-  let release!: () => void;
-  const mine = new Promise<void>((r) => (release = r));
-  const chained = prev.then(() => mine);
-  hostLocks.set(key, chained);
-  const letGo = () => {
-    release();
-    if (hostLocks.get(key) === chained) hostLocks.delete(key);
-  };
-  const { signal } = opts;
-  if (signal) {
-    let onAbort!: () => void;
-    const aborted = new Promise<'aborted'>((r) => {
-      onAbort = () => r('aborted');
-      if (signal.aborted) r('aborted');
-      else signal.addEventListener('abort', onAbort, { once: true });
-    });
-    const got = await Promise.race([prev.then(() => 'ready' as const), aborted]);
-    signal.removeEventListener('abort', onAbort);
-    if (got === 'aborted') {
-      // Never skip the queue: later jobs still wait for the one in front of this slot.
-      void prev.then(letGo);
-      throw new Error('Cancelled');
-    }
-  } else {
-    await prev;
+/** The next waiter to run: lowest priority number, ties broken by arrival order. Removed from the queue. */
+function takeBest(waiters: Waiter[]): Waiter | undefined {
+  if (!waiters.length) return undefined;
+  let best = 0;
+  for (let i = 1; i < waiters.length; i++) {
+    const w = waiters[i];
+    const b = waiters[best];
+    if (w.priority < b.priority || (w.priority === b.priority && w.seq < b.seq)) best = i;
   }
-  const holder = { label: opts.label };
-  holders.set(key, holder);
+  return waiters.splice(best, 1)[0];
+}
+
+/**
+ * Runs fn while holding this host's GPU. When the GPU is busy, the job waits; the moment it frees, the waiting job
+ * with the best (lowest) priority goes next, ties first-come-first-served. A running job is never interrupted — a
+ * higher-priority job that arrives later still waits for the current one to finish, then jumps ahead of the rest.
+ * With a signal, a cancel while waiting rejects at once with "Cancelled" and drops the job from the queue.
+ */
+export async function withHostLock<T>(key: string, fn: () => Promise<T>, opts: { signal?: AbortSignal; label?: string; priority?: number } = {}): Promise<T> {
+  const q = queues.get(key) ?? { busy: false, waiters: [] };
+  queues.set(key, q);
+  const priority = clampPriority(opts.priority);
+  const { signal } = opts;
+  if (q.busy) {
+    await new Promise<void>((resolve, reject) => {
+      const waiter: Waiter = { priority, seq: arrivals++, label: opts.label, wake: () => {} };
+      let onAbort: (() => void) | undefined;
+      waiter.wake = () => {
+        if (signal && onAbort) signal.removeEventListener('abort', onAbort);
+        resolve();
+      };
+      if (signal) {
+        onAbort = () => {
+          const i = q.waiters.indexOf(waiter);
+          if (i >= 0) q.waiters.splice(i, 1);
+          reject(new Error('Cancelled'));
+        };
+        if (signal.aborted) return onAbort();
+        signal.addEventListener('abort', onAbort, { once: true });
+      }
+      q.waiters.push(waiter);
+    });
+  } else {
+    q.busy = true;
+  }
+  q.holder = { label: opts.label, priority };
   try {
     return await fn();
   } finally {
-    if (holders.get(key) === holder) holders.delete(key);
-    letGo();
+    q.holder = undefined;
+    const next = takeBest(q.waiters);
+    // Wake the next job (the GPU stays busy, now held by it); none waiting → free the host.
+    if (next) next.wake();
+    else {
+      q.busy = false;
+      if (queues.get(key) === q && !q.waiters.length) queues.delete(key);
+    }
   }
 }
 
@@ -530,7 +580,7 @@ export async function runGraph(
           if (p.local && p.exclusive !== false) await deps.services?.freeGpu?.(p.hostKey, m.providerId, { model: m.model, bytes: (await p.modelInfo(m.model).catch(() => undefined))?.sizeBytes }).catch(() => {});
           // A different local GPU than the one this block holds: wait for that GPU too.
           if (p.local && p.exclusive !== false && p.hostKey !== heldHost)
-            return withHostLock(p.hostKey, () => call(messages, m, node.config.think === false ? false : undefined, json), { signal, label: lockLabel });
+            return withHostLock(p.hostKey, () => call(messages, m, node.config.think === false ? false : undefined, json), { signal, label: lockLabel, priority: deps.priority });
           return call(messages, m, node.config.think === false ? false : undefined, json);
         },
         decide: async (req, ref) => {
@@ -564,7 +614,7 @@ export async function runGraph(
             } catch {}
             return r;
           };
-          if (p.local && p.exclusive !== false && p.hostKey !== heldHost) return withHostLock(p.hostKey, ask, { signal, label: lockLabel });
+          if (p.local && p.exclusive !== false && p.hostKey !== heldHost) return withHostLock(p.hostKey, ask, { signal, label: lockLabel, priority: deps.priority });
           return ask();
         },
         allowedModel: allowed,
@@ -654,7 +704,7 @@ export async function runGraph(
     try {
       if (heldHost) {
         deps.emit({ ...base, type: 'node_queued' });
-        await withHostLock(heldHost, exec, { signal, label: lockLabel });
+        await withHostLock(heldHost, exec, { signal, label: lockLabel, priority: deps.priority });
         return;
       }
       await exec();

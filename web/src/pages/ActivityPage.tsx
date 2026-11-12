@@ -99,6 +99,14 @@ export function ActivityPage({ active, isAdmin, onOpenLab, onFollow }: { active:
             <div className="flex flex-wrap items-center gap-2 text-sm">
               <span className="font-medium">{r.canvasName ?? 'Ad-hoc workflow'}</span>
               <span className="rounded bg-[#21262d] px-1.5 text-xs text-slate-300">{r.source}</span>
+              {r.priority !== undefined && r.priority !== 100 && (
+                <span
+                  className={`rounded px-1.5 text-xs ${r.priority < 100 ? 'bg-sky-900/60 text-sky-200' : 'bg-slate-700/60 text-slate-300'}`}
+                  title="GPU priority: 1 runs first, 200 last. When a local GPU is busy, the waiting run with the lowest number goes next."
+                >
+                  prio {r.priority}
+                </span>
+              )}
               {!r.mine && <span className="text-xs text-slate-400">by {r.owner}</span>}
               <span className="text-xs text-slate-500">{since(r.startedAt)}</span>
               <span className="ml-auto" />

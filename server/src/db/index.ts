@@ -377,6 +377,10 @@ export const MIGRATIONS: string[] = [
   );
   CREATE INDEX robot_jobs_owner ON robot_jobs(owner_id, created_at);
   `,
+  `
+  -- GPU priority per run (1 = runs first … 200, default 100): which waiting run takes a shared GPU next.
+  ALTER TABLE runs ADD COLUMN priority INTEGER;
+  `,
 ];
 
 export const db = new DatabaseSync(join(config.dataDir, 'hivemind.db'));

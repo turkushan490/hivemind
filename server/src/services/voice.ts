@@ -3,6 +3,10 @@ import { decrypt, encrypt } from '../crypto.js';
 import { db, getSetting, setSetting } from '../db/index.js';
 import { ensureKokoro, KOKORO_VOICES, kokoroAvailable } from './kokoro.js';
 import { isCloneVoice, listClonedVoices, speakClone } from './voiceTraining.js';
+import { whisperAvailable, whisperTranscribe } from './whisper.js';
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
+import { config } from '../config.js';
 
 /**
  * Voice, pluggable like providers: speech to text through any OpenAI-compatible /audio/transcriptions
@@ -10,6 +14,8 @@ import { isCloneVoice, listClonedVoices, speakClone } from './voiceTraining.js';
  * or any OpenAI-compatible /audio/speech (OpenAI, Kokoro, Piper).
  */
 interface Stored {
+  sttEngine?: 'server' | 'builtin';
+  whisperModel?: string;
   sttUrl?: string;
   sttKey?: string;
   sttModel?: string;
@@ -33,14 +39,25 @@ function load(): Stored {
   }
 }
 
+/** The built-in engine is ready when a model is downloaded and chosen (default base once downloaded). */
+function builtinSttReady(s: Stored): boolean {
+  if (!whisperAvailable()) return false;
+  const model = s.whisperModel || 'base';
+  return existsSync(join(config.dataDir, 'whisper', 'models', `ggml-${model}.bin`));
+}
+
 export function voiceSettings(): VoiceSettings {
   const s = load();
+  const engine = s.sttEngine ?? (whisperAvailable() ? 'builtin' : 'server');
   return {
+    sttEngine: engine,
+    whisperModel: s.whisperModel,
+    builtinStt: whisperAvailable(),
     sttUrl: s.sttUrl,
     sttModel: s.sttModel,
     sttLanguage: s.sttLanguage,
     hasSttKey: !!s.sttKey,
-    sttReady: !!s.sttUrl,
+    sttReady: engine === 'builtin' ? builtinSttReady(s) : !!s.sttUrl,
     ttsMode: s.ttsMode ?? 'browser',
     ttsUrl: s.ttsUrl,
     ttsModel: s.ttsModel,
@@ -80,6 +97,8 @@ export function saveVoiceSettings(patch: Partial<Omit<VoiceSettings, 'hasSttKey'
   const voices = patch.appVoices !== undefined ? cleanVoices(patch.appVoices) : undefined;
   const s = load();
   const next: Stored = {
+    sttEngine: patch.sttEngine === 'server' || patch.sttEngine === 'builtin' ? patch.sttEngine : s.sttEngine,
+    whisperModel: text(patch.whisperModel, s.whisperModel),
     sttUrl: patch.sttUrl !== undefined ? cleanUrl(patch.sttUrl) : s.sttUrl,
     sttKey: key(patch.sttKey, s.sttKey),
     sttModel: text(patch.sttModel, s.sttModel),
@@ -141,8 +160,15 @@ async function call(url: string, init: RequestInit, what: string): Promise<Respo
 /** Speech to text: returns the transcript. */
 export async function transcribe(audio: Buffer, mime: string, userId: string): Promise<string> {
   const s = load();
-  if (!s.sttUrl) throw new Error('Speech to text is not set up: pick a server in Settings → Voice');
   if (audio.length < 100) throw new Error('The recording is empty');
+  // Built-in whisper.cpp: the browser sends a 16 kHz mono WAV; run it locally with the chosen model.
+  const engine = s.sttEngine ?? (whisperAvailable() ? 'builtin' : 'server');
+  if (engine === 'builtin') {
+    if (!whisperAvailable()) throw new Error('The built-in speech engine is not in this build — pick a server in Settings → Voice');
+    const model = s.whisperModel || 'base';
+    return whisperTranscribe(audio, model, s.sttLanguage);
+  }
+  if (!s.sttUrl) throw new Error('Speech to text is not set up: pick the built-in engine or a server in Settings → Voice');
   const form = new FormData();
   form.append('file', new Blob([new Uint8Array(audio)], { type: mime.split(';')[0] }), `speech.${audioExt(mime)}`);
   form.append('model', s.sttModel || 'whisper-1');

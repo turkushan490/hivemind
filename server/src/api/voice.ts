@@ -4,6 +4,7 @@ import { saveVoiceSettings, speak, speakable, transcribe, TtsNotConfigured, voic
 import { requireAdmin, requireUser } from './auth.js';
 import { KOKORO_VOICES, kokoroAvailable } from '../services/kokoro.js';
 import { listClonedVoices, previousVoice, saveVoiceEngineSettings, voiceEngineAvailable, voiceEngineSettings } from '../services/voiceTraining.js';
+import { deleteWhisperModel, downloadWhisperModel, WHISPER_MODELS, whisperStatus } from '../services/whisper.js';
 
 const MAX_AUDIO = 25 * 1024 * 1024;
 const MAX_SPEAK = 4096;
@@ -42,6 +43,23 @@ export function voiceRoutes(app: FastifyInstance) {
       return reply.code(400).send({ error: (err as Error).message });
     }
     return voiceSettings();
+  });
+
+  /** The built-in Whisper engine: whether it ships here, each model's size / downloaded / progress, and the chosen one. */
+  app.get('/api/voice/whisper', { preHandler: requireUser }, async () => whisperStatus(voiceSettings().whisperModel));
+
+  /** Start downloading a Whisper model (runs in the background; the page polls GET /api/voice/whisper for progress). */
+  app.post('/api/voice/whisper/:id/download', { preHandler: requireAdmin }, async (req, reply) => {
+    const id = (req.params as { id: string }).id;
+    if (!WHISPER_MODELS.some((m) => m.id === id)) return reply.code(404).send({ error: 'No such Whisper model' });
+    downloadWhisperModel(id).catch((err) => logError({ source: 'voice', message: `Whisper download (${id}): ${(err as Error).message}` }));
+    return { started: true };
+  });
+
+  /** Delete a downloaded Whisper model. */
+  app.delete('/api/voice/whisper/:id', { preHandler: requireAdmin }, async (req) => {
+    deleteWhisperModel((req.params as { id: string }).id);
+    return { ok: true };
   });
 
   /** Body: the recording (audio/* or application/octet-stream). Answers { text }. */

@@ -69,10 +69,29 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=min
 
-  # HiveMind for Windows: one self-contained .exe (the same server + web UI, minus the Linux-only Colibri/training/Kokoro).
+  # Build the built-in speech engine (whisper.cpp) for Windows, so the .exe carries it. Static CPU build = one self-contained .exe.
+  whisper-win:
+    runs-on: windows-latest
+    steps:
+      - name: Build whisper.cpp (Windows)
+        shell: bash
+        run: |
+          git clone --depth 1 -b v1.7.4 https://github.com/ggerganov/whisper.cpp whisper.cpp
+          cmake -B build -S whisper.cpp -DBUILD_SHARED_LIBS=OFF -DWHISPER_BUILD_TESTS=OFF -DWHISPER_BUILD_EXAMPLES=ON -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded
+          cmake --build build --config Release --target whisper-cli
+          mkdir out
+          find build -name 'whisper-cli.exe' -exec cp {} out/ \;
+          find build -path '*Release*' -name '*.dll' -exec cp {} out/ \; || true
+          ls -la out
+      - uses: actions/upload-artifact@v4
+        with:
+          name: whisper-win
+          path: out
+
+  # HiveMind for Windows: one self-contained .exe (the same server + web UI + built-in whisper, minus the Linux-only Colibri/training/Kokoro).
   # Built on every main push as an artifact (to catch breakage early) and attached to the GitHub Release on a version tag.
   windows-exe:
-    needs: test
+    needs: [test, whisper-win]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -83,15 +102,21 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
+      # The built-in speech engine (whisper.cpp) built on the Windows runner, baked into the exe below.
+      - uses: actions/download-artifact@v4
+        with:
+          name: whisper-win
+          path: server/whisper-bin
       # The version the exe reports (/api/health): the tag without its "v", else 0.9.<run number>.
       - id: ver
         run: |
           if [ "${{ github.ref_type }}" = "tag" ]; then echo "release=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"; else echo "release=$(node -p "require('./package.json').version")-dev.${{ github.run_number }}" >> "$GITHUB_OUTPUT"; fi
-      # Build the web UI and the server, bake the UI (and the version) into the exe bundle, then pack a single Windows .exe.
+      # Build the web UI and the server, bake the UI + version + whisper binary into the exe bundle, then pack a single Windows .exe.
       - run: npm run build
       - run: npm run embed:web -w server
         env:
           APP_RELEASE: ${{ steps.ver.outputs.release }}
+      - run: npm run embed:bin -w server
       - run: npm run build:exe -w server
       - name: Pack single .exe
         # --no-bytecode --public: ship plain JS, not V8 bytecode (bytecode fatally crashes this bundle at runtime).

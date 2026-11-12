@@ -482,6 +482,85 @@ export function VoicePanel(props: { isAdmin: boolean; active: boolean }) {
   );
 }
 
+interface WhisperStatus {
+  available: boolean;
+  models: { id: string; name: string; sizeMb: number; note: string; downloaded: boolean; downloading?: { got: number; total: number }; selected: boolean }[];
+}
+
+/** The built-in Whisper model library: download any, delete, and pick the one to use (one at a time). */
+function WhisperLibrary({ isAdmin, selected, onSelect }: { isAdmin: boolean; selected: string; onSelect: (id: string) => void }) {
+  const [st, setSt] = useState<WhisperStatus | null>(null);
+  const load = () => api<WhisperStatus>('/api/voice/whisper', { quiet: true }).then(setSt).catch(() => {});
+  useEffect(() => {
+    load();
+  }, []);
+  // While anything downloads, poll for progress.
+  useEffect(() => {
+    if (!st?.models.some((m) => m.downloading)) return;
+    const t = setInterval(load, 1500);
+    return () => clearInterval(t);
+  }, [st]);
+  if (!st) return null;
+  return (
+    <div className="space-y-1">
+      {st.models.map((m) => {
+        const isSel = m.id === selected;
+        const pct = m.downloading ? Math.min(99, Math.round((m.downloading.got / Math.max(1, m.downloading.total)) * 100)) : 0;
+        return (
+          <div key={m.id} className={`flex items-center gap-2 rounded-md border px-2 py-1.5 ${isSel && m.downloaded ? 'border-indigo-500 bg-indigo-500/10' : 'border-[#30363d]'}`}>
+            <button
+              className="min-w-0 flex-1 text-left disabled:cursor-not-allowed"
+              disabled={!m.downloaded}
+              title={m.downloaded ? 'Use this model' : 'Download it first'}
+              onClick={() => m.downloaded && onSelect(m.id)}
+            >
+              <div className="text-sm font-medium">
+                {m.name} <span className="text-xs font-normal text-slate-500">· ~{m.sizeMb >= 1024 ? `${(m.sizeMb / 1024).toFixed(1)} GB` : `${m.sizeMb} MB`}</span>
+                {isSel && m.downloaded && <span className="ml-1 text-xs text-indigo-300">· in use</span>}
+              </div>
+              <div className="truncate text-xs text-slate-400">{m.note}</div>
+            </button>
+            {m.downloading ? (
+              <div className="w-28 shrink-0">
+                <div className="h-1.5 overflow-hidden rounded bg-[#0d1117]">
+                  <div className="h-full bg-indigo-500" style={{ width: `${pct}%` }} />
+                </div>
+                <div className="text-center text-[10px] text-slate-500">{pct}%</div>
+              </div>
+            ) : m.downloaded ? (
+              isAdmin && (
+                <button
+                  className="btn-ghost shrink-0 px-2 py-0.5 text-xs text-red-300"
+                  title="Delete this model"
+                  onClick={async () => {
+                    await api(`/api/voice/whisper/${m.id}`, { method: 'DELETE' }).catch(() => {});
+                    load();
+                  }}
+                >
+                  Delete
+                </button>
+              )
+            ) : (
+              isAdmin && (
+                <button
+                  className="btn shrink-0 px-2 py-0.5 text-xs"
+                  onClick={async () => {
+                    await api(`/api/voice/whisper/${m.id}/download`, { method: 'POST' }).catch(() => {});
+                    load();
+                  }}
+                >
+                  Download
+                </button>
+              )
+            )}
+          </div>
+        );
+      })}
+      {!st.models.some((m) => m.downloaded) && <p className="text-xs text-amber-300">Download a model to use the built-in engine.</p>}
+    </div>
+  );
+}
+
 function VoiceSettingsPanel({ isAdmin, active }: { isAdmin: boolean; active: boolean }) {
   const [s, setS] = useState<VoiceSettings | null>(null);
   const [draft, setDraft] = useState<Partial<VoiceSettings> & { sttKey?: string; ttsKey?: string }>({});
@@ -539,24 +618,50 @@ function VoiceSettingsPanel({ isAdmin, active }: { isAdmin: boolean; active: boo
 
       <section className="space-y-2 text-sm">
         <div className="text-xs font-semibold tracking-wider text-slate-500 uppercase">Speech to text</div>
-        {isAdmin && (
-          <div className="grid gap-2 sm:grid-cols-3">
-            {STT_PRESETS.map((p) => (
+        {v.builtinStt && (
+          <div className="flex gap-1">
+            {(['builtin', 'server'] as const).map((m) => (
               <button
-                key={p.name}
-                className={`rounded-lg border px-3 py-2 text-left ${v.sttUrl === p.url ? 'border-indigo-500 bg-indigo-500/10' : 'border-[#30363d] bg-[#0d1117] hover:border-slate-500'}`}
-                onClick={() => set({ sttUrl: p.url, sttModel: p.model })}
+                key={m}
+                disabled={!isAdmin}
+                className={`flex-1 rounded-md border px-2 py-1.5 text-sm ${(v.sttEngine ?? 'builtin') === m ? 'border-indigo-500 bg-indigo-500/15 text-indigo-100' : 'border-[#30363d] text-slate-400'}`}
+                onClick={() => set({ sttEngine: m })}
               >
-                <div className="text-sm font-medium">{p.name}</div>
-                <div className="text-xs text-slate-400">{p.note}</div>
+                {m === 'builtin' ? 'Built-in (local Whisper, inside HiveMind)' : 'Speech server (OpenAI-compatible)'}
               </button>
             ))}
           </div>
         )}
-        {field('Address', 'sttUrl', 'https://api.groq.com/openai/v1 (empty = off)')}
-        {field('Model', 'sttModel', 'whisper-large-v3-turbo')}
-        {field('Language', 'sttLanguage', 'empty = detect; or en, nl, de…')}
-        {keyField('sttKey', s.hasSttKey)}
+        {v.builtinStt && (v.sttEngine ?? 'builtin') === 'builtin' ? (
+          <>
+            <p className="text-xs text-slate-400">
+              Whisper runs inside HiveMind on the processor — no server to set up. Download a model, then pick it. Bigger models are more accurate but slower and larger.
+            </p>
+            <WhisperLibrary isAdmin={isAdmin} selected={v.whisperModel ?? 'base'} onSelect={(id) => set({ sttEngine: 'builtin', whisperModel: id })} />
+            {field('Language', 'sttLanguage', 'empty = detect; or en, nl, de…')}
+          </>
+        ) : (
+          <>
+            {isAdmin && (
+              <div className="grid gap-2 sm:grid-cols-3">
+                {STT_PRESETS.map((p) => (
+                  <button
+                    key={p.name}
+                    className={`rounded-lg border px-3 py-2 text-left ${v.sttUrl === p.url ? 'border-indigo-500 bg-indigo-500/10' : 'border-[#30363d] bg-[#0d1117] hover:border-slate-500'}`}
+                    onClick={() => set({ sttEngine: 'server', sttUrl: p.url, sttModel: p.model })}
+                  >
+                    <div className="text-sm font-medium">{p.name}</div>
+                    <div className="text-xs text-slate-400">{p.note}</div>
+                  </button>
+                ))}
+              </div>
+            )}
+            {field('Address', 'sttUrl', 'https://api.groq.com/openai/v1 (empty = off)')}
+            {field('Model', 'sttModel', 'whisper-large-v3-turbo')}
+            {field('Language', 'sttLanguage', 'empty = detect; or en, nl, de…')}
+            {keyField('sttKey', s.hasSttKey)}
+          </>
+        )}
       </section>
 
       <section className="space-y-2 text-sm">

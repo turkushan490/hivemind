@@ -8,6 +8,7 @@
     "build": "esbuild src/main.ts --bundle --platform=node --format=esm --target=node22 --packages=external --alias:@hivemind/shared=../packages/shared/src/index.ts --outfile=dist/main.js",
     "start": "node dist/main.js",
     "embed:web": "node scripts/embed-web.mjs",
+    "embed:bin": "node scripts/embed-bin.mjs",
     "build:exe": "esbuild src/exe.ts --bundle --platform=node --format=esm --target=node22 --alias:@hivemind/shared=../packages/shared/src/index.ts --outfile=dist-exe/hivemind.mjs --banner:js=\"import{createRequire as __cr}from'module';const require=__cr(import.meta.url);\"",
     "typecheck": "tsc -p .",
     "test": "vitest run"

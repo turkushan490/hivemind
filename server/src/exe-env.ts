@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
 import { appRelease, webAssets, webBuildId } from './web-assets.generated.js';
+import { whisperBin, whisperBinId } from './whisper-bin.generated.js';
 
 // Mark this process as the packaged exe, so the server treats container-only features as "absent, expected" and writes a log file.
 process.env.HIVEMIND_PACKAGED = '1';
@@ -39,6 +40,21 @@ if (webBuildId && have !== webBuildId) {
   writeFileSync(stamp, webBuildId);
 }
 if (existsSync(webDir)) process.env.WEB_DIR = webDir;
+
+// Unpack the built-in whisper.cpp engine (the Windows binary baked in) to <dataDir>/whisper, the first time / after an update.
+if (whisperBinId) {
+  const whisperDir = join(dataDir, 'whisper');
+  const wStamp = join(whisperDir, '.bin-id');
+  let haveW = '';
+  try {
+    haveW = readFileSync(wStamp, 'utf8');
+  } catch {}
+  if (haveW !== whisperBinId) {
+    mkdirSync(whisperDir, { recursive: true });
+    for (const [name, b64] of Object.entries(whisperBin)) writeFileSync(join(whisperDir, name), Buffer.from(b64, 'base64'));
+    writeFileSync(wStamp, whisperBinId);
+  }
+}
 
 // A desktop user expects a window: open the UI once the server is up (main.ts does it after it listens).
 if (!process.env.HIVEMIND_OPEN_BROWSER) process.env.HIVEMIND_OPEN_BROWSER = 'app';

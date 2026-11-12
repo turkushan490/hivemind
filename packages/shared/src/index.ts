@@ -191,14 +191,20 @@ export type HttpMethod = (typeof HTTP_METHODS)[number];
 
 /** Voice settings (GET/PUT /api/settings/voice); keys are never sent back. */
 export interface VoiceSettings {
+  /** Speech to text engine: a server (OpenAI-compatible), or the built-in whisper.cpp bundled in HiveMind. */
+  sttEngine?: 'server' | 'builtin';
   /** Speech to text: an OpenAI-compatible server with /audio/transcriptions (Groq, OpenAI, speaches / faster-whisper). */
   sttUrl?: string;
   sttModel?: string;
   /** e.g. "en", "nl"; empty = detect. */
   sttLanguage?: string;
   hasSttKey: boolean;
-  /** Ready to transcribe (an address is set). */
+  /** Ready to transcribe (a server address is set, or the built-in engine has a downloaded model). */
   sttReady: boolean;
+  /** Built-in speech-to-text (whisper.cpp) ships in this build. */
+  builtinStt?: boolean;
+  /** The built-in Whisper model chosen to use (one at a time). */
+  whisperModel?: string;
   /** Text to speech: the browser's own voices, or an OpenAI-compatible /audio/speech server (OpenAI, Kokoro, Piper). */
   ttsMode: 'browser' | 'server' | 'builtin';
   ttsUrl?: string;

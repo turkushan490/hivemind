@@ -28,11 +28,63 @@ export function useVoice(): VoiceSettings | null {
 
 // ---- Speech to text ----
 
+/**
+ * Decodes a recording and re-encodes it as a 16 kHz mono 16-bit WAV — what the built-in whisper.cpp engine needs, and
+ * what every speech server also accepts. Done in the browser so the server needs no ffmpeg. Returns null if the
+ * browser can't decode this audio (then the original is sent as-is).
+ */
+async function toWav16k(audio: Blob): Promise<Blob | null> {
+  try {
+    const AC = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+    if (!AC) return null;
+    const buf = await audio.arrayBuffer();
+    const ctx = new AC();
+    const decoded = await ctx.decodeAudioData(buf);
+    await ctx.close();
+    const rate = 16000;
+    const frames = Math.ceil(decoded.duration * rate);
+    const off = new OfflineAudioContext(1, frames, rate);
+    const src = off.createBufferSource();
+    src.buffer = decoded;
+    src.connect(off.destination);
+    src.start();
+    const out = await off.startRendering();
+    const pcm = out.getChannelData(0);
+    // 16-bit PCM WAV: 44-byte header + samples.
+    const ab = new ArrayBuffer(44 + pcm.length * 2);
+    const dv = new DataView(ab);
+    const str = (o: number, s: string) => [...s].forEach((c, i) => dv.setUint8(o + i, c.charCodeAt(0)));
+    str(0, 'RIFF');
+    dv.setUint32(4, 36 + pcm.length * 2, true);
+    str(8, 'WAVE');
+    str(12, 'fmt ');
+    dv.setUint32(16, 16, true);
+    dv.setUint16(20, 1, true);
+    dv.setUint16(22, 1, true);
+    dv.setUint32(24, rate, true);
+    dv.setUint32(28, rate * 2, true);
+    dv.setUint16(32, 2, true);
+    dv.setUint16(34, 16, true);
+    str(36, 'data');
+    dv.setUint32(40, pcm.length * 2, true);
+    for (let i = 0; i < pcm.length; i++) {
+      const s = Math.max(-1, Math.min(1, pcm[i]));
+      dv.setInt16(44 + i * 2, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+    }
+    return new Blob([ab], { type: 'audio/wav' });
+  } catch {
+    return null;
+  }
+}
+
 /** Sends a recording to the server and returns the text. Shows a toast and throws on failure. */
 export async function transcribe(audio: Blob): Promise<string> {
+  // Convert to 16 kHz mono WAV first (for the built-in engine); send the original if the browser can't decode it.
+  const wav = await toWav16k(audio);
+  const body = wav ?? audio;
   let res: Response;
   try {
-    res = await fetch('/api/voice/transcribe', { method: 'POST', headers: { 'content-type': audio.type || 'audio/webm' }, body: audio });
+    res = await fetch('/api/voice/transcribe', { method: 'POST', headers: { 'content-type': body.type || 'audio/webm' }, body });
   } catch {
     toast("Can't reach the HiveMind server to transcribe");
     throw new Error('offline');

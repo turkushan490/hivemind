@@ -31,6 +31,17 @@ RUN git clone --depth 1 --branch "$COLIBRI_REF" https://github.com/JustVugg/coli
 COPY server/colibri/build.sh /build.sh
 RUN sh /build.sh
 
+# ---- whisper.cpp: built-in speech-to-text (Settings → Voice), the same engine that ships in the Windows .exe ----
+# A static CPU build, so one small binary copies in; the ggml model files download into /data/whisper on first use.
+FROM debian:bookworm-slim AS whisper
+ARG WHISPER_REF=v1.7.4
+RUN apt-get update && apt-get install -y --no-install-recommends git cmake build-essential ca-certificates && rm -rf /var/lib/apt/lists/*
+RUN git clone --depth 1 --branch "$WHISPER_REF" https://github.com/ggerganov/whisper.cpp /src
+WORKDIR /src
+RUN cmake -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DWHISPER_BUILD_TESTS=OFF -DWHISPER_BUILD_EXAMPLES=ON \
+ && cmake --build build -j --target whisper-cli \
+ && mkdir -p /opt/whisper && cp build/bin/whisper-cli /opt/whisper/whisper-cli && strip /opt/whisper/whisper-cli
+
 # ---- runtime: the training stack (PyTorch, CUDA, Unsloth, TRL, llama.cpp) with HiveMind on top ----
 # Without a GPU everything except training works as before; with --gpus=all the built-in trainer can fine-tune models.
 FROM unsloth/unsloth:core
@@ -51,6 +62,8 @@ COPY --from=build /app/server/trainer ./server/trainer
 # Colibri: the engine builds (/opt/colibri/cpu, /opt/colibri/cuda) and HiveMind's bridge to its catalog and downloads.
 COPY --from=colibri /opt/colibri /opt/colibri
 COPY server/colibri/helper.py ./server/colibri/helper.py
+# Built-in speech-to-text: the whisper.cpp binary (Settings → Voice). Models download into /data/whisper on first use.
+COPY --from=whisper /opt/whisper /opt/whisper
 # Built-in voice: Kokoro (kokoro-onnx) in its own folder, so the training stack's packages stay as they are. The model
 # files (~350 MB) are downloaded into /data/kokoro the first time a voice is needed.
 RUN /opt/unsloth-venv/bin/pip install --no-cache-dir --quiet --target /opt/kokoro-lib kokoro-onnx==0.6.1  && rm -rf /opt/kokoro-lib/bin && PYTHONPATH=/opt/kokoro-lib /opt/unsloth-venv/bin/python -c 'import kokoro_onnx, soundfile; print("kokoro ok")'

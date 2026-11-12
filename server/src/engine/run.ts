@@ -622,6 +622,7 @@ export async function runGraph(
           for (const c of children.get(node.id)!) if (!ids.includes(c)) blocked.add(`${node.id}->${c}`);
         },
         progress: (note, decision) => deps.emit({ ...base, type: 'node_progress', note, ...(decision && { decision }) }),
+        say: (text) => deps.emit({ ...base, type: 'say', text }),
         pickWinner: (winnerId, contenderIds) => {
           const nameOf = (id: string) => {
             const n = byId.get(id);
@@ -700,6 +701,9 @@ export async function runGraph(
         sizeBytes,
         ...(sent && { sent }),
       });
+      // Early output (H12): the moment an Output block has its answer, announce it, so a client can reply before the
+      // tail blocks (e.g. writeMemory) finish. The run keeps going; run_done still carries the final.
+      if (node.type === 'output') deps.emit({ ...base, type: 'answer', final: text });
     };
 
     try {

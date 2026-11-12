@@ -312,6 +312,32 @@ export function startRun(opts: {
             write: (path: string, text: string, o?: { mode?: 'replace' | 'append'; by?: string; guest?: boolean }) => void memFiles.write(opts.ownerId, path, text, o),
             move: (from: string, to: string, by?: string, guest?: boolean) => memFiles.move(opts.ownerId, from, to, by, guest),
           },
+          // runWorkflow (H12): start another canvas as a background job, for the owner / robot.
+          runCanvas: async (o: { canvas: string; question: string; priority?: number; title?: string; character?: string }) => {
+            const runsApi = await import('../api/runs.js');
+            const providers = await import('../api/providers.js');
+            const jobs = await import('../services/robotJobs.js');
+            const u: User = opts.user ?? { id: opts.ownerId, username: 'owner', role: 'admin' };
+            const row = runsApi.canvasFor(u, o.canvas) ?? runsApi.canvasesFor(u).find((r) => r.name === o.canvas);
+            if (!row) throw new Error(`No canvas "${o.canvas}"`);
+            const bgRunId = startRun({
+              ownerId: u.id,
+              user: u,
+              canvasId: row.id,
+              graph: JSON.parse(row.graph) as CanvasGraph,
+              question: o.question || 'Go',
+              vars: o.character ? { character: o.character } : undefined,
+              resolve: providers.resolverFor(u),
+              freeGpu: providers.gpuFreerFor(u),
+              training: providers.trainingFor(u),
+              source: '/v1',
+              priority: o.priority ?? 100,
+              timeLimitMin: 60,
+              resumable: { userId: u.id, providerUserId: u.id },
+            });
+            const jobId = jobs.createJob({ runId: bgRunId, ownerId: u.id, robotId: u.scope?.robot, canvasId: row.id, character: o.character, title: o.title || o.question.slice(0, 80) || row.name });
+            return { jobId, runId: bgRunId, title: o.title || row.name };
+          },
         }),
         pause: { wait: (info, signal) => waitAtPause(run, info, emit, signal) },
         skills: skillsForRun(fileUser),

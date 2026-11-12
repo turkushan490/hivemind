@@ -428,6 +428,57 @@ function KindSettings(p: Props) {
           </label>
         </div>
       );
+    case 'sayNow':
+      return (
+        <div className="space-y-2">
+          <label className="block space-y-1">
+            <Label>Say</Label>
+            <input
+              className="input text-xs"
+              placeholder="e.g. I remember the potatoes… (empty = the text wired in). {{inputs}} / {{vars.x}} work."
+              value={p.config.prompt ?? ''}
+              onChange={(e) => p.onChange({ prompt: e.target.value || undefined })}
+            />
+            <span className="text-xs text-slate-500">Sent to the robot/app at once (while the workflow keeps running), then the input passes through.</span>
+          </label>
+        </div>
+      );
+    case 'runWorkflow':
+      return (
+        <div className="space-y-2">
+          <label className="block space-y-1">
+            <Label>Canvas to run</Label>
+            <input className="input text-xs" placeholder="canvas id or name" value={p.config.canvas ?? ''} onChange={(e) => p.onChange({ canvas: e.target.value || undefined })} />
+            <span className="text-xs text-slate-500">Starts it as a background job (shows in the robot&apos;s jobs). The question is the text wired in, or the prompt below.</span>
+          </label>
+          <label className="block space-y-1">
+            <Label>Question (optional)</Label>
+            <input className="input text-xs" placeholder="empty = the text wired in" value={p.config.prompt ?? ''} onChange={(e) => p.onChange({ prompt: e.target.value || undefined })} />
+          </label>
+          <label className="block space-y-1">
+            <Label>Job title</Label>
+            <input className="input text-xs" placeholder="e.g. Build the bakery site" value={p.config.jobTitle ?? ''} onChange={(e) => p.onChange({ jobTitle: e.target.value || undefined })} />
+          </label>
+          <div className="flex gap-2">
+            <label className="block flex-1 space-y-1">
+              <Label>Character</Label>
+              <input className="input text-xs" placeholder="e.g. ultron" value={p.config.jobCharacter ?? ''} onChange={(e) => p.onChange({ jobCharacter: e.target.value || undefined })} />
+            </label>
+            <label className="block w-24 space-y-1">
+              <Label>Priority</Label>
+              <input
+                type="number"
+                min={1}
+                max={200}
+                className="input text-xs"
+                placeholder="100"
+                value={p.config.jobPriority ?? ''}
+                onChange={(e) => p.onChange({ jobPriority: e.target.value ? Math.min(200, Math.max(1, Math.round(Number(e.target.value)))) : undefined })}
+              />
+            </label>
+          </div>
+        </div>
+      );
     case 'save':
       return (
         <div className="space-y-2">

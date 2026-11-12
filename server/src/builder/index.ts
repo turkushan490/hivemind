@@ -57,6 +57,8 @@ const BLOCKS: Record<NodeType, string> = {
   file: 'text from a file the user loads later. No inputs. Leave its content empty.',
   search: `web search for the question (or the text of the block before it). Optional "source": ${SEARCH_SOURCES.join(' | ')}, "count" 1-10.`,
   memory: '"mode": "recall" brings back what was saved under "key"; "mode": "search" finds the best matching entries under "key" for "query" (default: the text wired in), e.g. rules from a rulebook; "mode": "save" remembers what flows through it under "key".',
+  sayNow: 'Sends a short line to the robot/app straight away ({"type":"say"} in the stream), e.g. "I remember the potatoes…", while the rest of the workflow keeps running. "prompt" = the line ({{inputs}} filled); passes the input through.',
+  runWorkflow: 'Starts another saved canvas as a BACKGROUND job (shows in the robot\'s jobs/orbs): "canvas" (id or name), optional "jobTitle", "jobCharacter", "jobPriority" (1-200). Use it to kick off a long build while the conversation keeps going.',
   readMemory: 'MEMORY (MD files): reads memory files and passes their text on. "memoryPaths" = the .md paths to read (one per line, or {{inputs}} from a picker block); "memoryIndex": true also includes index.md + the list of all memory files. Put a tiny model before it to pick the files.',
   writeMemory: 'MEMORY (MD files): writes the text wired into it to a memory file. "memoryPath" (e.g. topics/food/potatoes.md) + "memoryMode": "replace" | "append" | "move" (move uses "memoryTo"). Without a path it reads JSON {"path","text"} from the block before it. "memoryBy" records who changed it.',
   save: `saves what is wired into it as a file. "format": auto | md | txt | html | json | csv | code (auto = html for websites). Optional "fileName".`,

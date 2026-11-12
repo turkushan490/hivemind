@@ -106,6 +106,8 @@ export interface NodeServices {
     write(path: string, text: string, opts?: { mode?: 'replace' | 'append'; by?: string; guest?: boolean }): void;
     move(from: string, to: string, by?: string, guest?: boolean): void;
   };
+  /** runWorkflow block (H12): start another canvas as a background job (shows in /api/robot/jobs). */
+  runCanvas?(o: { canvas: string; question: string; priority?: number; title?: string; character?: string }): Promise<{ jobId: string; runId: string; title: string }>;
 }
 
 /** A chat sent through /v1: its system messages and the turns before the last question. */
@@ -132,6 +134,8 @@ export interface NodeContext {
   choose(targetIds: string[]): void;
   /** A short status line shown on the block while it works (with a decision: the probability bars). */
   progress(note: string, decision?: DecisionEvent): void;
+  /** Sends a short line to the robot/client right away (H12 sayNow), without waiting for the answer. */
+  say?(text: string): void;
   /** Asks a decision model (the block's own, or the one given); usage and cost are recorded like model calls. */
   decide(req: Omit<DecisionRequest, 'model'>, model?: ModelRef): Promise<DecisionResult>;
   /** Judge / Vote: which wired-in block gave the best answer, out of which ones (for the leaderboard). */
@@ -862,6 +866,35 @@ export const NODES: Record<NodeType, NodeDefinition> = {
       svc.write(path, text, { mode: mode === 'append' ? 'append' : 'replace', by, guest });
       ctx.progress(`${mode === 'append' ? 'Appended to' : 'Wrote'} ${path}`);
       return `${mode === 'append' ? 'Appended to' : 'Wrote'} ${path} (${text.length} characters, by ${by})`;
+    },
+  },
+
+  // ---- Background work & responsiveness (H12) ----
+  sayNow: {
+    usesModel: false,
+    async execute(ctx) {
+      const input = ctx.inputs.map((i) => i.text).join('\n');
+      const text = (ctx.node.config.prompt ? fill(ctx.node.config.prompt, ctx, input) : input).trim();
+      if (text) ctx.say?.(text);
+      ctx.progress(text ? `Said: ${text.slice(0, 60)}` : 'Nothing to say');
+      // Pass what came in through unchanged, so the chain continues.
+      return input.trim() || text;
+    },
+  },
+  runWorkflow: {
+    usesModel: false,
+    async execute(ctx) {
+      const svc = ctx.services.runCanvas;
+      if (!svc) throw new Error('Starting another workflow is not available here');
+      const canvas = fill(ctx.node.config.canvas ?? '', ctx, '').trim();
+      if (!canvas) throw new Error('runWorkflow: choose a canvas to run');
+      const input = ctx.inputs.map((i) => i.text).join('\n');
+      const question = (ctx.node.config.prompt ? fill(ctx.node.config.prompt, ctx, input) : input || ctx.question).trim();
+      const title = ctx.node.config.jobTitle ? fill(ctx.node.config.jobTitle, ctx, '').trim() : undefined;
+      const character = ctx.node.config.jobCharacter ? fill(ctx.node.config.jobCharacter, ctx, '').trim() : undefined;
+      const r = await svc({ canvas, question, priority: ctx.node.config.jobPriority, title, character });
+      ctx.progress(`Started "${r.title}" as a background job`);
+      return `Started background job ${r.jobId}: ${r.title}.`;
     },
   },
 

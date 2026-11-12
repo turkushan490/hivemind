@@ -186,6 +186,10 @@ export function v1Routes(app: FastifyInstance) {
         }));
     const model = body.model;
     const live = streamSource(graph);
+    // Early output (H12): if blocks are wired after the Output (e.g. writeMemory), reply at the Output's answer and let
+    // the tail finish in the background. Without a tail, wait for run_done as before.
+    const outIds = new Set(graph.nodes.filter((n) => n.type === 'output').map((n) => n.id));
+    const hasTail = graph.edges.some((e) => outIds.has(e.source));
     const events: RunEvent[] = [];
     const errors: string[] = [];
 
@@ -203,12 +207,15 @@ export function v1Routes(app: FastifyInstance) {
           (ev) => {
             events.push(ev);
             if (ev.type === 'error' && ev.error) errors.push(ev.error);
+            // Reply at the Output's answer when there is a background tail; otherwise at run_done.
+            if (ev.type === 'answer' && hasTail && ev.final !== undefined) resolve(ev);
             if (ev.type === 'run_done' && ev.seq >= 0) resolve(ev);
           },
           () => resolve(undefined),
         );
         if (!sub) resolve(undefined);
       });
+      // Reply now; the run (and its tail) keeps going server-side — do not cancel it on the response closing.
       finished = true;
       if (!done || done.final === undefined)
         return reply.code(500).send(apiError(`The canvas "${row.name}" gave no answer${errors.length ? `: ${errors.join('; ')}` : ''} (run ${runId}, see Problems)`, 'server_error', 'run_failed'));
@@ -232,15 +239,32 @@ export function v1Routes(app: FastifyInstance) {
     const ping = setInterval(() => res.write(': working\n\n'), 10_000);
     const liveText = new LiveText();
     let lastLive = 0;
+    // Finishes the OpenAI stream once with the final answer (used at the Output's answer when there is a tail, else at run_done).
+    let replied = false;
+    const finishOk = (final: string, resolve: () => void) => {
+      if (replied) return;
+      replied = true;
+      finished = true; // the run (and its tail) keeps going server-side — don't cancel it when the stream closes.
+      const rest = liveText.finish(final);
+      if (rest) send(chunk(runId, model, { content: rest }));
+      const st = statsOf(events);
+      const ans = live ? st.find((s) => s.node === labelOf(live)) : st.at(-1);
+      send({ ...chunk(runId, model, {}, 'stop'), usage: { ...usageOf(events), ...(ans?.tokensPerSecond && { tokensPerSecond: ans.tokensPerSecond }) } });
+      resolve();
+    };
     await new Promise<void>((resolve) => {
       const sub = subscribe(
         runId,
         user.id,
         (ev) => {
+          if (replied) return; // already answered (early output); ignore the tail's events.
           events.push(ev);
           if (ev.type === 'error' && ev.error) errors.push(ev.error);
-          // hivemind_vars.progress: which block works now, and what each AI block measured (robot animations).
+          // A sayNow block: a short line to speak right away (H12).
+          if (ev.type === 'say' && ev.text) send({ type: 'say', text: ev.text });
+          // hivemind_vars.progress: which block works now, the route a router picked, and what each AI block measured.
           if (progress && ev.type === 'node_start' && ev.nodeType !== 'input' && ev.nodeType !== 'output') send({ type: 'progress', node: labelOf(ev.nodeId) });
+          if (progress && ev.type === 'node_progress' && ev.decision?.route) send({ type: 'route', label: ev.decision.route });
           if (progress && ev.type === 'node_done' && ev.model) send({ type: 'stats', ...statsOf([ev])[0] });
           if (progress && ev.type === 'token' && ev.tokensPerSec && Date.now() - lastLive > 1000) {
             lastLive = Date.now();
@@ -250,18 +274,15 @@ export function v1Routes(app: FastifyInstance) {
             const out = liveText.push(ev.text);
             if (out) send(chunk(runId, model, { content: out }));
           }
+          // Early output: reply at the Output's answer when a background tail is wired after it.
+          if (ev.type === 'answer' && hasTail && ev.final !== undefined) return finishOk(ev.final, resolve);
           if (ev.type === 'run_done' && ev.seq >= 0) {
             if (ev.final !== undefined) {
-              // Whatever was not streamed live (all of it, or a tail held back or sent only at the end).
-              const rest = liveText.finish(ev.final);
-              if (rest) send(chunk(runId, model, { content: rest }));
-              const st = statsOf(events);
-              const ans = live ? st.find((s) => s.node === labelOf(live)) : st.at(-1);
-              send({ ...chunk(runId, model, {}, 'stop'), usage: { ...usageOf(events), ...(ans?.tokensPerSecond && { tokensPerSecond: ans.tokensPerSecond }) } });
+              finishOk(ev.final, resolve);
             } else {
               send(apiError(`The canvas "${row.name}" gave no answer${errors.length ? `: ${errors.join('; ')}` : ''} (run ${runId}, see Problems)`, 'server_error', 'run_failed'));
+              resolve();
             }
-            resolve();
           }
         },
         () => resolve(),

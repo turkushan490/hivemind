@@ -1,7 +1,7 @@
 // Types shared by the server, the web UI and (later) the Android app.
 // The canvas format and run events are the contract between them.
 
-export const NODE_TYPES = ['input', 'llm', 'review', 'judge', 'output', 'router', 'debate', 'vote', 'decide', 'template', 'file', 'search', 'memory', 'readMemory', 'writeMemory', 'save', 'image', 'homeassistant', 'webhook', 'discord', 'generate', 'dataset', 'train', 'evaluate', 'deploy', 'readProject', 'writeFiles', 'updateNotes', 'git', 'build', 'pause', 'foreach', 'collect', 'deepSearch', 'panel', 'audioPrep', 'voiceDataset', 'voiceClone', 'speak'] as const;
+export const NODE_TYPES = ['input', 'llm', 'review', 'judge', 'output', 'router', 'debate', 'vote', 'decide', 'template', 'file', 'search', 'memory', 'readMemory', 'writeMemory', 'save', 'image', 'homeassistant', 'webhook', 'discord', 'generate', 'dataset', 'train', 'evaluate', 'deploy', 'readProject', 'writeFiles', 'updateNotes', 'git', 'build', 'pause', 'foreach', 'collect', 'deepSearch', 'panel', 'audioPrep', 'voiceDataset', 'voiceClone', 'speak', 'runWorkflow', 'sayNow'] as const;
 export type NodeType = (typeof NODE_TYPES)[number];
 
 /** Which model a node uses: a configured provider plus a model id on it. */
@@ -139,6 +139,11 @@ export interface NodeConfig {
   /** readMemory / writeMemory: who the change is by (owner / a character / a job), and the guest memory sub-tree. */
   memoryBy?: string;
   memoryGuest?: boolean;
+  /** runWorkflow (H12): the canvas (id or name) to start as a background job, and its title / character / GPU priority. */
+  canvas?: string;
+  jobTitle?: string;
+  jobCharacter?: string;
+  jobPriority?: number;
   /** Save file: the name (may use {{date}} and {{question}}) and the format. */
   format?: SaveFormat;
   /** Image: size, steps, guidance, LoRA (ComfyUI), and what not to draw. */
@@ -641,6 +646,10 @@ export type RunEventType =
   /** A Pause block waits for a person (pause holds what it shows); resumed when they answer. */
   | 'paused'
   | 'resumed'
+  /** A sayNow block: a short line to send to the robot at once (H12), while the run keeps going. */
+  | 'say'
+  /** The Output block's answer, emitted the moment it is ready, so a client can reply before the tail blocks finish (H12). */
+  | 'answer'
   | 'run_done'
   | 'error';
 

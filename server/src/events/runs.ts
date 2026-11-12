@@ -455,6 +455,9 @@ export function resumeRun(runId: string, who: Pick<User, 'id' | 'role' | 'scope'
 /** A full admin (not a limited token) may see and stop every run. */
 export const isFullAdmin = (user: Pick<User, 'role' | 'scope'>) => user.role === 'admin' && !user.scope;
 
+/** How many runs are going right now (night work waits until the GPU is quiet). */
+export const liveRunCount = () => [...live.values()].filter((r) => !r.finished).length;
+
 /**
  * Sends every past event, then live ones until the run ends. Returns an unsubscribe function.
  * Works for finished runs too (replay from the database). An admin may follow anyone's live run (Activity).

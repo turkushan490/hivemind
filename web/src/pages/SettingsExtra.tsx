@@ -997,3 +997,56 @@ function VoiceEngine({ isAdmin }: { isAdmin: boolean }) {
     </section>
   );
 }
+
+interface NightWork {
+  enabled: boolean;
+  memorySortCanvas?: string;
+  trainingCanvas?: string;
+  fromHour: number;
+  toHour: number;
+}
+
+/** Settings → Night work (H13): quiet-hours jobs on Tower — memory sort, Jarvis fix list, training, then a report. */
+export function NightWorkPanel({ isAdmin, active }: { isAdmin: boolean; active: boolean }) {
+  const [s, setS] = useState<NightWork | null>(null);
+  useEffect(() => {
+    if (active) api<NightWork>('/api/settings/night-work', { quiet: true }).then(setS).catch(() => setS(null));
+  }, [active]);
+  if (!s) return null;
+  const save = async (patch: Partial<NightWork>) => {
+    const next = await api<NightWork>('/api/settings/night-work', { method: 'PUT', body: { ...s, ...patch } }).catch(() => null);
+    if (next) setS(next);
+  };
+  return (
+    <div className="card max-w-2xl space-y-3">
+      <div>
+        <h2 className="font-semibold">Night work</h2>
+        <p className="text-sm text-slate-400">
+          When the GPU is quiet (your window below), HiveMind sorts the memory, writes Jarvis&apos;s fix list from the last 24 hours, and trains — each as a
+          background job — then leaves a report in Memory under <code>characters/jarvis/</code>. Say &quot;run the night work now&quot; to start it any time.
+        </p>
+      </div>
+      <label className="flex items-center gap-2 text-sm">
+        <input type="checkbox" disabled={!isAdmin} checked={s.enabled} onChange={(e) => save({ enabled: e.target.checked })} /> Run the night work automatically
+      </label>
+      <div className="flex items-center gap-2 text-sm">
+        <span className="text-slate-400">Between</span>
+        <input type="number" min={0} max={23} className="input w-16 py-1" disabled={!isAdmin} value={s.fromHour} onChange={(e) => save({ fromHour: Number(e.target.value) })} />
+        <span className="text-slate-400">and</span>
+        <input type="number" min={1} max={24} className="input w-16 py-1" disabled={!isAdmin} value={s.toHour} onChange={(e) => save({ toHour: Number(e.target.value) })} />
+        <span className="text-slate-400">o&apos;clock</span>
+      </div>
+      <label className="block space-y-1 text-sm">
+        <span className="text-slate-400">Memory-sort canvas (id or name)</span>
+        <input className="input py-1" disabled={!isAdmin} placeholder="optional — the canvas that merges/sorts the memory" value={s.memorySortCanvas ?? ''} onChange={(e) => setS({ ...s, memorySortCanvas: e.target.value })} onBlur={(e) => save({ memorySortCanvas: e.target.value || undefined })} />
+      </label>
+      <label className="block space-y-1 text-sm">
+        <span className="text-slate-400">Training canvas (id or name)</span>
+        <input className="input py-1" disabled={!isAdmin} placeholder="optional — the canvas that reflects + trains" value={s.trainingCanvas ?? ''} onChange={(e) => setS({ ...s, trainingCanvas: e.target.value })} onBlur={(e) => save({ trainingCanvas: e.target.value || undefined })} />
+      </label>
+      <button className="btn w-fit" disabled={!isAdmin} onClick={async () => { await api('/api/night-work/run', { method: 'POST' }).catch(() => {}); toast('Night work started — see Memory › characters/jarvis for the report', 'ok'); }}>
+        Run the night work now
+      </button>
+    </div>
+  );
+}

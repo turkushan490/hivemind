@@ -6,7 +6,7 @@ import { ColibriPanel } from './Colibri';
 import { RobotsPanel } from './Robots';
 import { Models } from './Models';
 import { Providers } from './Providers';
-import { BuilderSettings, HomeAssistantPanel, HuggingFacePanel, VoicePanel, MemorySettings, OpenAIApiSettings, SearchSettingsPanel, TrainingPanel, RunLimitsPanel } from './SettingsExtra';
+import { BuilderSettings, HomeAssistantPanel, HuggingFacePanel, VoicePanel, MemorySettings, OpenAIApiSettings, SearchSettingsPanel, TrainingPanel, RunLimitsPanel, NightWorkPanel } from './SettingsExtra';
 import { Tokens } from './Tokens';
 import { T3CodePanel } from './T3Code';
 import { Users } from './Users';
@@ -27,6 +27,7 @@ const SECTIONS = {
   homeassistant: 'Home Assistant',
   huggingface: 'Hugging Face',
   training: 'Training',
+  nightwork: 'Night work',
   limits: 'Run limits',
   pictures: 'Pictures',
   skills: 'Skills',
@@ -40,7 +41,7 @@ const SECTIONS = {
 type Section = keyof typeof SECTIONS;
 
 /** Viewers only get their API tokens; users everything but Users and Access. */
-const shown = (role: Role, s: Section) => (role === 'viewer' ? s === 'tokens' || s === 'api' : (s !== 'users' && s !== 'access' && s !== 'colibri' && s !== 'robots') || role === 'admin');
+const shown = (role: Role, s: Section) => (role === 'viewer' ? s === 'tokens' || s === 'api' : (s !== 'users' && s !== 'access' && s !== 'colibri' && s !== 'robots' && s !== 'nightwork') || role === 'admin');
 
 export function Settings({ role, meId, active, onWizard }: { role: Role; meId: string; active: boolean; onWizard: () => void }) {
   const [stored, setSection] = useStored<Section>('settings.section', 'providers');
@@ -86,6 +87,7 @@ export function Settings({ role, meId, active, onWizard }: { role: Role; meId: s
         {panel('homeassistant', <HomeAssistantPanel isAdmin={isAdmin} active={active && section === 'homeassistant'} />)}
         {panel('huggingface', <HuggingFacePanel isAdmin={isAdmin} active={active && section === 'huggingface'} />)}
         {panel('training', <TrainingPanel isAdmin={isAdmin} active={active && section === 'training'} />)}
+        {panel('nightwork', <NightWorkPanel isAdmin={isAdmin} active={active && section === 'nightwork'} />)}
         {panel('limits', <RunLimitsPanel isAdmin={isAdmin} active={active && section === 'limits'} />)}
         {panel('pictures', <PictureReaderPanel isAdmin={isAdmin} active={active && section === 'pictures'} />)}
         {panel('skills', <SkillsPanel isAdmin={isAdmin} active={active && section === 'skills'} />)}

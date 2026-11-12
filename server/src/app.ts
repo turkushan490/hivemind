@@ -15,6 +15,7 @@ import { datasetRoutes } from './api/datasets.js';
 import { libraryRoutes } from './api/library.js';
 import { memoryRoutes } from './api/memory.js';
 import { memoryFilesRoutes } from './api/memoryFiles.js';
+import { nightWorkRoutes } from './api/nightWork.js';
 import { problemRoutes } from './api/problems.js';
 import { projectRoutes } from './api/projects.js';
 import { skillRoutes } from './api/skills.js';
@@ -104,6 +105,7 @@ export async function buildApp(opts: { logger?: boolean; web?: boolean; onRoute?
   problemRoutes(app);
   memoryRoutes(app);
   memoryFilesRoutes(app);
+  nightWorkRoutes(app);
   libraryRoutes(app);
   settingsRoutes(app);
   builderRoutes(app);

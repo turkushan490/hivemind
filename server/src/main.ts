@@ -100,3 +100,7 @@ if (resumed) console.log(`Went on with ${resumed} run${resumed === 1 ? '' : 's'}
 
 // Scheduled workflows: every minute, the ones that are due run like POST /api/runs, as their owner (local time, TZ).
 startScheduler(runScheduled);
+
+// Night work on Tower (H13): check every 15 minutes whether it is the quiet-hours window and the GPU is free.
+const { nightTick } = await import('./services/nightWork.js');
+setInterval(() => void nightTick(), 15 * 60_000).unref();

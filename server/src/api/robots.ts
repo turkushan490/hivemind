@@ -12,8 +12,8 @@ import {
   putInstallerFile,
   setGithubRepo,
 } from '../services/installers.js';
-import { changePin, createRobot, deleteRobot, heartbeat, listRobots, newRobotToken, robotById, robotConfig, robotEvent, updateRobot, type RobotRow } from '../services/robots.js';
-import { getJob, jobsDone, jobView, listJobs, markSeen, moveJob, resumeCheckpoint } from '../services/robotJobs.js';
+import { changePin, createRobot, deleteRobot, heartbeat, listRobots, newRobotToken, robotById, robotConfig, robotEvent, setReinstall, updateRobot, type RobotRow } from '../services/robots.js';
+import { getJob, jobsDone, jobsRunning, jobView, listJobs, markSeen, moveJob, resumeCheckpoint } from '../services/robotJobs.js';
 import { cancelRun, startRun } from '../events/runs.js';
 import { gpuFreerFor, resolverFor, trainingFor } from './providers.js';
 import { sourceOf } from './runs.js';
@@ -92,12 +92,28 @@ export function robotRoutes(app: FastifyInstance) {
     if (!r) return;
     heartbeat(r, (req.body ?? {}) as Record<string, unknown>, req.ip);
     const now = robotById(r.id)!;
-    return { configVersion: now.config_version, config: robotConfig(now, firmwareFor), jobsDone: jobsDone(r.owner_id, r.id) };
+    return { configVersion: now.config_version, config: robotConfig(now, firmwareFor), jobsDone: jobsDone(r.owner_id, r.id), jobsRunning: jobsRunning(r.owner_id, r.id) };
   });
 
   /** A new unlock PIN over the air: { pin } (4-8 digits); the robot gets only a salt and a hash. */
   app.post('/api/robots/:id/pin', { preHandler: requireAdmin }, async (req, reply) =>
     safe(reply, () => changePin(req.user!.id, (req.params as { id: string }).id, (req.body as { pin?: unknown } | undefined)?.pin)),
+  );
+
+  /** Reinstall a firmware over the air (H8): { version } — the same version (re-flash) or an older one (roll back). */
+  app.post('/api/robots/:id/reinstall', { preHandler: requireAdmin }, async (req, reply) =>
+    safe(reply, () => {
+      const id = (req.params as { id: string }).id;
+      const version = String((req.body as { version?: unknown } | undefined)?.version ?? '').trim();
+      if (!version) throw Object.assign(new Error('Pick a firmware version to reinstall'), { statusCode: 400 });
+      const r = robotById(id);
+      if (!r || r.owner_id !== req.user!.id) throw Object.assign(new Error('No such robot'), { statusCode: 404 });
+      const fwApp = listInstallers().find((a) => a.app === FIRMWARE_APP);
+      const v = fwApp?.versions.find((x) => x.version === version);
+      if (!r.board || !v || !v.files.some((f) => f.name === `${r.board}-firmware.bin`))
+        throw Object.assign(new Error(`That version has no ${r.board ?? 'board'} firmware to reinstall`), { statusCode: 400 });
+      return setReinstall(req.user!.id, id, version);
+    }),
   );
 
   // ---- background jobs (the robot, the app, or the owner) ----
@@ -139,7 +155,8 @@ export function robotRoutes(app: FastifyInstance) {
         training: trainingFor(u),
         source: sourceOf(u, '/v1'),
         timeLimitMin: 60,
-        priority: priorityFor(u, (req.body as { priority?: unknown } | undefined)?.priority),
+        // A resumed project build is background work: back of the queue by default, so spoken chats go ahead (H8).
+        priority: priorityFor(u, (req.body as { priority?: unknown } | undefined)?.priority ?? 200),
         resumable: { userId: u.id, providerUserId: u.id },
         startFrom: r.checkpoint,
       });

@@ -118,6 +118,11 @@ export function jobsDone(ownerId: string, robotId?: string): number {
   return listJobs(ownerId, robotId).filter((j) => !j.seen && (j.status === 'done' || j.status === 'failed')).length;
 }
 
+/** Jobs still going (the heartbeat says how many, so the robot shows its orbs without polling) — H8. */
+export function jobsRunning(ownerId: string, robotId?: string): number {
+  return listJobs(ownerId, robotId).filter((j) => j.status === 'running' || j.status === 'queued').length;
+}
+
 export const markSeen = (ownerId: string, id: string) => db.prepare('UPDATE robot_jobs SET seen = 1 WHERE id = ? AND owner_id = ?').run(id, ownerId).changes > 0;
 
 /**

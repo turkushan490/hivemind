@@ -20,6 +20,8 @@ interface Robot {
   settings: RobotSettings;
   reported?: Partial<RobotSettings>;
   pinPending: boolean;
+  reinstallPending?: { version: string; id: number };
+  lastEvent?: { type: string; character?: string; version?: string; error?: string; at: string };
 }
 
 interface RobotSettings {
@@ -122,6 +124,12 @@ export function RobotsPanel({ active }: { active: boolean }) {
                   .filter(Boolean)
                   .join(' · ')}
               </span>
+              {r.lastEvent?.type === 'reinstalled' && (
+                <span className="text-xs text-emerald-400">reinstalled {r.lastEvent.version} · {ago(r.lastEvent.at)}</span>
+              )}
+              {r.lastEvent?.type === 'reinstall_failed' && (
+                <span className="text-xs text-red-400" title={r.lastEvent.error}>reinstall of {r.lastEvent.version} failed</span>
+              )}
             </div>
             <div className="flex flex-wrap gap-1">
               {r.board && fw?.versions.some((v) => v.files.some((f) => f.name === `${r.board}-firmware.bin`)) && (
@@ -160,6 +168,41 @@ export function RobotsPanel({ active }: { active: boolean }) {
               >
                 {r.pinPending ? 'PIN on its way…' : 'Change PIN'}
               </button>
+              {r.board &&
+                fw?.versions.some((v) => v.files.some((f) => f.name === `${r.board}-firmware.bin`)) &&
+                (r.reinstallPending ? (
+                  <span className="px-2 py-0.5 text-xs text-amber-300" title="The robot installs it at its next check, even if it is the same or older than what it runs">
+                    Reinstalling {r.reinstallPending.version}…
+                  </span>
+                ) : (
+                  <select
+                    className="input w-auto py-0.5 text-xs"
+                    value=""
+                    title="Put a firmware on again over the air: the same version (re-flash a broken install) or an older one (roll back). A full reinstall (bootloader, wipe) still needs USB."
+                    onChange={async (e) => {
+                      const version = e.target.value;
+                      if (!version) return;
+                      if (!confirm(`Reinstall ${version} on ${r.name}? It installs even if it is the same or older than what it runs now.`)) {
+                        e.target.value = '';
+                        return;
+                      }
+                      await api(`/api/robots/${r.id}/reinstall`, { body: { version } })
+                        .then(() => toast(`${r.name} reinstalls ${version} at its next check`, 'ok'))
+                        .catch(() => {});
+                      await load();
+                    }}
+                  >
+                    <option value="">Reinstall…</option>
+                    {fw.versions
+                      .filter((v) => v.files.some((f) => f.name === `${r.board}-firmware.bin`))
+                      .map((v) => (
+                        <option key={v.version} value={v.version}>
+                          Reinstall {v.version}
+                          {v.version === r.firmware ? ' (running)' : ''}
+                        </option>
+                      ))}
+                  </select>
+                ))}
               <button
                 className="btn-ghost px-2 py-0.5 text-xs"
                 onClick={async () => {

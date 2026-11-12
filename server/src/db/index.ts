@@ -381,6 +381,10 @@ export const MIGRATIONS: string[] = [
   -- GPU priority per run (1 = runs first … 200, default 100): which waiting run takes a shared GPU next.
   ALTER TABLE runs ADD COLUMN priority INTEGER;
   `,
+  `
+  -- A firmware reinstall on its way to a robot (H8): {version, id} to put a version on again (same or older) over Wi-Fi.
+  ALTER TABLE robots ADD COLUMN reinstall TEXT;
+  `,
 ];
 
 export const db = new DatabaseSync(join(config.dataDir, 'hivemind.db'));

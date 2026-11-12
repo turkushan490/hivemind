@@ -30,6 +30,7 @@ export interface RobotRow {
   settings: string | null;
   reported: string | null;
   pin_change: string | null;
+  reinstall: string | null;
   created_at: string;
 }
 
@@ -88,7 +89,7 @@ export interface Robot {
   ip?: string;
   ssid?: string;
   rssi?: number;
-  lastEvent?: { type: string; character?: string; at: string };
+  lastEvent?: { type: string; character?: string; version?: string; error?: string; at: string };
   configVersion: number;
   /** The firmware version the robot should update to (Installers → Update firmware). */
   firmwareTarget?: string;
@@ -97,6 +98,8 @@ export interface Robot {
   reported?: Partial<RobotSettings>;
   /** A PIN change sent over the air that the robot hasn't confirmed yet. */
   pinPending: boolean;
+  /** A firmware reinstall sent over the air that the robot hasn't confirmed yet (H8). */
+  reinstallPending?: { version: string; id: number };
   createdAt: string;
 }
 
@@ -138,6 +141,7 @@ export function toRobot(r: RobotRow): Robot {
     settings: settingsOf(r),
     ...(r.reported && { reported: JSON.parse(r.reported) as Partial<RobotSettings> }),
     pinPending: !!r.pin_change,
+    ...(r.reinstall && { reinstallPending: JSON.parse(r.reinstall) as { version: string; id: number } }),
     createdAt: r.created_at,
   };
 }
@@ -258,7 +262,15 @@ export function robotConfig(r: RobotRow, firmwareFor?: (board: string | null, ta
       return {};
     }
   })();
-  const fw = firmwareFor?.(r.board, r.firmware_target);
+  // A reinstall (H8) overrides the firmware block: its chosen version, plus a `reinstall` id so the robot puts it on
+  // again even when it is the same or older than what it runs. Otherwise the normal firmware it should be running.
+  const reinstall = r.reinstall ? (JSON.parse(r.reinstall) as { version: string; id: number }) : undefined;
+  const fw = reinstall
+    ? (() => {
+        const f = firmwareFor?.(r.board, reinstall.version);
+        return f ? { ...f, reinstall: reinstall.id } : firmwareFor?.(r.board, r.firmware_target);
+      })()
+    : firmwareFor?.(r.board, r.firmware_target);
   return {
     configVersion: r.config_version,
     name: r.name,
@@ -278,6 +290,18 @@ export function robotConfig(r: RobotRow, firmwareFor?: (board: string | null, ta
     ...(r.pin_change && { pinChange: JSON.parse(r.pin_change) as { salt: string; hash: string; id: number } }),
     ...(fw && { firmware: fw }),
   };
+}
+
+/**
+ * Put a firmware version on the robot again over the air (H8): the same version (a broken install) or an older one
+ * (roll back), without a USB cable. Only {version, id} is stored; the robot installs it even when it is not newer,
+ * then confirms with reinstallId in its heartbeat. The caller (API) checks the version has a <board>-firmware.bin.
+ */
+export function setReinstall(ownerId: string, id: string, version: string): { id: number } {
+  getRobot(ownerId, id);
+  const change = { version, id: Date.now() % 2_000_000_000 };
+  db.prepare('UPDATE robots SET reinstall = ?, config_version = config_version + 1 WHERE id = ?').run(JSON.stringify(change), id);
+  return { id: change.id };
 }
 
 /**
@@ -305,12 +329,27 @@ export function heartbeat(r: RobotRow, body: Record<string, unknown>, ip: string
   if (body.settings && typeof body.settings === 'object') db.prepare('UPDATE robots SET reported = ? WHERE id = ?').run(JSON.stringify(cleanSettings(body.settings)), r.id);
   if (r.pin_change && typeof body.pinId === 'number' && (JSON.parse(r.pin_change) as { id: number }).id === body.pinId)
     db.prepare('UPDATE robots SET pin_change = NULL WHERE id = ?').run(r.id);
+  // A firmware reinstall the robot has taken (H8): drop it and show the result on its card.
+  if (r.reinstall && typeof body.reinstallId === 'number') {
+    const pending = JSON.parse(r.reinstall) as { version: string; id: number };
+    if (pending.id === body.reinstallId) {
+      db.prepare('UPDATE robots SET reinstall = NULL WHERE id = ?').run(r.id);
+      const error = str(body.reinstallError, 200);
+      robotEvent(r, { type: error ? 'reinstall_failed' : 'reinstalled', version: pending.version, ...(error && { error }) });
+    }
+  }
 }
 
-export function robotEvent(r: RobotRow, body: { type?: unknown; character?: unknown }) {
+export function robotEvent(r: RobotRow, body: { type?: unknown; character?: unknown; version?: unknown; error?: unknown }) {
   const type = str(body.type, 30);
   if (!type) throw err(400, 'type is required ("moved", "button", "battery_low", "wake")');
-  const ev = { type, ...(str(body.character, 20) && { character: str(body.character, 20)! }), at: new Date().toISOString() };
+  const ev = {
+    type,
+    ...(str(body.character, 20) && { character: str(body.character, 20)! }),
+    ...(str(body.version, 40) && { version: str(body.version, 40)! }),
+    ...(str(body.error, 200) && { error: str(body.error, 200)! }),
+    at: new Date().toISOString(),
+  };
   db.prepare('UPDATE robots SET last_event = ? WHERE id = ?').run(JSON.stringify(ev), r.id);
   return ev;
 }

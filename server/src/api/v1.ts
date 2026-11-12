@@ -77,8 +77,11 @@ export function v1Routes(app: FastifyInstance) {
   app.post('/v1/chat/completions', { preHandler: requireToken }, async (req, reply) => {
     const body = (req.body ?? {}) as { model?: string; messages?: unknown; stream?: boolean; hivemind_vars?: unknown };
     if (!body.model) return reply.code(400).send(apiError('"model" is required: the id or name of a saved canvas (see GET /v1/models)'));
-    // GPU priority: hivemind_vars.priority (1 = first … 200). T3 Code is pinned at 100; HiveBot (robot token) wins by default.
-    const priority = priorityFor(req.user!, (body.hivemind_vars as { priority?: unknown } | undefined)?.priority);
+    // GPU priority: hivemind_vars.priority (1 = first … 200). T3 Code is pinned at 100; HiveBot (robot token) wins by
+    // default; a background job defaults to the back of the queue (200) so a spoken question always goes ahead (H8).
+    const hvMeta = body.hivemind_vars as { priority?: unknown; background?: unknown } | undefined;
+    const priority =
+      hvMeta?.priority != null ? priorityFor(req.user!, hvMeta.priority) : hvMeta?.background === true ? 200 : priorityFor(req.user!, undefined);
     // A single model ("colibri/qwen36-35b"): called directly, tools and all (a canvas id never has a slash).
     const single = body.model.includes('/') && !findCanvas(canvasesFor(req.user!), body.model) ? splitModelId(body.model.replace(/^hivemind\//i, '')) : undefined;
     if (single) {

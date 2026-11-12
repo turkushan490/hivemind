@@ -57,6 +57,8 @@ const BLOCKS: Record<NodeType, string> = {
   file: 'text from a file the user loads later. No inputs. Leave its content empty.',
   search: `web search for the question (or the text of the block before it). Optional "source": ${SEARCH_SOURCES.join(' | ')}, "count" 1-10.`,
   memory: '"mode": "recall" brings back what was saved under "key"; "mode": "search" finds the best matching entries under "key" for "query" (default: the text wired in), e.g. rules from a rulebook; "mode": "save" remembers what flows through it under "key".',
+  readMemory: 'MEMORY (MD files): reads memory files and passes their text on. "memoryPaths" = the .md paths to read (one per line, or {{inputs}} from a picker block); "memoryIndex": true also includes index.md + the list of all memory files. Put a tiny model before it to pick the files.',
+  writeMemory: 'MEMORY (MD files): writes the text wired into it to a memory file. "memoryPath" (e.g. topics/food/potatoes.md) + "memoryMode": "replace" | "append" | "move" (move uses "memoryTo"). Without a path it reads JSON {"path","text"} from the block before it. "memoryBy" records who changed it.',
   save: `saves what is wired into it as a file. "format": auto | md | txt | html | json | csv | code (auto = html for websites). Optional "fileName".`,
   homeassistant: 'Home Assistant action. "haOp": "state" reads "entities" (comma separated entity ids like sensor.temperature) and passes their states on; "haOp": "service" calls "service" (e.g. light.turn_on) with "body" as JSON data ({{input}} = text wired in). Only use when the user mentions Home Assistant or their smart home.',
   webhook: 'calls an HTTP "url" with "method" (GET/POST/PUT/PATCH/DELETE) and an optional "body" template ({{input}}, {{question}}); passes the response on.',

@@ -99,6 +99,13 @@ export interface NodeServices {
   };
   /** Skills (Settings → Skills): your own and the shared ones, by name. */
   skills?: { list(): { name: string; description: string }[]; load(name: string): string | undefined };
+  /** Memory as MD files (H11): the owner's memory, for the readMemory / writeMemory blocks. */
+  memoryFiles?: {
+    tree(guest?: boolean): { path: string; title?: string }[];
+    read(paths: string[], guest?: boolean): { path: string; content?: string }[];
+    write(path: string, text: string, opts?: { mode?: 'replace' | 'append'; by?: string; guest?: boolean }): void;
+    move(from: string, to: string, by?: string, guest?: boolean): void;
+  };
 }
 
 /** A chat sent through /v1: its system messages and the turns before the last question. */
@@ -148,6 +155,22 @@ export interface NodeDefinition {
   /** Needs config.models with at least this many models. */
   minModels?: number;
   execute(ctx: NodeContext): Promise<string>;
+}
+
+/** Parse a list of memory file paths from text: a JSON array, or one per line / comma-separated. Keeps .md paths. */
+export function memoryPathList(spec: string): string[] {
+  const s = (spec ?? '').trim();
+  if (!s) return [];
+  let items: string[] = [];
+  if (s.startsWith('[')) {
+    try {
+      items = (JSON.parse(s) as unknown[]).map((x) => String(x));
+    } catch {
+      /* fall through */
+    }
+  }
+  if (!items.length) items = s.split(/[\n,]+/);
+  return [...new Set(items.map((p) => p.trim().replace(/^["'\-\s]+|["'\s]+$/g, '')).filter((p) => p.endsWith('.md')))];
 }
 
 /** Earlier chat turns as "User: …" / "Assistant: …" text. */
@@ -779,6 +802,66 @@ export const NODES: Record<NodeType, NodeDefinition> = {
       const items = mem.recall(key, limit);
       ctx.progress(items.length ? `Recalled ${items.length} from "${key}"` : `Nothing in "${key}" yet`);
       return items.length ? `Remembered from earlier (${key}):\n\n${items.map((m) => `[${m.at}]\n${m.text}`).join('\n\n')}` : '(nothing remembered yet)';
+    },
+  },
+
+  // ---- Memory as MD files (H11) ----
+  readMemory: {
+    usesModel: false,
+    async execute(ctx) {
+      const svc = ctx.services.memoryFiles;
+      if (!svc) throw new Error('Memory files are not available here');
+      const guest = !!ctx.node.config.memoryGuest;
+      const input = ctx.inputs.map((i) => i.text).join('\n');
+      const spec = ctx.node.config.memoryPaths ? fill(ctx.node.config.memoryPaths, ctx, input) : input;
+      const paths = memoryPathList(spec).slice(0, 8);
+      const parts: string[] = [];
+      if (ctx.node.config.memoryIndex) {
+        const idx = svc.read(['index.md'], guest)[0]?.content;
+        const list = svc.tree(guest).map((f) => `- ${f.path}${f.title ? ` — ${f.title}` : ''}`).join('\n');
+        parts.push(`Memory index:\n${idx?.trim() || '(no index yet)'}\n\nAll memory files:\n${list || '(none yet)'}`);
+      }
+      if (paths.length) {
+        const files = svc.read(paths, guest);
+        for (const f of files) parts.push(f.content !== undefined ? `File ${f.path}:\n${f.content.trim()}` : `File ${f.path}: (not found)`);
+      }
+      ctx.progress(paths.length ? `Read ${paths.length} memory file${paths.length === 1 ? '' : 's'}` : ctx.node.config.memoryIndex ? 'Read the memory index' : 'No memory paths given');
+      return parts.join('\n\n---\n\n') || '(no memory read)';
+    },
+  },
+  writeMemory: {
+    usesModel: false,
+    async execute(ctx) {
+      const svc = ctx.services.memoryFiles;
+      if (!svc) throw new Error('Memory files are not available here');
+      const guest = !!ctx.node.config.memoryGuest;
+      const by = (ctx.node.config.memoryBy ? fill(ctx.node.config.memoryBy, ctx, '') : '').trim() || 'owner';
+      const input = ctx.inputs.map((i) => i.text).join('\n').trim();
+      const mode = ctx.node.config.memoryMode ?? 'replace';
+      if (mode === 'move') {
+        const from = fill(ctx.node.config.memoryPath ?? '', ctx, '').trim();
+        const to = fill(ctx.node.config.memoryTo ?? '', ctx, '').trim();
+        if (!from || !to) throw new Error('writeMemory (move) needs memoryPath (from) and memoryTo (to)');
+        svc.move(from, to, by, guest);
+        ctx.progress(`Moved ${from} → ${to}`);
+        return `Moved ${from} → ${to}`;
+      }
+      // The path and text come from the block config, or from the input as JSON {"path","text"} (a model can write that).
+      let path = fill(ctx.node.config.memoryPath ?? '', ctx, '').trim();
+      let text = input;
+      if (!path) {
+        try {
+          const j = JSON.parse(input) as { path?: string; text?: string };
+          if (j && typeof j.path === 'string') {
+            path = j.path.trim();
+            if (typeof j.text === 'string') text = j.text;
+          }
+        } catch {}
+      }
+      if (!path) throw new Error('writeMemory needs a path (in the block, or as JSON {"path","text"} from the block before it)');
+      svc.write(path, text, { mode: mode === 'append' ? 'append' : 'replace', by, guest });
+      ctx.progress(`${mode === 'append' ? 'Appended to' : 'Wrote'} ${path}`);
+      return `${mode === 'append' ? 'Appended to' : 'Wrote'} ${path} (${text.length} characters, by ${by})`;
     },
   },
 

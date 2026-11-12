@@ -1,7 +1,7 @@
 // Types shared by the server, the web UI and (later) the Android app.
 // The canvas format and run events are the contract between them.
 
-export const NODE_TYPES = ['input', 'llm', 'review', 'judge', 'output', 'router', 'debate', 'vote', 'decide', 'template', 'file', 'search', 'memory', 'save', 'image', 'homeassistant', 'webhook', 'discord', 'generate', 'dataset', 'train', 'evaluate', 'deploy', 'readProject', 'writeFiles', 'updateNotes', 'git', 'build', 'pause', 'foreach', 'collect', 'deepSearch', 'panel', 'audioPrep', 'voiceDataset', 'voiceClone', 'speak'] as const;
+export const NODE_TYPES = ['input', 'llm', 'review', 'judge', 'output', 'router', 'debate', 'vote', 'decide', 'template', 'file', 'search', 'memory', 'readMemory', 'writeMemory', 'save', 'image', 'homeassistant', 'webhook', 'discord', 'generate', 'dataset', 'train', 'evaluate', 'deploy', 'readProject', 'writeFiles', 'updateNotes', 'git', 'build', 'pause', 'foreach', 'collect', 'deepSearch', 'panel', 'audioPrep', 'voiceDataset', 'voiceClone', 'speak'] as const;
 export type NodeType = (typeof NODE_TYPES)[number];
 
 /** Which model a node uses: a configured provider plus a model id on it. */
@@ -126,6 +126,19 @@ export interface NodeConfig {
   limit?: number;
   /** Memory search: what to look up ({{vars.x}}, {{question}}, {{inputs}}); empty = the text wired in, else the question. */
   query?: string;
+  /** readMemory (H11): the MD file paths to read (newline/comma/JSON list; {{inputs}}/{{vars}} filled). Empty = from the text wired in. */
+  memoryPaths?: string;
+  /** readMemory: also include index.md and the file tree (so a model/robot can see what memory exists). */
+  memoryIndex?: boolean;
+  /** writeMemory: replace the file, append to it, or move it. */
+  memoryMode?: 'replace' | 'append' | 'move';
+  /** writeMemory: the file path to write (replace/append) or move from ({{...}} filled). Empty = from input JSON {path,text}. */
+  memoryPath?: string;
+  /** writeMemory move: the destination path. */
+  memoryTo?: string;
+  /** readMemory / writeMemory: who the change is by (owner / a character / a job), and the guest memory sub-tree. */
+  memoryBy?: string;
+  memoryGuest?: boolean;
   /** Save file: the name (may use {{date}} and {{question}}) and the format. */
   format?: SaveFormat;
   /** Image: size, steps, guidance, LoRA (ComfyUI), and what not to draw. */

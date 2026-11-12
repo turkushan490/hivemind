@@ -8,6 +8,7 @@ import { FilesPage } from './pages/FilesPage';
 import { Login } from './pages/Login';
 import { Problems } from './pages/Problems';
 import { ProjectsPage } from './pages/ProjectsPage';
+import { MemoryPage } from './pages/MemoryPage';
 import { RunPage } from './pages/Run';
 import { Settings } from './pages/Settings';
 import { Stats } from './pages/Stats';
@@ -23,7 +24,7 @@ interface Me {
   role: 'admin' | 'user' | 'viewer';
 }
 
-const TABS = { use: 'Use', canvas: 'Workflow', projects: 'Projects', files: 'Files', run: 'Quick council', stats: 'Stats', lab: 'Lab', activity: 'Activity', settings: 'Settings', problems: 'Problems' } as const;
+const TABS = { use: 'Use', canvas: 'Workflow', projects: 'Projects', files: 'Files', memory: 'Memory', run: 'Quick council', stats: 'Stats', lab: 'Lab', activity: 'Activity', settings: 'Settings', problems: 'Problems' } as const;
 type Tab = keyof typeof TABS;
 /** Viewers only use canvases. */
 const VIEWER_TABS: Tab[] = ['use', 'activity', 'settings', 'problems'];
@@ -182,6 +183,11 @@ export function App() {
         {opened.has('files') && (
           <div hidden={tab !== 'files'}>
             <FilesPage isAdmin={me.role === 'admin'} active={tab === 'files'} />
+          </div>
+        )}
+        {opened.has('memory') && (
+          <div hidden={tab !== 'memory'}>
+            <MemoryPage active={tab === 'memory'} />
           </div>
         )}
         {opened.has('run') && (

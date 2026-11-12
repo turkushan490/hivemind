@@ -15,6 +15,7 @@ import { homeAssistantConnection } from '../services/homeassistant.js';
 import { projectServicesFor } from '../services/projectRun.js';
 import { skillsForRun } from '../services/skills.js';
 import { voiceServicesFor } from '../services/voiceRun.js';
+import * as memFiles from '../services/memoryFiles.js';
 
 type Listener = (ev: RunEvent) => void;
 
@@ -303,6 +304,15 @@ export function startRun(opts: {
         // Projects: the runner's own. Not for limited API tokens, except a robot's own token — the robot starts its
         // own project jobs (build/fix a HiveMind project by voice) when the PC app is off (H7).
         ...((!opts.user?.scope || opts.user.scope.robot) && { projects: projectServicesFor(fileUser, { id, source: canvasName ? `Run: ${canvasName}` : `Run: ${source}` }) }),
+        // Memory as MD files (H11): the owner's memory, for readMemory / writeMemory. The robot's own token may use it too.
+        ...((!opts.user?.scope || opts.user.scope.robot) && {
+          memoryFiles: {
+            tree: (guest?: boolean) => memFiles.tree(opts.ownerId, guest).map((f) => ({ path: f.path, title: f.title })),
+            read: (paths: string[], guest?: boolean) => memFiles.read(opts.ownerId, paths, guest),
+            write: (path: string, text: string, o?: { mode?: 'replace' | 'append'; by?: string; guest?: boolean }) => void memFiles.write(opts.ownerId, path, text, o),
+            move: (from: string, to: string, by?: string, guest?: boolean) => memFiles.move(opts.ownerId, from, to, by, guest),
+          },
+        }),
         pause: { wait: (info, signal) => waitAtPause(run, info, emit, signal) },
         skills: skillsForRun(fileUser),
         // Voice blocks: the person who runs it (not viewers, not limited API tokens).

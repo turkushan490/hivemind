@@ -369,6 +369,65 @@ function KindSettings(p: Props) {
           )}
         </div>
       );
+    case 'readMemory':
+      return (
+        <div className="space-y-2">
+          <label className="block space-y-1">
+            <Label>Files to read</Label>
+            <textarea
+              className="input text-xs"
+              rows={3}
+              placeholder={'One .md path per line, e.g.\ntopics/food/potatoes.md\nOr {{inputs}} to take them from a picker block before this one.'}
+              value={p.config.memoryPaths ?? ''}
+              onChange={(e) => p.onChange({ memoryPaths: e.target.value || undefined })}
+            />
+          </label>
+          <label className="flex items-center gap-2 text-sm text-slate-300">
+            <input type="checkbox" checked={!!p.config.memoryIndex} onChange={(e) => p.onChange({ memoryIndex: e.target.checked || undefined })} /> Also include the index + list of all memory files
+          </label>
+          <label className="flex items-center gap-2 text-sm text-slate-300">
+            <input type="checkbox" checked={!!p.config.memoryGuest} onChange={(e) => p.onChange({ memoryGuest: e.target.checked || undefined })} /> Guest memory (when the robot is locked)
+          </label>
+        </div>
+      );
+    case 'writeMemory':
+      return (
+        <div className="space-y-2">
+          <div className="flex gap-1">
+            {(['replace', 'append', 'move'] as const).map((m) => (
+              <button
+                key={m}
+                className={`flex-1 rounded-md border px-2 py-1.5 text-sm ${(p.config.memoryMode ?? 'replace') === m ? 'border-lime-500 bg-lime-500/15 text-lime-200' : 'border-[#30363d] text-slate-400'}`}
+                onClick={() => p.onChange({ memoryMode: m })}
+              >
+                {m[0].toUpperCase() + m.slice(1)}
+              </button>
+            ))}
+          </div>
+          <label className="block space-y-1">
+            <Label>{(p.config.memoryMode ?? 'replace') === 'move' ? 'Move from' : 'File path'}</Label>
+            <input
+              className="input text-xs"
+              placeholder="topics/food/potatoes.md (empty = JSON {path,text} from the block before it)"
+              value={p.config.memoryPath ?? ''}
+              onChange={(e) => p.onChange({ memoryPath: e.target.value || undefined })}
+            />
+          </label>
+          {(p.config.memoryMode ?? 'replace') === 'move' && (
+            <label className="block space-y-1">
+              <Label>Move to</Label>
+              <input className="input text-xs" placeholder="topics/garden/potatoes.md" value={p.config.memoryTo ?? ''} onChange={(e) => p.onChange({ memoryTo: e.target.value || undefined })} />
+            </label>
+          )}
+          <label className="block space-y-1">
+            <Label>Changed by</Label>
+            <input className="input text-xs" placeholder="owner, or a character / job (e.g. {{vars.character}})" value={p.config.memoryBy ?? ''} onChange={(e) => p.onChange({ memoryBy: e.target.value || undefined })} />
+          </label>
+          <label className="flex items-center gap-2 text-sm text-slate-300">
+            <input type="checkbox" checked={!!p.config.memoryGuest} onChange={(e) => p.onChange({ memoryGuest: e.target.checked || undefined })} /> Guest memory (when the robot is locked)
+          </label>
+        </div>
+      );
     case 'save':
       return (
         <div className="space-y-2">

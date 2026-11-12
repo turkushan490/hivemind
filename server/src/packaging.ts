@@ -1,10 +1,13 @@
 // Small helpers for the Windows .exe build. Safe to import anywhere: no web-UI assets are pulled in here.
 import { spawn } from 'node:child_process';
 
-/** Opens the HiveMind UI for a desktop user. HIVEMIND_OPEN_BROWSER=app → a chrome/edge app window; anything else → the default browser. */
+/**
+ * Opens the HiveMind UI for a desktop user. HIVEMIND_OPEN_BROWSER=app → a chrome/edge app window;
+ * "browser"/"default"/"1"/"true" → the default browser; anything else (unset, "off", "none") → nothing opens.
+ */
 export function openBrowser(url: string): void {
   const mode = process.env.HIVEMIND_OPEN_BROWSER;
-  if (!mode) return;
+  if (!mode || !['app', 'browser', 'default', '1', 'true'].includes(mode)) return;
   try {
     if (process.platform === 'win32') {
       if (mode === 'app') {

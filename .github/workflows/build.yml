@@ -84,7 +84,8 @@ jobs:
       - run: npm run embed:web -w server
       - run: npm run build:exe -w server
       - name: Pack single .exe
-        run: npx @yao-pkg/pkg@6.6.0 server/dist-exe/hivemind.mjs -t node24-win-x64 -o hivemind-windows-x64.exe
+        # --no-bytecode --public: ship plain JS, not V8 bytecode (bytecode fatally crashes this bundle at runtime).
+        run: npx @yao-pkg/pkg@6.25.0 server/dist-exe/hivemind.mjs -t node24-win-x64 --no-bytecode --public --public-packages "*" -o hivemind-windows-x64.exe
       - uses: actions/upload-artifact@v4
         with:
           name: hivemind-windows-x64

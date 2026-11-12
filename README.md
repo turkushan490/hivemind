@@ -21,7 +21,7 @@
 
 HiveMind is a self-hosted web app where several AI models work together. Ask one question: local models (Ollama) and cloud models answer it, review each other anonymously, and a judge model merges the best parts into one final answer, noting where they disagreed. Every step streams live with tokens, speed, time and cost.
 
-> **Status: milestone 7.** On top of everything before it: the API changes for [DungeonMind](docs/HIVEMIND_CHANGES.md) (run variables, JSON mode, memory search, per-block outputs, limited tokens…), **decision models** (Jev, Ollama Nimble/Clef, OpenAI Decisions) with the Decide block and the Auto model, and the **Training Lab** (datasets, new models, a nightly training window, scheduled workflows). The Android app is next on the [roadmap](#roadmap).
+> **Status: milestone 8.** On top of everything before it: **Projects** (whole websites built run after run, with an editor, preview and Git), **skills** (`SKILL.md` folders the models follow), the **Colibri** local engine (big mixture-of-experts models split across GPU and RAM, several loaded at once, the hottest experts on the GPU), **coding agents** over `/v1` (T3 Code / OpenCode: every provider model is a model, with tools and streaming), and a **GPU priority queue** (1–200) so HiveBot, coding agents and background jobs share one GPU in the right order. Before that: the API changes for [DungeonMind](docs/HIVEMIND_CHANGES.md), **decision models** (Jev) with the Decide block and the Auto model, and the **Training Lab**. The Android app is next on the [roadmap](#roadmap).
 
 ## Features (now)
 
@@ -43,6 +43,9 @@ HiveMind is a self-hosted web app where several AI models work together. Ask one
 - **Skills:** your own `SKILL.md` folders (the Claude skills format) — upload, import from GitHub or write them — that AI model blocks follow, picked by you or by the model.
 - **Export / import:** canvases as files or a ZIP, finished tasks as ZIPs (answer, every block's output, images, replay data) — and back in again.
 - **Ready-made sets:** Everyday, Coding, Creative, Home / research, Website, Decisions (spam check, smart router, safe action) and Tabletop (the DungeonMind canvases) templates.
+- **GPU priority:** every run and every API request carries a priority **1–200** (1 runs first, 200 last, 100 the middle). When a local GPU is busy, the waiting job with the lowest number goes next — a job already generating is never cut off. The Workflow page has a **Prio** box (run two canvases, the lower number goes first), **Activity** shows each run's priority, **HiveBot** sends its own per request (quick chat jumps the queue, a background site build waits at 200), and **T3 Code** is pinned at 100 so a coding agent never starves your robot.
+- **Colibri (local MoE engine):** run big mixture-of-experts models (Qwen3, Flint, LFM3, DeepSeek, GLM, Kimi, …) split across your GPU and RAM — the most-used experts on the GPU, the rest in RAM — so a model far larger than your VRAM still runs, optionally **CPU-only** to leave the GPU free. Several models stay loaded at once (RAM budget, pin the ones you want kept), and any Hugging Face Ollama model whose architecture it supports gets an "also run in Colibri" option.
+- **Coding agents (OpenAI-compatible, per model):** point **T3 Code / OpenCode**, Continue or any OpenAI client at `/v1` and every provider model you may use is a model (`colibri/qwen36-35b`, `ollama/gemma4:e2b`) — called directly with tools, tool results, streaming and the same access rules, run limit and shared GPU queue as a canvas. Settings → **T3 Code** writes its `opencode.json` for you.
 - **Parallel switch:** cloud AIs always run at the same time; local models one by one, or together when you switch it on.
 - **Builder AI:** tell it what you need ("search Wikipedia, then two models answer and a judge merges them") and it builds or changes the canvas with the models you really have. A setup wizard helps you pick its model.
 - **Use mode:** the simple screen — pick a canvas, ask, get the answer, with a compact view of how it was made.
@@ -68,6 +71,26 @@ HiveMind is a self-hosted web app where several AI models work together. Ask one
 <p align="center"><img src="docs/model-library.gif" width="860" alt="Recommended models by GPU size, live Ollama library search with exact sizes, sharded Hugging Face warning"></p>
 
 <p align="center"><img src="docs/settings-and-models.gif" width="860" alt="Settings: provider cards, OpenRouter free models, Hugging Face search and download into Ollama with progress, then delete"></p>
+
+## A workflow, end to end
+
+The flagship workflow is a **council**, the run in the [demo above](docs/demo.gif):
+
+```
+Question ─┬─▶ Model A ─┐
+          ├─▶ Model B ─┼─▶ Review (anonymous) ─▶ Judge ─▶ Final answer
+          └─▶ Model C ─┘
+```
+
+1. **Ask once.** You type a question into the Question block (or send it over the API).
+2. **Several models answer.** Two or three models — local (Ollama/Colibri) and cloud — answer the same question. Cloud models run at the same time; local ones take turns on the GPU **in priority order**.
+3. **They review each other, anonymously.** A review step shows each answer without its author so no model is flattered by a name.
+4. **A judge merges.** The Judge block reads every answer and writes one final answer, keeping the best parts and noting where the models disagreed. (Swap it for a **Vote** block and the models pick the winner instead.)
+5. **Watch it think.** Every block streams live — loading into VRAM, thinking, writing — with tokens, speed, time and cost, and the whole run is saved so you can **replay** it.
+
+Build it in three clicks from the **council** / **council + review** templates, or tell the **Builder** ("two models answer, a judge merges them") and it wires the canvas with the models you actually have. Then **Save** it and it's instantly a model on the API: `POST /v1/chat/completions` with `"model": "<its name>"`.
+
+Other ready-made starting points: **HiveMind: smart router** (Jev sorts each question into chat / code / reasoning / writing / deep / home / picture and sends it to the right specialist), **Site builder** (keeps building one website run after run), **Deep research**, and the DungeonMind **Tabletop** set.
 
 ## Run it
 
@@ -142,14 +165,14 @@ curl http://server:4820/v1/chat/completions \
   -d '{"model": "<canvas id or name>", "messages": [{"role": "user", "content": "Why is the sky blue?"}]}'
 ```
 
-`GET /v1/models` lists your canvases (plus `auto` when the canvas router is on). Add `"stream": true` for server-sent chunks; send the whole conversation and it fills `{{history}}`; `hivemind_vars` fills `{{vars.name}}`. **Settings → OpenAI API** shows your base URL, canvas ids and copyable examples. Details: [docs/openai-api.md](docs/openai-api.md).
+`GET /v1/models` lists your canvases (plus `auto` when the canvas router is on). Add `"stream": true` for server-sent chunks; send the whole conversation and it fills `{{history}}`; `hivemind_vars` fills `{{vars.name}}`. Set `"hivemind_vars": {"priority": 10}` (1–200, 1 first) to put the request ahead of others on a shared GPU. **Settings → OpenAI API** shows your base URL, canvas ids and copyable examples. Details: [docs/openai-api.md](docs/openai-api.md).
 
 ### Native
 
 ```bash
-# Run a saved canvas or an ad-hoc graph, with optional variables for {{vars.name}}
+# Run a saved canvas or an ad-hoc graph, with optional variables for {{vars.name}} and a GPU priority (1–200, 1 first)
 curl -H "Authorization: Bearer hm_..." -H "content-type: application/json" \
-  -d '{"question":"Why is the sky blue?","canvasId":"...","vars":{"tone":"short"}}' http://server:4820/api/runs
+  -d '{"question":"Why is the sky blue?","canvasId":"...","vars":{"tone":"short"},"priority":100}' http://server:4820/api/runs
 # → {"runId":"..."}; then stream events:
 curl -N -H "Authorization: Bearer hm_..." http://server:4820/api/runs/<runId>/events
 # the result, with the output of every labelled block:
@@ -185,7 +208,8 @@ Layout: `packages/shared` (canvas + event types), `server` (Fastify, providers, 
 6. ✅ Roles, cost stats, judge winner stats, export, Unraid Community Apps template
 7. ✅ API for DungeonMind (M0), decision models (Jev, Decide block, Auto model), Training Lab L1–L2
 8. ✅ Projects, builds, GitHub, Pause, Site builder, skills
-9. Lab L4 (training on Hugging Face) · Android app
+9. ✅ Colibri local MoE engine (big models split GPU/RAM), coding agents over `/v1` (T3 Code / OpenCode), GPU priority queue (1–200)
+10. Lab L4 (training on Hugging Face) · Android app
 
 ## License
 

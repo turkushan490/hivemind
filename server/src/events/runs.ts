@@ -300,8 +300,9 @@ export function startRun(opts: {
         readFile: (path) => readOwnFile(fileUser, path),
         lanAllowed: fileUser.role === 'admin',
         training: opts.training,
-        // Projects: the runner's own (not for limited API tokens).
-        ...(!opts.user?.scope && { projects: projectServicesFor(fileUser, { id, source: canvasName ? `Run: ${canvasName}` : `Run: ${source}` }) }),
+        // Projects: the runner's own. Not for limited API tokens, except a robot's own token — the robot starts its
+        // own project jobs (build/fix a HiveMind project by voice) when the PC app is off (H7).
+        ...((!opts.user?.scope || opts.user.scope.robot) && { projects: projectServicesFor(fileUser, { id, source: canvasName ? `Run: ${canvasName}` : `Run: ${source}` }) }),
         pause: { wait: (info, signal) => waitAtPause(run, info, emit, signal) },
         skills: skillsForRun(fileUser),
         // Voice blocks: the person who runs it (not viewers, not limited API tokens).

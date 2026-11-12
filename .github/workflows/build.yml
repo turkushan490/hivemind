@@ -64,3 +64,33 @@ jobs:
           # The 16 GB base is too big for the GitHub cache: only HiveMind's own small stages are cached.
           cache-from: type=gha
           cache-to: type=gha,mode=min
+
+  # HiveMind for Windows: one self-contained .exe (the same server + web UI, minus the Linux-only Colibri/training/Kokoro).
+  # Built on every main push as an artifact (to catch breakage early) and attached to the GitHub Release on a version tag.
+  windows-exe:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      # Build the web UI and the server, bake the UI into the exe bundle, then pack a single Windows .exe.
+      - run: npm run build
+      - run: npm run embed:web -w server
+      - run: npm run build:exe -w server
+      - name: Pack single .exe
+        run: npx @yao-pkg/pkg@6.6.0 server/dist-exe/hivemind.mjs -t node24-win-x64 -o hivemind-windows-x64.exe
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hivemind-windows-x64
+          path: hivemind-windows-x64.exe
+      - name: Attach to the GitHub Release (on a version tag)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: hivemind-windows-x64.exe

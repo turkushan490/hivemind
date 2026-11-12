@@ -10,6 +10,7 @@ import { seedBuiltinSkills } from './services/skills.js';
 import { closeStaleRuns } from './events/runs.js';
 import { resumeStoppedRuns } from './api/runs.js';
 import { lockDataDir } from './services/build.js';
+import { openBrowser } from './packaging.js';
 
 // A crash is never silent: it is stored, shown in the Problems tab after the restart, then the process exits so Docker restarts it.
 process.on('uncaughtException', (err) => {
@@ -75,6 +76,9 @@ seedColibri();
 seedBuiltinSkills();
 
 await app.listen({ port: config.port, host: config.host });
+
+// Windows .exe (or HIVEMIND_OPEN_BROWSER set): show the UI in a window. In Docker this env is unset, so nothing opens.
+openBrowser(`http://localhost:${config.port}`);
 
 // Runs a restart stopped (an update, a crash) go on where they were.
 const resumed = resumeStoppedRuns();

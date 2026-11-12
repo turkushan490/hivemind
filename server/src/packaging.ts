@@ -2,6 +2,15 @@
 import { spawn } from 'node:child_process';
 
 /**
+ * True when running as the packaged Windows .exe (pkg or a Node SEA), not the Docker image or dev. Container-only
+ * features (local training, Colibri, Kokoro) are absent there, so their "missing" is expected, not a problem.
+ */
+export function isPackaged(): boolean {
+  // pkg sets process.pkg on the packaged exe; exe-env.ts also sets HIVEMIND_PACKAGED as a belt-and-braces signal.
+  return !!(process as { pkg?: unknown }).pkg || process.env.HIVEMIND_PACKAGED === '1';
+}
+
+/**
  * Opens the HiveMind UI for a desktop user. HIVEMIND_OPEN_BROWSER=app → a chrome/edge app window;
  * "browser"/"default"/"1"/"true" → the default browser; anything else (unset, "off", "none") → nothing opens.
  */

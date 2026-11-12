@@ -5,6 +5,9 @@ import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
 import { appRelease, webAssets, webBuildId } from './web-assets.generated.js';
 
+// Mark this process as the packaged exe, so the server treats container-only features as "absent, expected" and writes a log file.
+process.env.HIVEMIND_PACKAGED = '1';
+
 // The version the exe reports at /api/health (baked in at build time); real env wins if the user set it.
 if (appRelease) {
   if (!process.env.APP_RELEASE) process.env.APP_RELEASE = appRelease;

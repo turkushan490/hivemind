@@ -10,6 +10,7 @@ import { newId, randomToken } from '../crypto.js';
 import { db, getSetting } from '../db/index.js';
 import { withHostLock, type ResolvedProvider } from '../engine/run.js';
 import { logError } from '../errors.js';
+import { isPackaged } from '../packaging.js';
 import { DM_DATASET, exportDataset, findDataset, getDataset, trainableCount } from './datasets.js';
 import { checkComfyDir, comfyDir, IMAGE_SEC_PER_STEP, runComfyJob, validCheckpoint, type ImageJobSettings } from './imageLora.js';
 import { datasetSources } from './hfImport.js';
@@ -98,7 +99,8 @@ export function installTrainerScripts() {
   const here = dirname(fileURLToPath(import.meta.url));
   // Bundled: server/dist/main.js → server/trainer; from source: server/src/lab → server/trainer.
   const src = [resolve(here, '../trainer'), resolve(here, '../../trainer')].find((d) => existsSync(join(d, 'server.py')));
-  if (!src) return logError({ source: 'server', message: 'Lab: the trainer scripts are missing from this HiveMind build' });
+  // The Windows .exe is the core app: local training (Python/CUDA) is container-only, so missing scripts there are expected, not a problem.
+  if (!src) return void (isPackaged() || logError({ source: 'server', message: 'Lab: the trainer scripts are missing from this HiveMind build' }));
   for (const f of ['server.py', 'train.py', 'hf.py']) copyFileSync(join(src, f), join(TRAINER_DIR, f));
 }
 

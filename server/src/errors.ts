@@ -1,4 +1,5 @@
 import { db } from './db/index.js';
+import { appendLog } from './logfile.js';
 
 /** Where a problem came from, shown in the Problems tab. */
 export type ErrorSource = 'server' | 'crash' | 'run' | 'provider' | 'web' | 'voice';
@@ -15,6 +16,8 @@ const KEEP = 1000;
 
 /** Stores a problem so it survives restarts and shows up in the UI. Never throws. */
 export function logError(e: LoggedError): number | undefined {
+  // Also to the log file (the exe has no `docker logs`); never let logging break anything.
+  appendLog(e.source, e.message, e.detail);
   try {
     const r = db
       .prepare('INSERT INTO error_log (source, message, detail, user_id, run_id) VALUES (?, ?, ?, ?, ?)')

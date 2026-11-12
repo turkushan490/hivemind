@@ -271,6 +271,7 @@ export function robotConfig(r: RobotRow, firmwareFor?: (board: string | null, ta
       { id: 'jarvis', wakeWord: 'hey jarvis' },
       { id: 'ultron', wakeWord: 'ultron' },
       { id: 'vision', wakeWord: 'vision' },
+      { id: 'ghost', wakeWord: 'ghost' },
     ],
     standby: { askAfterS: 240, sleepAfterS: 600 },
     settings: settingsOf(r),

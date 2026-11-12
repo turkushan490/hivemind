@@ -142,6 +142,9 @@ function Editor({ active, onProblem, followRequest }: { active: boolean; onProbl
   const [watching, setWatching] = useState<{ runId: string; title: string }>();
   const [showFile, setShowFile] = useState(false);
   const [panel, setPanel] = useStored<'inspector' | 'builder'>('canvas.panel', 'inspector');
+  /** PC only: the blocks panel and the Inspector/Builder panel fold away to a thin edge with an arrow. */
+  const [blocksOpen, setBlocksOpen] = useStored('canvas.blocksOpen', true);
+  const [sideOpen, setSideOpen] = useStored('canvas.sideOpen', true);
   /** Canvases before each Builder change, for Undo. */
   const undoStack = useRef<{ nodes: HiveFlowNode[]; edges: Edge[] }[]>([]);
   const views = replaying ? replay.views : run.views;
@@ -737,15 +740,27 @@ function Editor({ active, onProblem, followRequest }: { active: boolean; onProbl
       <Clock.Provider value={replaying ? replay.now : Date.now}>
       <div className="flex min-h-0 flex-1">
         {!phone && <WorkflowSidebar canvases={mine} onOpen={openCanvas} onRefresh={refreshCanvases} appName={appName} currentId={doc.id} />}
+        {!phone && !blocksOpen && (
+          <EdgeTab side="left" label="Blocks" title="Show the blocks" onClick={() => setBlocksOpen(true)} />
+        )}
         <aside
           className={`${
             phone
               ? `fixed inset-x-0 bottom-14 z-40 max-h-[70dvh] rounded-t-xl border-t shadow-2xl ${sheet === 'palette' ? '' : 'hidden'}`
-              : 'w-52 shrink-0 border-r'
+              : `w-52 shrink-0 border-r ${blocksOpen ? '' : 'hidden'}`
           } space-y-4 overflow-y-auto border-[#30363d] bg-[#11161d] p-3 ${replaying ? 'pointer-events-none opacity-40' : ''}`}
         >
           <div className="flex items-center text-[11px] font-semibold tracking-wider text-slate-500 uppercase">
             {phone ? 'Tap to add a block' : 'Drag onto the workflow'}
+            {!phone && (
+              <button
+                className="btn-ghost pointer-events-auto ml-auto px-2 py-0.5 text-xs normal-case"
+                onClick={() => setBlocksOpen(false)}
+                title="Hide the blocks"
+              >
+                ◂
+              </button>
+            )}
             {phone && (
               <button className="btn-ghost ml-auto px-3 py-2 text-sm normal-case" onClick={() => setSheet(null)}>
                 Close
@@ -834,12 +849,27 @@ function Editor({ active, onProblem, followRequest }: { active: boolean; onProbl
           )}
         </div>
 
+        {!phone && !sideOpen && (
+          <EdgeTab
+            side="right"
+            label={panel === 'builder' ? '✨ Builder' : selected ? 'Block settings' : 'Inspector'}
+            title="Show the Inspector and Builder"
+            onClick={() => setSideOpen(true)}
+          />
+        )}
         <aside
           className={`flex flex-col border-[#30363d] bg-[#11161d] ${
-            phone ? `fixed inset-x-0 bottom-14 z-40 h-[70dvh] rounded-t-xl border-t shadow-2xl ${sheet === 'panel' ? '' : 'hidden'}` : 'w-96 shrink-0 border-l'
+            phone
+              ? `fixed inset-x-0 bottom-14 z-40 h-[70dvh] rounded-t-xl border-t shadow-2xl ${sheet === 'panel' ? '' : 'hidden'}`
+              : `w-96 shrink-0 border-l ${sideOpen ? '' : 'hidden'}`
           }`}
         >
           <div className="flex shrink-0 border-b border-[#30363d] text-sm">
+            {!phone && (
+              <button className="px-3 py-2 text-slate-400 hover:text-slate-200" onClick={() => setSideOpen(false)} title="Hide this panel">
+                ▸
+              </button>
+            )}
             {(['inspector', 'builder'] as const).map((t) => (
               <button
                 key={t}
@@ -897,5 +927,21 @@ function Editor({ active, onProblem, followRequest }: { active: boolean; onProbl
       </div>
       </Clock.Provider>
     </div>
+  );
+}
+
+/** A folded side panel: a thin edge with an arrow and its name written downwards; click to open it again. */
+function EdgeTab({ side, label, title, onClick }: { side: 'left' | 'right'; label: string; title: string; onClick: () => void }) {
+  return (
+    <button
+      className={`flex w-8 shrink-0 flex-col items-center gap-2 border-[#30363d] bg-[#11161d] pt-3 text-xs text-slate-400 hover:bg-[#161b22] hover:text-slate-200 ${
+        side === 'left' ? 'border-r' : 'border-l'
+      }`}
+      onClick={onClick}
+      title={title}
+    >
+      <span>{side === 'left' ? '▸' : '◂'}</span>
+      <span className="[writing-mode:vertical-rl]">{label}</span>
+    </button>
   );
 }

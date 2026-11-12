@@ -42,6 +42,7 @@ describe('robots (HiveBot devices)', () => {
     const after = (await app.inject({ method: 'GET', url: '/api/robot/config', headers: as(token) })).json();
     expect(after.configVersion).toBe(before + 1);
     expect(after.room).toBe('living_room');
+    expect(after.characters.map((c: { id: string }) => c.id)).toEqual(['jev', 'jarvis', 'ultron', 'vision', 'ghost']);
     expect((await app.inject({ method: 'GET', url: '/api/providers', headers: as(token) })).statusCode).toBe(403);
     expect((await app.inject({ method: 'GET', url: '/api/robots', headers: as(token) })).statusCode).toBe(403);
     // Only robots use the robot API: an ordinary token gets a clear 403.

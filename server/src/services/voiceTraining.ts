@@ -164,7 +164,7 @@ export function voiceName(raw: string): string {
   return n;
 }
 
-const KNOWN = ['jev', 'jarvis', 'ultron', 'vision'];
+const KNOWN = ['jev', 'jarvis', 'ultron', 'vision', 'ghost'];
 /** The character a run is about: vars.character, else a known name in the question, else the question's first word. */
 export function characterOf(vars: Record<string, string> | undefined, question: string): string {
   if (vars?.character) return voiceName(vars.character);

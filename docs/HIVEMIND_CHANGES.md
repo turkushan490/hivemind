@@ -1109,6 +1109,10 @@ which project it works on, and can make a new one.
 - **H6:** `keepAlive` is passed per block as before (HiveBot's "5m" works); the search block needs nothing special
   for robot-token runs.
 - Tests: `server/test/robotJobs.test.ts`, the Activity details in `server/test/v1models.test.ts`.
+- **Ghost** (HiveBot's fifth character): the robot config lists `{ id: 'ghost', wakeWord: 'ghost' }`, and the Voice
+  trainer knows "Ghost" in the upload message (voice `ghost`).
+- **Fold the side panels**: on a PC the blocks panel (◂ in its header) and the Inspector/Builder panel (▸ at its
+  left) fold to a thin edge with the panel's name; click the edge to open it again. The choice is remembered.
 
 ---
 

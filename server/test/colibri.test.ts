@@ -245,6 +245,22 @@ describe('colibri engine', () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
+  it('without a size in gguf.json, it measures the GGUF file and all its parts', () => {
+    const dir = join(modelsDir, 'parts-gguf');
+    const weights = join(modelsDir, '.gguf', 'parts-gguf', 'Q2');
+    mkdirSync(dir, { recursive: true });
+    mkdirSync(weights, { recursive: true });
+    for (const n of [1, 2, 3]) writeFileSync(join(weights, `Big-Q2-0000${n}-of-00003.gguf`), Buffer.alloc(1000 * n));
+    writeFileSync(join(weights, 'Other-00001-of-00002.gguf'), Buffer.alloc(5000));
+    writeFileSync(join(dir, 'config.json'), '{}');
+    writeFileSync(join(dir, 'gguf.json'), JSON.stringify({ mode: 'link', gguf: '/data/colibri/models/.gguf/parts-gguf/Q2/Big-Q2-00001-of-00003.gguf' }));
+    const m = engine.installedModels().find((x) => x.model === 'parts-gguf');
+    expect(m!.sizeBytes).toBeGreaterThanOrEqual(6000);
+    expect(m!.sizeBytes).toBeLessThan(11000);
+    rmSync(dir, { recursive: true, force: true });
+    rmSync(join(modelsDir, '.gguf'), { recursive: true, force: true });
+  });
+
   it('reads keep-alive values like Ollama', () => {
     expect(engine.keepAliveMs('30m')).toBe(1_800_000);
     expect(engine.keepAliveMs('90s')).toBe(90_000);

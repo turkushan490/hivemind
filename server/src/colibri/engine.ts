@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { totalmem } from 'node:os';
-import { join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { config } from '../config.js';
 import { getSetting, setSetting } from '../db/index.js';
 import { logError } from '../errors.js';
@@ -204,11 +204,30 @@ function folderBytes(dir: string, depth = 0): number {
 
 const sizes = new Map<string, { at: number; bytes: number }>();
 
-/** An imported GGUF in "link" mode keeps its weights in models/.gguf/; gguf.json has their size. */
+/**
+ * An imported GGUF in "link" mode keeps its weights in models/.gguf/, outside the model folder. gguf.json has their
+ * size; without it (or a size of 0) the GGUF file itself is measured, with all its parts (-00001-of-00003 …).
+ */
 function linkedGgufBytes(dir: string): number {
+  let g: { mode?: string; size?: number; gguf?: string };
   try {
-    const g = JSON.parse(readFileSync(join(dir, 'gguf.json'), 'utf8')) as { mode?: string; size?: number };
-    return g.mode === 'link' && typeof g.size === 'number' && g.size > 0 ? g.size : 0;
+    g = JSON.parse(readFileSync(join(dir, 'gguf.json'), 'utf8'));
+  } catch {
+    return 0;
+  }
+  if (g.mode !== undefined && g.mode !== 'link') return 0;
+  if (typeof g.size === 'number' && g.size > 0) return g.size;
+  if (!g.gguf) return 0;
+  // The path is written as the container sees it; read it relative to this models folder.
+  const rel = g.gguf.replace(/\\/g, '/').split('/colibri/models/')[1];
+  const file = rel ? join(state.modelsDir, ...rel.split('/')) : g.gguf;
+  try {
+    const parts = /^(.*)-\d{5}-of-(\d{5})\.gguf$/i.exec(basename(file));
+    if (!parts) return statSync(file).size;
+    const folder = dirname(file);
+    return readdirSync(folder)
+      .filter((n) => n.startsWith(`${parts[1]}-`) && n.endsWith(`-of-${parts[2]}.gguf`))
+      .reduce((n, f) => n + statSync(join(folder, f)).size, 0);
   } catch {
     return 0;
   }

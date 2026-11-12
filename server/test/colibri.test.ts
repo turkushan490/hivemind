@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify';
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -233,6 +233,16 @@ describe('colibri engine', () => {
     expect(engine.loadedModel()?.model).toBe('qwen36-35b');
     for (let i = 0; i < 50 && engine.loadedModel(); i++) await new Promise((r) => setTimeout(r, 100));
     expect(engine.loadedModel()).toBeUndefined();
+  });
+
+  it('an imported GGUF kept as a link counts the size of its weights, not only its small folder', () => {
+    const dir = join(modelsDir, 'linked-gguf');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'config.json'), '{}');
+    writeFileSync(join(dir, 'gguf.json'), JSON.stringify({ format: 'colibri-gguf-v1', mode: 'link', parts: 3, size: 75_000_000_000 }));
+    const m = engine.installedModels().find((x) => x.model === 'linked-gguf');
+    expect(m!.sizeBytes).toBeGreaterThanOrEqual(75_000_000_000);
+    rmSync(dir, { recursive: true, force: true });
   });
 
   it('reads keep-alive values like Ollama', () => {

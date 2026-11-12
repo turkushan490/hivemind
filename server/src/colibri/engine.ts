@@ -204,6 +204,16 @@ function folderBytes(dir: string, depth = 0): number {
 
 const sizes = new Map<string, { at: number; bytes: number }>();
 
+/** An imported GGUF in "link" mode keeps its weights in models/.gguf/; gguf.json has their size. */
+function linkedGgufBytes(dir: string): number {
+  try {
+    const g = JSON.parse(readFileSync(join(dir, 'gguf.json'), 'utf8')) as { mode?: string; size?: number };
+    return g.mode === 'link' && typeof g.size === 'number' && g.size > 0 ? g.size : 0;
+  } catch {
+    return 0;
+  }
+}
+
 /** Models ready to serve: a finished download (its manifest says complete) or an imported GGUF (config.json). */
 export function installedModels(): InstalledModel[] {
   let names: string[] = [];
@@ -225,7 +235,7 @@ export function installedModels(): InstalledModel[] {
     }
     if (!ready) return [];
     const hit = sizes.get(dir);
-    const bytes = hit && Date.now() - hit.at < 10 * 60_000 ? hit.bytes : folderBytes(dir);
+    const bytes = hit && Date.now() - hit.at < 10 * 60_000 ? hit.bytes : folderBytes(dir) + linkedGgufBytes(dir);
     sizes.set(dir, { at: Date.now(), bytes });
     return [{ model, dir, sizeBytes: bytes }];
   });

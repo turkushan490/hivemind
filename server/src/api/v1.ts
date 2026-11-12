@@ -9,7 +9,7 @@ import { apiModelsOn, getPrefs } from './builder.js';
 import { callApiModel, isApiModel, splitModelId, toolSupport } from '../services/v1Models.js';
 import { routeCanvas } from '../services/canvasRouter.js';
 import { logError } from '../errors.js';
-import { allowedModelsOf, gpuFreerFor, resolverFor, trainingFor, usableRow, usableRows } from './providers.js';
+import { allowedModelsOf, gpuFreerFor, isColibri, resolverFor, trainingFor, usableRow, usableRows } from './providers.js';
 import { canvasesFor, runSetup, sourceOf } from './runs.js';
 import { noteRun } from '../services/activity.js';
 import { allowedFor, notAllowed } from '../services/access.js';
@@ -28,8 +28,9 @@ async function requireToken(req: FastifyRequest, reply: FastifyReply) {
  * OpenAI-compatible API: every saved canvas is a model. Works with any OpenAI client
  * (Home Assistant, Open WebUI, scripts) pointed at http://<hivemind>/v1.
  */
-/** Provider kinds that run on this server's own hardware (the rest is cloud). */
-const LOCAL_KINDS = new Set(['ollama', 'colibri', 'colibri-decisions']);
+/** What runs on this server's own hardware: Ollama, and colibri (an "openai" kind with the colibri preset). */
+const kindOf = (r: { kind: string; preset: string }) => (isColibri(r.preset) ? 'colibri' : r.kind);
+const LOCAL_KINDS = new Set(['ollama', 'colibri']);
 
 /** What GET /v1/models answers for this person: their workflows, plus single models when that is on. */
 export async function v1ModelData(user: Parameters<typeof canvasesFor>[0]) {
@@ -57,9 +58,9 @@ export async function v1ModelData(user: Parameters<typeof canvasesFor>[0]) {
             hivemind: {
               kind: 'model',
               provider: providers[i].id,
-              providerKind: providers[i].kind,
+              providerKind: kindOf(providers[i]),
               modelName: m.name,
-              local: LOCAL_KINDS.has(providers[i].kind),
+              local: LOCAL_KINDS.has(kindOf(providers[i])),
               ...(m.contextLength && { contextLength: m.contextLength }),
               ...(m.sizeBytes && { sizeBytes: m.sizeBytes }),
               tools: toolSupport(m, providers[i].kind, providers[i].preset),

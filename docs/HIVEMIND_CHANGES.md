@@ -1125,7 +1125,7 @@ which project it works on, and can make a new one.
   cloud, workflows, edits files, in T3 now. Chosen models first.
 - **Per chosen model:** an own name, a short description, a role (fast, planner, coder, slow + best, check) and
   "thinks" (OpenCode then offers a reasoning setting). In T3 the model is called
-  `<name> · <where> (<role>: <description>)`, where is GPU, GPU+CPU (Ollama models over 15 GB), Colibri CPU, cloud
+  `<name> · <where> · <role> (<description>)`, where is GPU, GPU+CPU (Ollama models over 15 GB), Colibri CPU, cloud
   or workflow. Without a description it gets a short one from its kind and size ("very fast: simple code, quick
   checks", "best local, slow: hard code", "chat only, no file edits"). Saved per user (`user:<id>:t3`).
 - **Update T3** (`POST /api/t3/update`) replaces only `provider.hivemind` in `opencode.json`; every other provider and

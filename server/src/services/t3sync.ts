@@ -104,12 +104,12 @@ export function thinks(m: T3Model, choice?: T3Choice): boolean {
   return /qwen3|deepseek|gpt-oss|gemini|\br1\b|think|reason|glm|kimi|magistral/i.test(`${m.id} ${m.modelName}`);
 }
 
-/** The name T3 shows: "<name> · <where> (<role>: <description>)". */
+/** The name T3 shows: "<name> · <where> · <role> (<description>)", without the role when there is none. */
 export function t3Name(m: T3Model, choice: T3Choice = {}): string {
   const name = choice.name?.trim() || m.modelName;
   const desc = choice.description?.trim() || defaultDescription(m);
-  const role = choice.role ? `${ROLE_LABEL[choice.role]}: ` : '';
-  return `${name} · ${whereLabel(m)} (${role}${desc})`;
+  const role = choice.role ? ` · ${ROLE_LABEL[choice.role]}` : '';
+  return `${name} · ${whereLabel(m)}${role} (${desc})`;
 }
 
 /** The context OpenCode may fill: what HiveMind really gives API calls. */

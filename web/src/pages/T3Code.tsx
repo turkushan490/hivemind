@@ -207,7 +207,7 @@ export function T3CodePanel({ active }: { active: boolean }) {
           ))}
         </div>
         <p className="text-xs text-slate-500">
-          {rows.length} of {data.models.length} shown, {count} chosen. In T3 a model is called “name · where (role: description)”.
+          {rows.length} of {data.models.length} shown, {count} chosen. In T3 a model is called “name · where · role (description)”.
         </p>
         <div className="divide-y divide-[#30363d]">
           {rows.map((m) => {

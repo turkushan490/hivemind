@@ -39,8 +39,8 @@ const model = (over: Partial<T3Model> = {}): T3Model => ({
 });
 
 describe('T3 names and limits', () => {
-  it('names a model "name · where (role: description)"', () => {
-    expect(t3.t3Name(model(), { description: 'supersnel', role: 'fast' })).toBe('qwen3.5:4b · GPU (fast: supersnel)');
+  it('names a model "name · where · role (description)"', () => {
+    expect(t3.t3Name(model(), { description: 'supersnel', role: 'fast' })).toBe('qwen3.5:4b · GPU · fast (supersnel)');
     expect(t3.t3Name(model(), { name: 'Qwen 4B' })).toBe('Qwen 4B · GPU (very fast: simple code, quick checks)');
   });
 

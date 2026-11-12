@@ -41,6 +41,12 @@ const SCOPED_ROUTES = new Set([
   'POST /v1/chat/completions',
   // Skills: may be listed (and used in runs), never changed.
   'GET /api/skills',
+  // Background jobs it started (its own user's).
+  'GET /api/robot/jobs',
+  'GET /api/robot/jobs/:id',
+  'POST /api/robot/jobs/:id/seen',
+  'POST /api/robot/jobs/:id/cancel',
+  'POST /api/robot/jobs/:id/resume',
   'GET /api/workflows/:id/schedule',
   'PUT /api/workflows/:id/schedule',
   'DELETE /api/workflows/:id/schedule',

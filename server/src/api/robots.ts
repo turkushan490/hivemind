@@ -4,6 +4,7 @@ import { getSetting, setSetting } from '../db/index.js';
 import { githubToken } from '../services/git.js';
 import {
   deleteInstallerVersion,
+  FIRMWARE_APP,
   fetchGithubRelease,
   installerFilePath,
   latestFile,
@@ -11,7 +12,13 @@ import {
   putInstallerFile,
   setGithubRepo,
 } from '../services/installers.js';
-import { createRobot, deleteRobot, heartbeat, listRobots, newRobotToken, robotById, robotConfig, robotEvent, updateRobot, type RobotRow } from '../services/robots.js';
+import { changePin, createRobot, deleteRobot, heartbeat, listRobots, newRobotToken, robotById, robotConfig, robotEvent, updateRobot, type RobotRow } from '../services/robots.js';
+import { getJob, jobsDone, jobView, listJobs, markSeen, moveJob, resumeCheckpoint } from '../services/robotJobs.js';
+import { cancelRun, startRun } from '../events/runs.js';
+import { gpuFreerFor, resolverFor, trainingFor } from './providers.js';
+import { sourceOf } from './runs.js';
+import { db } from '../db/index.js';
+import type { User } from './auth.js';
 import { requireAdmin, requireUser } from './auth.js';
 
 async function safe(reply: FastifyReply, fn: () => unknown): Promise<unknown> {
@@ -25,12 +32,14 @@ async function safe(reply: FastifyReply, fn: () => unknown): Promise<unknown> {
 }
 
 /** The robot firmware app in Installers, and its files per board: "<board>-bootloader.bin" and so on. */
-export const FIRMWARE_APP = 'hivebot-robot';
+export { FIRMWARE_APP };
 const PARTS = [
   { part: 'bootloader', offset: 0x0 },
   { part: 'partitions', offset: 0x8000 },
   { part: 'ota_data_initial', offset: 0xf000 },
   { part: 'firmware', offset: 0x20000 },
+  // CoreS3 from firmware 0.9.1: the on-chip speech model (partition "model") for the offline commands.
+  { part: 'srmodels', offset: 0x620000 },
 ];
 
 /** The firmware a robot of this board should run: the target version, else the newest there is. */
@@ -82,8 +91,60 @@ export function robotRoutes(app: FastifyInstance) {
     if (!r) return;
     heartbeat(r, (req.body ?? {}) as Record<string, unknown>, req.ip);
     const now = robotById(r.id)!;
-    return { configVersion: now.config_version, config: robotConfig(now, firmwareFor) };
+    return { configVersion: now.config_version, config: robotConfig(now, firmwareFor), jobsDone: jobsDone(r.owner_id, r.id) };
   });
+
+  /** A new unlock PIN over the air: { pin } (4-8 digits); the robot gets only a salt and a hash. */
+  app.post('/api/robots/:id/pin', { preHandler: requireAdmin }, async (req, reply) =>
+    safe(reply, () => changePin(req.user!.id, (req.params as { id: string }).id, (req.body as { pin?: unknown } | undefined)?.pin)),
+  );
+
+  // ---- background jobs (the robot, the app, or the owner) ----
+  const robotIdOf = (u: User) => u.scope?.robot;
+  app.get('/api/robot/jobs', { preHandler: requireUser }, async (req) => listJobs(req.user!.id, robotIdOf(req.user!)));
+  app.get('/api/robot/jobs/:id', { preHandler: requireUser }, async (req, reply) => {
+    const j = getJob(req.user!.id, (req.params as { id: string }).id);
+    return j ? jobView(j, true) : reply.code(404).send({ error: 'No such job' });
+  });
+  app.post('/api/robot/jobs/:id/seen', { preHandler: requireUser }, async (req, reply) =>
+    markSeen(req.user!.id, (req.params as { id: string }).id) ? { ok: true } : reply.code(404).send({ error: 'No such job' }),
+  );
+  app.post('/api/robot/jobs/:id/cancel', { preHandler: requireUser }, async (req, reply) => {
+    const j = getJob(req.user!.id, (req.params as { id: string }).id);
+    if (!j) return reply.code(404).send({ error: 'No such job' });
+    cancelRun(j.run_id, req.user!, 'Cancelled by the robot');
+    return { ok: true };
+  });
+  /** Starts the job again from one block (after a failed step was fixed); what came before it is kept. */
+  app.post('/api/robot/jobs/:id/resume', { preHandler: requireUser }, async (req, reply) =>
+    safe(reply, () => {
+      const u = req.user!;
+      const j = getJob(u.id, (req.params as { id: string }).id);
+      if (!j) throw Object.assign(new Error('No such job'), { statusCode: 404 });
+      const from = String((req.body as { fromNode?: unknown } | undefined)?.fromNode ?? '');
+      const r = resumeCheckpoint(j, from);
+      // The workflow as it is saved now (the step may have been fixed), else as it ran.
+      const saved = j.canvas_id ? (db.prepare('SELECT graph FROM canvases WHERE id = ? AND owner_id = ?').get(j.canvas_id, u.id) as { graph: string } | undefined) : undefined;
+      const graph = saved ? JSON.parse(saved.graph) : r.graph;
+      const runId = startRun({
+        ownerId: u.id,
+        user: u,
+        canvasId: j.canvas_id ?? undefined,
+        graph,
+        question: r.question,
+        vars: r.vars,
+        resolve: resolverFor(u),
+        freeGpu: gpuFreerFor(u),
+        training: trainingFor(u),
+        source: sourceOf(u, '/v1'),
+        timeLimitMin: 60,
+        resumable: { userId: u.id, providerUserId: u.id },
+        startFrom: r.checkpoint,
+      });
+      moveJob(j.id, runId);
+      return { jobId: j.id, runId, status: 'queued' };
+    }),
+  );
   app.get('/api/robot/config', { preHandler: requireUser }, async (req, reply) => {
     const r = robotOf(req, reply);
     if (!r) return;

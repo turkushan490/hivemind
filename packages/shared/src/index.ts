@@ -657,6 +657,8 @@ export interface RunEvent {
   warm?: boolean;
   /** node_done: real load time reported by the provider. */
   loadMs?: number;
+  /** node_done: from the block's start to its first word (thinking included). */
+  firstTokenMs?: number;
   /** node_progress: what the block is doing right now. */
   note?: string;
   /** node_progress: a decision model's answer, for the probability bars. */

@@ -107,6 +107,9 @@ export function latestFile(app: string, pick: (name: string) => boolean): { vers
 // ---- GitHub releases ----
 
 const REPOS_KEY = 'installers.repos';
+/** The robot firmware app, and its files: <board>-bootloader|partitions|ota_data_initial|firmware|srmodels.bin. */
+export const FIRMWARE_APP = 'hivebot-robot';
+const FIRMWARE_FILE = /^(cores3|t-dongle-s3|sticks3)-[\w.-]+\.bin$|^firmware-version\.txt$/;
 export function githubRepos(): Record<string, string> {
   try {
     return JSON.parse(getSetting(REPOS_KEY) ?? '{}') as Record<string, string>;
@@ -138,8 +141,10 @@ export async function fetchGithubRelease(app: string, token: string | undefined)
   for (const a of rel.assets.filter((x) => ALLOWED.test(x.name) && PART.test(x.name))) {
     const r = await fetch(a.url, { headers: { ...headers, accept: 'application/octet-stream' }, signal: AbortSignal.timeout(15 * 60_000) });
     if (!r.ok) throw err(502, `GitHub: downloading ${a.name} failed (HTTP ${r.status})`);
-    putInstallerFile(app, version, a.name, Buffer.from(await r.arrayBuffer()));
-    files.push(a.name);
+    // Robot firmware in the same release (<board>-*.bin, firmware-version.txt) goes to the firmware app.
+    const target = FIRMWARE_FILE.test(a.name) ? FIRMWARE_APP : app;
+    putInstallerFile(target, version, a.name, Buffer.from(await r.arrayBuffer()));
+    files.push(target === app ? a.name : `${target}/${a.name}`);
   }
   if (rel.body) writeFileSync(join(dirOf(app, version), 'release.md'), rel.body.slice(0, 20_000));
   if (!files.length) throw err(404, `The release ${rel.tag_name} of ${repo} has no files HiveMind can keep`);

@@ -17,6 +17,17 @@ interface Robot {
   ssid?: string;
   configVersion: number;
   firmwareTarget?: string;
+  settings: RobotSettings;
+  reported?: Partial<RobotSettings>;
+  pinPending: boolean;
+}
+
+interface RobotSettings {
+  micSensitivity: number;
+  volume: number;
+  conversationMode: boolean;
+  showText: boolean;
+  backlight: { dimAfterS: number; dimPercent: number; lowAfterS: number; lowPercent: number };
 }
 
 interface InstallerApp {
@@ -136,6 +147,21 @@ export function RobotsPanel({ active }: { active: boolean }) {
               )}
               <button
                 className="btn-ghost px-2 py-0.5 text-xs"
+                title="Over the air: the robot gets only a salt and a hash of the new PIN"
+                onClick={async () => {
+                  const pin = prompt(`New unlock PIN for ${r.name} (4–8 digits)`);
+                  if (!pin) return;
+                  if (prompt('The same PIN again') !== pin) return toast('The two PINs are not the same');
+                  await api(`/api/robots/${r.id}/pin`, { body: { pin } })
+                    .then(() => toast(`${r.name} gets its new PIN at its next check`, 'ok'))
+                    .catch(() => {});
+                  await load();
+                }}
+              >
+                {r.pinPending ? 'PIN on its way…' : 'Change PIN'}
+              </button>
+              <button
+                className="btn-ghost px-2 py-0.5 text-xs"
                 onClick={async () => {
                   if (!confirm(`A new token for ${r.name}? The robot stops working until it has the new one.`)) return;
                   const t = await api<{ token: string }>(`/api/robots/${r.id}/token`, { method: 'POST' }).catch(() => null);
@@ -155,6 +181,7 @@ export function RobotsPanel({ active }: { active: boolean }) {
                 Remove
               </button>
             </div>
+            <RobotSettingsEditor robot={r} onSaved={load} />
           </div>
         ))}
         <div className="grid gap-2 text-sm sm:grid-cols-[1fr_10rem]">
@@ -303,7 +330,8 @@ interface SerialPortLike {
 function FlashRobot({ firmwareApp, hasFirmware, urls, token }: { firmwareApp: string; hasFirmware: (board: string) => boolean; urls: { home?: string; public?: string }; token?: string }) {
   const [board, setBoard] = useState('cores3');
   const [ready, setReady] = useState(false);
-  const [setup, setSetup] = useState({ ssid: '', pass: '', url: '', token: '', pin: '' });
+  const [setup, setSetup] = useState({ ssid: '', pass: '', url: '', token: '', pin: '', pin2: '' });
+  const pinOk = /^\d{4,8}$/.test(setup.pin) && setup.pin === setup.pin2;
   const [log, setLog] = useState('');
   const box = useRef<HTMLDivElement>(null);
   const serial = typeof navigator !== 'undefined' && !!navigator.serial && window.isSecureContext;
@@ -353,7 +381,7 @@ function FlashRobot({ firmwareApp, hasFirmware, urls, token }: { firmwareApp: st
       await port.close();
       // Never show the password, token or PIN back.
       setLog(`Sent: ${lines.map((l) => l.split(' ').slice(0, l.startsWith('wifi') ? 3 : 1).join(' ')).join(', ')}. The robot restarts its Wi-Fi and should show up under Robots within a minute.`);
-      setSetup((s) => ({ ...s, pass: '', pin: '' }));
+      setSetup((s) => ({ ...s, pass: '', pin: '', pin2: '' }));
     } catch (err) {
       setLog(`Could not send: ${(err as Error).message}`);
     }
@@ -391,13 +419,64 @@ function FlashRobot({ firmwareApp, hasFirmware, urls, token }: { firmwareApp: st
           <input className="input" type="password" placeholder="Wi-Fi password" value={setup.pass} onChange={(e) => setSetup({ ...setup, pass: e.target.value })} />
           <input className="input" placeholder="HiveMind address" value={setup.url} onChange={(e) => setSetup({ ...setup, url: e.target.value })} />
           <input className="input" type="password" placeholder="Robot token (Add robot above)" value={setup.token} onChange={(e) => setSetup({ ...setup, token: e.target.value })} />
-          <input className="input" type="password" inputMode="numeric" placeholder="Unlock PIN (only the robot keeps it, as a hash)" value={setup.pin} onChange={(e) => setSetup({ ...setup, pin: e.target.value.replace(/\D/g, '') })} />
+          <input className="input" type="password" inputMode="numeric" maxLength={8} placeholder="Unlock PIN, 4–8 digits (only the robot keeps it, as a hash)" value={setup.pin} onChange={(e) => setSetup({ ...setup, pin: e.target.value.replace(/\D/g, '') })} />
+          <input className="input" type="password" inputMode="numeric" maxLength={8} placeholder="PIN again" value={setup.pin2} onChange={(e) => setSetup({ ...setup, pin2: e.target.value.replace(/\D/g, '') })} />
         </div>
-        <button className="btn" disabled={!serial || (!setup.ssid && !setup.token)} onClick={send}>
+        {setup.pin && !pinOk && <p className="text-xs text-amber-300">The PIN is 4–8 digits, the same twice.</p>}
+        <button className="btn" disabled={!serial || !pinOk || (!setup.ssid && !setup.token)} onClick={send}>
           Send setup over USB
         </button>
         {log && <p className="text-xs text-slate-400">{log}</p>}
       </div>
     </div>
+  );
+}
+
+/** Per-robot settings (H4): sent at its next heartbeat; what it reports back shows next to each one. */
+function RobotSettingsEditor({ robot, onSaved }: { robot: Robot; onSaved: () => void }) {
+  const [s, setS] = useState<RobotSettings>(robot.settings);
+  const rep = robot.reported ?? {};
+  const save = async (next: RobotSettings) => {
+    setS(next);
+    await api(`/api/robots/${robot.id}`, { method: 'PATCH', body: { settings: next } }).catch(() => {});
+    onSaved();
+  };
+  const now = (v: unknown) => (v === undefined ? '' : ` (robot: ${typeof v === 'boolean' ? (v ? 'on' : 'off') : v})`);
+  return (
+    <details className="text-xs">
+      <summary className="cursor-pointer text-slate-400">Settings</summary>
+      <div className="mt-2 grid gap-2 sm:grid-cols-2">
+        <label className="space-y-1">
+          <span className="text-slate-400">Microphone sensitivity {s.micSensitivity}{now(rep.micSensitivity)}</span>
+          <input type="range" min={1} max={10} className="w-full" value={s.micSensitivity} onChange={(e) => setS({ ...s, micSensitivity: Number(e.target.value) })} onMouseUp={() => save(s)} onTouchEnd={() => save(s)} />
+        </label>
+        <label className="space-y-1">
+          <span className="text-slate-400">Volume {s.volume}{now(rep.volume)}</span>
+          <input type="range" min={0} max={100} className="w-full" value={s.volume} onChange={(e) => setS({ ...s, volume: Number(e.target.value) })} onMouseUp={() => save(s)} onTouchEnd={() => save(s)} />
+        </label>
+        <label className="flex items-center gap-2">
+          <input type="checkbox" checked={s.conversationMode} onChange={(e) => save({ ...s, conversationMode: e.target.checked })} />
+          Start in conversation mode{now(rep.conversationMode)}
+        </label>
+        <label className="flex items-center gap-2">
+          <input type="checkbox" checked={s.showText} onChange={(e) => save({ ...s, showText: e.target.checked })} />
+          Show the text on the screen{now(rep.showText)}
+        </label>
+        <label className="space-y-1">
+          <span className="text-slate-400">Dim after (s) / to (%)</span>
+          <span className="flex gap-1">
+            <input className="input py-0.5" type="number" value={s.backlight.dimAfterS} onChange={(e) => setS({ ...s, backlight: { ...s.backlight, dimAfterS: Number(e.target.value) } })} onBlur={() => save(s)} />
+            <input className="input py-0.5" type="number" value={s.backlight.dimPercent} onChange={(e) => setS({ ...s, backlight: { ...s.backlight, dimPercent: Number(e.target.value) } })} onBlur={() => save(s)} />
+          </span>
+        </label>
+        <label className="space-y-1">
+          <span className="text-slate-400">Low after (s) / to (%)</span>
+          <span className="flex gap-1">
+            <input className="input py-0.5" type="number" value={s.backlight.lowAfterS} onChange={(e) => setS({ ...s, backlight: { ...s.backlight, lowAfterS: Number(e.target.value) } })} onBlur={() => save(s)} />
+            <input className="input py-0.5" type="number" value={s.backlight.lowPercent} onChange={(e) => setS({ ...s, backlight: { ...s.backlight, lowPercent: Number(e.target.value) } })} onBlur={() => save(s)} />
+          </span>
+        </label>
+      </div>
+    </details>
   );
 }

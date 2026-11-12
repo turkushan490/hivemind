@@ -70,6 +70,8 @@ export interface EngineDeps {
   access?: { model(providerId: string, model: string): boolean; lora(providerId: string, name: string): boolean };
   /** A run that goes on after a restart: what its blocks had already done. */
   resume?: Checkpoint;
+  /** A new run that starts from `resume` (a job started again from one block): it announces itself as new. */
+  startFrom?: boolean;
   /** Called after every finished block (and every For each item), to store the run's progress. */
   save?(cp: Checkpoint): void;
   /** Settings → Pictures: the model that describes pictures for models that can't see (left out: none). */
@@ -306,7 +308,7 @@ export async function runGraph(
   let cost = 0;
 
   // A run going on after a restart already has its start in the stored events.
-  if (!deps.resume) deps.emit({ type: 'run_start', graph, question });
+  if (!deps.resume || deps.startFrom) deps.emit({ type: 'run_start', graph, question });
   const allowed = (ref: ModelRef) => !deps.access || deps.access.model(ref.providerId, ref.model);
   const mayUse = (ref: ModelRef) => {
     if (!allowed(ref)) throw refused(ref.model);
@@ -640,6 +642,7 @@ export async function runGraph(
         tokens: usesModels ? tokens : undefined,
         inputTokens,
         tokensPerSec: genSecs > 0 ? tokens / genSecs : undefined,
+        ...(firstToken && { firstTokenMs: firstToken - t0 }),
         cost: nodeCost,
         elapsedMs: Date.now() - t0,
         loadMs,

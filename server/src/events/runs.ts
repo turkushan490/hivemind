@@ -113,6 +113,10 @@ export function startRun(opts: {
   resumable?: { userId: string; providerUserId: string };
   /** Go on with a run that a restart stopped: its id, what its blocks had done, and its events so far. */
   resume?: { runId: string; checkpoint: Checkpoint; events: RunEvent[]; startedAt: number };
+  /** Minutes the run may take (background jobs: 60); default RUN_TIMEOUT_MINUTES. */
+  timeLimitMin?: number;
+  /** A new run that keeps these block outputs and runs the rest (a background job started again from a block). */
+  startFrom?: Checkpoint;
 }): string {
   const access = opts.access ?? (opts.user ? allowedFor(opts.user) : undefined);
   if (access) checkGraph(opts.graph, access);
@@ -226,7 +230,7 @@ export function startRun(opts: {
 
   // A run that hangs (a server that never answers) is stopped, so it can't hold the GPU forever. Time spent
   // waiting at a Pause block doesn't count.
-  const limitMin = Number(process.env.RUN_TIMEOUT_MINUTES) || 30;
+  const limitMin = opts.timeLimitMin ?? (Number(process.env.RUN_TIMEOUT_MINUTES) || 30);
   let left = limitMin * 60_000;
   let since = Date.now();
   let limit: NodeJS.Timeout | undefined;
@@ -258,6 +262,7 @@ export function startRun(opts: {
       // Loaded on demand: api/providers imports this module.
       pictureReader: () => import('../api/providers.js').then((m) => m.pictureReaderFor(fileUser as Parameters<typeof m.pictureReaderFor>[0])),
       ...(opts.resume && { resume: opts.resume.checkpoint }),
+      ...(opts.startFrom && !opts.resume && { resume: opts.startFrom, startFrom: true }),
       save: saveCheckpoint,
       lockLabel: source.includes(': ') ? source.slice(source.indexOf(': ') + 2) : (canvasName ?? source),
       access,
@@ -577,4 +582,15 @@ export function giveUp(runId: string, why: string) {
   events.push({ type: 'error', runId, seq: events.length, ts: now, error: why } as RunEvent);
   events.push({ type: 'run_done', runId, seq: events.length, ts: now, status: 'error' } as RunEvent);
   db.prepare("UPDATE runs SET status = 'error', finished_at = datetime('now'), events = ?, checkpoint = NULL WHERE id = ?").run(JSON.stringify(events), runId);
+}
+
+/** A run as it is now: live (its events so far) or stored. Undefined when it isn't this owner's. */
+export function runSnapshot(runId: string, ownerId: string): { status: string; events: RunEvent[]; final?: string; startedAt: number } | undefined {
+  const r = live.get(runId);
+  if (r && r.ownerId === ownerId) return { status: r.finished ? 'done' : 'running', events: r.events, startedAt: r.startedAt };
+  const row = db.prepare('SELECT status, final, events, started_at FROM runs WHERE id = ? AND owner_id = ?').get(runId, ownerId) as
+    | { status: string; final: string | null; events: string | null; started_at: string }
+    | undefined;
+  if (!row) return undefined;
+  return { status: row.status, events: JSON.parse(row.events ?? '[]') as RunEvent[], ...(row.final !== null && { final: row.final }), startedAt: Date.parse(`${row.started_at.replace(' ', 'T')}Z`) };
 }

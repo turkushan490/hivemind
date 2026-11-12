@@ -27,8 +27,52 @@ export interface RobotRow {
   last_event: string | null;
   config_version: number;
   firmware_target: string | null;
+  settings: string | null;
+  reported: string | null;
+  pin_change: string | null;
   created_at: string;
 }
+
+/** Settings the robot applies at its next heartbeat (H4). */
+export interface RobotSettings {
+  micSensitivity: number;
+  volume: number;
+  conversationMode: boolean;
+  showText: boolean;
+  backlight: { dimAfterS: number; dimPercent: number; lowAfterS: number; lowPercent: number };
+}
+export const DEFAULT_ROBOT_SETTINGS: RobotSettings = {
+  micSensitivity: 5,
+  volume: 70,
+  conversationMode: true,
+  showText: false,
+  backlight: { dimAfterS: 180, dimPercent: 20, lowAfterS: 600, lowPercent: 10 },
+};
+
+const clampInt = (v: unknown, min: number, max: number, dflt: number) => (typeof v === 'number' && Number.isFinite(v) ? Math.round(Math.max(min, Math.min(max, v))) : dflt);
+export function cleanSettings(v: unknown, base: RobotSettings = DEFAULT_ROBOT_SETTINGS): RobotSettings {
+  const s = (v && typeof v === 'object' ? v : {}) as Partial<RobotSettings> & { backlight?: Partial<RobotSettings['backlight']> };
+  const b: Partial<RobotSettings['backlight']> = s.backlight ?? {};
+  return {
+    micSensitivity: clampInt(s.micSensitivity, 1, 10, base.micSensitivity),
+    volume: clampInt(s.volume, 0, 100, base.volume),
+    conversationMode: typeof s.conversationMode === 'boolean' ? s.conversationMode : base.conversationMode,
+    showText: typeof s.showText === 'boolean' ? s.showText : base.showText,
+    backlight: {
+      dimAfterS: clampInt(b.dimAfterS, 10, 86400, base.backlight.dimAfterS),
+      dimPercent: clampInt(b.dimPercent, 0, 100, base.backlight.dimPercent),
+      lowAfterS: clampInt(b.lowAfterS, 10, 86400, base.backlight.lowAfterS),
+      lowPercent: clampInt(b.lowPercent, 0, 100, base.backlight.lowPercent),
+    },
+  };
+}
+const settingsOf = (r: RobotRow): RobotSettings => {
+  try {
+    return cleanSettings(r.settings ? JSON.parse(r.settings) : {});
+  } catch {
+    return { ...DEFAULT_ROBOT_SETTINGS };
+  }
+};
 
 export interface Robot {
   id: string;
@@ -48,6 +92,11 @@ export interface Robot {
   configVersion: number;
   /** The firmware version the robot should update to (Installers → Update firmware). */
   firmwareTarget?: string;
+  settings: RobotSettings;
+  /** What the robot says it uses now (it can also change them by voice). */
+  reported?: Partial<RobotSettings>;
+  /** A PIN change sent over the air that the robot hasn't confirmed yet. */
+  pinPending: boolean;
   createdAt: string;
 }
 
@@ -86,6 +135,9 @@ export function toRobot(r: RobotRow): Robot {
     ...(lastEvent && { lastEvent }),
     configVersion: r.config_version,
     ...(r.firmware_target && { firmwareTarget: r.firmware_target }),
+    settings: settingsOf(r),
+    ...(r.reported && { reported: JSON.parse(r.reported) as Partial<RobotSettings> }),
+    pinPending: !!r.pin_change,
     createdAt: r.created_at,
   };
 }
@@ -159,8 +211,9 @@ export function createRobot(ownerId: string, body: { name?: unknown; board?: unk
 }
 
 /** Changes name, room, home networks or Wi-Fi; the robot picks it up at its next heartbeat (new config version). */
-export function updateRobot(ownerId: string, id: string, body: { name?: unknown; room?: unknown; homeSsids?: unknown; wifi?: unknown; board?: unknown; firmwareTarget?: unknown }): Robot {
+export function updateRobot(ownerId: string, id: string, body: { name?: unknown; room?: unknown; homeSsids?: unknown; wifi?: unknown; board?: unknown; firmwareTarget?: unknown; settings?: unknown }): Robot {
   const r = getRobot(ownerId, id);
+  if (body.settings !== undefined) db.prepare('UPDATE robots SET settings = ? WHERE id = ?').run(JSON.stringify(cleanSettings(body.settings, settingsOf(r))), id);
   const wifi = body.wifi !== undefined ? cleanWifi(body.wifi) : undefined;
   db.prepare(
     `UPDATE robots SET name = ?, room = ?, home_ssids = ?, wifi_enc = ?, board = ?, firmware_target = ?, config_version = config_version + 1 WHERE id = ?`,
@@ -220,8 +273,25 @@ export function robotConfig(r: RobotRow, firmwareFor?: (board: string | null, ta
       { id: 'vision', wakeWord: 'vision' },
     ],
     standby: { askAfterS: 240, sleepAfterS: 600 },
+    settings: settingsOf(r),
+    ...(r.pin_change && { pinChange: JSON.parse(r.pin_change) as { salt: string; hash: string; id: number } }),
     ...(fw && { firmware: fw }),
   };
+}
+
+/**
+ * A new unlock PIN over the air (H2): only a salt and SHA-256(salt || digits) go to the robot, the robot's own
+ * scheme; HiveMind keeps them until the robot confirms (pinId in its heartbeat), then forgets them. The digits are
+ * never stored.
+ */
+export function changePin(ownerId: string, id: string, digits: unknown): { id: number } {
+  if (typeof digits !== 'string' || !/^\d{4,8}$/.test(digits)) throw err(400, 'The PIN is 4 to 8 digits');
+  getRobot(ownerId, id);
+  const salt = randomBytes(16);
+  const hash = createHash('sha256').update(salt).update(digits).digest('hex');
+  const change = { salt: salt.toString('hex'), hash, id: Date.now() % 2_000_000_000 };
+  db.prepare('UPDATE robots SET pin_change = ?, config_version = config_version + 1 WHERE id = ?').run(JSON.stringify(change), id);
+  return { id: change.id };
 }
 
 /** Heartbeat: what the robot says about itself; answers with its config (it re-reads when the version changed). */
@@ -230,6 +300,10 @@ export function heartbeat(r: RobotRow, body: Record<string, unknown>, ip: string
     `UPDATE robots SET last_seen = datetime('now'), battery = COALESCE(?, battery), firmware = COALESCE(?, firmware), ssid = COALESCE(?, ssid), rssi = COALESCE(?, rssi), ip = COALESCE(?, ip), board = COALESCE(?, board) WHERE id = ?`,
   ).run(num(body.battery, 0, 100), str(body.firmware, 40), str(body.ssid, 32), num(body.rssi, -150, 0), ip ?? null, str(body.board, 40), r.id);
   if (body.moved === true) robotEvent(r, { type: 'moved' });
+  // What it uses now (H4), and a PIN change it has taken over (H2): then HiveMind forgets the hash.
+  if (body.settings && typeof body.settings === 'object') db.prepare('UPDATE robots SET reported = ? WHERE id = ?').run(JSON.stringify(cleanSettings(body.settings)), r.id);
+  if (r.pin_change && typeof body.pinId === 'number' && (JSON.parse(r.pin_change) as { id: number }).id === body.pinId)
+    db.prepare('UPDATE robots SET pin_change = NULL WHERE id = ?').run(r.id);
 }
 
 export function robotEvent(r: RobotRow, body: { type?: unknown; character?: unknown }) {

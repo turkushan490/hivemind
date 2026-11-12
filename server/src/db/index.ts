@@ -358,6 +358,25 @@ export const MIGRATIONS: string[] = [
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
   `,
+  `
+  -- Per-robot settings (what the owner set, and what the robot says it uses now) and a PIN change on its way.
+  ALTER TABLE robots ADD COLUMN settings TEXT;
+  ALTER TABLE robots ADD COLUMN reported TEXT;
+  ALTER TABLE robots ADD COLUMN pin_change TEXT;
+  -- Background jobs ("that needs more time"): a run started from /v1 that the robot (or app) asks about later.
+  CREATE TABLE robot_jobs (
+    id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL,
+    owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    robot_id TEXT,
+    canvas_id TEXT,
+    character TEXT,
+    title TEXT,
+    seen INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  CREATE INDEX robot_jobs_owner ON robot_jobs(owner_id, created_at);
+  `,
 ];
 
 export const db = new DatabaseSync(join(config.dataDir, 'hivemind.db'));

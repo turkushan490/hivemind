@@ -1078,6 +1078,38 @@ which project it works on, and can make a new one.
   only to the robot. Per robot, **Firmware: newest / a version** sets what it is told to run (OTA is the robot's part).
 - Tests: `server/test/robots.test.ts`.
 
+## M22 — Seeing what the API does, and HiveBot from the web page (H1–H6)
+
+- **Activity:** `/v1` calls straight to a model (coding agents like T3 Code) show live under **Running now**: the
+  model, the token, what it is doing (waiting for the GPU, loading, reading the prompt, thinking, writing, calling a
+  tool), tokens written, tokens/s, the last 300 characters and the tools it called. Every line in **Incoming API
+  calls** has a Details column: the model or workflow, tokens in/out, tokens/s, time to the first word, tools called,
+  and for a failed call the error it got (a 403's reason). `ActivityRunning.apiCalls`, `ApiCall.model|error|…`.
+- **H1:** "Get newest from GitHub" puts a release's robot firmware (`<board>-*.bin`, `firmware-version.txt`) into the
+  `hivebot-robot` app and the rest (HiveBot.exe) into the app itself. `cores3-srmodels.bin` (the CoreS3 speech
+  model) is flashed at 0x620000 when the release has it.
+- **H2:** the setup form asks the PIN twice (4–8 digits, required). Robots → **Change PIN**: `POST /api/robots/:id/pin
+  {pin}` puts `pinChange {salt, hash = SHA-256(salt ‖ digits), id}` in the robot's config; when its heartbeat reports
+  `pinId`, HiveMind forgets it. The digits are never stored.
+- **H3, background jobs:** `/v1/chat/completions` with `hivemind_vars.background: true` (`character`, `job`) answers
+  **202** `{jobId, runId, status}` at once; the run goes on (up to 60 minutes, resumable after a restart).
+  `GET /api/robot/jobs` (newest 50), `GET /api/robot/jobs/:id` (status queued/running/done/failed/cancelled, the block
+  now with its live tokens/s, blocks done/total, the last output, files, answer, `failedNode`, per block model,
+  tokens/s, tokens and seconds), `POST …/seen`, `…/cancel`, `…/resume {fromNode}` (a new run that keeps what the
+  blocks before it made; the saved workflow is used, so a fixed step runs). A failed step makes the job failed.
+  The heartbeat answer has `jobsDone` (finished, not yet told). Limited tokens reach their own user's jobs.
+- **H4:** per-robot settings (`micSensitivity` 1–10, `volume` 0–100, `conversationMode`, `showText`, `backlight`
+  {dimAfterS, dimPercent, lowAfterS, lowPercent}) on the Robots page, in the robot config as `settings`; what the robot
+  reports in its heartbeat (`settings`) shows next to each.
+- **H5:** non-streamed `/v1` answers carry `hivemind.stats` (per AI block: node, model, provider, tokensPerSecond,
+  promptTokens, completionTokens, firstTokenMs, loadMs) and `usage.tokensPerSecond` of the answering block; streamed
+  answers end with `usage` (+ tokensPerSecond), and with `hivemind_vars.progress: true` also send
+  `{type: "progress", node}` when a block starts, `{type: "stats", …}` when an AI block ends and `{type: "stats",
+  live: true, tokensPerSecond}` about once a second. `node_done` events have `firstTokenMs`.
+- **H6:** `keepAlive` is passed per block as before (HiveBot's "5m" works); the search block needs nothing special
+  for robot-token runs.
+- Tests: `server/test/robotJobs.test.ts`, the Activity details in `server/test/v1models.test.ts`.
+
 ---
 
 ## The DungeonMind canvases (installed by DungeonMind, documented here)

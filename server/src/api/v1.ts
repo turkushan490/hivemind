@@ -14,6 +14,7 @@ import { canvasesFor, runSetup, sourceOf } from './runs.js';
 import { noteRun } from '../services/activity.js';
 import { allowedFor, notAllowed } from '../services/access.js';
 import { noteCall } from '../services/activity.js';
+import { createJob } from '../services/robotJobs.js';
 
 
 /** Bearer API token (or the web session), answered in OpenAI's error format. */
@@ -74,7 +75,10 @@ export function v1Routes(app: FastifyInstance) {
     let chat: { system: string; history: { role: 'user' | 'assistant'; content: string }[] };
     try {
       // HiveMind extra: named values for {{vars.name}}, as with POST /api/runs.
-      vars = checkVars(body.hivemind_vars);
+      // background / progress may come as true/false: they are switches here, not text for the workflow.
+      const hv = { ...((body.hivemind_vars ?? {}) as Record<string, unknown>) };
+      for (const k of ['background', 'progress']) if (typeof hv[k] === 'boolean') hv[k] = String(hv[k]);
+      vars = checkVars(hv);
       const c = chatFrom(body.messages);
       question = c.question;
       chat = { system: c.system, history: c.history };
@@ -121,6 +125,8 @@ export function v1Routes(app: FastifyInstance) {
         freeGpu: gpuFreerFor(providerUser),
         training: trainingFor(user),
         source: sourceOf(user, '/v1'),
+        // A background job may take an hour, and goes on after a restart.
+        ...(vars.background === 'true' && { timeLimitMin: 60, resumable: { userId: user.id, providerUserId: providerUser.id } }),
       });
     } catch (err) {
       const code = (err as { statusCode?: number }).statusCode;
@@ -128,6 +134,30 @@ export function v1Routes(app: FastifyInstance) {
       return reply.code(403).send(apiError((err as Error).message, 'permission_error', 'model_not_allowed'));
     }
     noteRun(req, runId, row.name);
+    // "That needs more time": the run goes on by itself; the robot asks later (GET /api/robot/jobs).
+    if (vars.background === 'true') {
+      const jobId = createJob({ runId, ownerId: user.id, robotId: user.scope?.robot, canvasId: row.id, character: vars.character, title: vars.job || question.slice(0, 80) });
+      return reply.code(202).send({ jobId, runId, status: 'queued' });
+    }
+    const progress = vars.progress === 'true';
+    const labelOf = (id?: string) => {
+      const n = graph.nodes.find((x) => x.id === id);
+      return n?.label || n?.config.model?.model || n?.type || id || '';
+    };
+    /** What each AI block measured (hivemind.stats), and the speed of the block that gave the answer. */
+    const statsOf = (evs: RunEvent[]) =>
+      evs
+        .filter((e) => e.type === 'node_done' && e.model)
+        .map((e) => ({
+          node: labelOf(e.nodeId),
+          model: e.model,
+          provider: graph.nodes.find((n) => n.id === e.nodeId)?.config.model?.providerId,
+          ...(e.tokensPerSec && { tokensPerSecond: Math.round(e.tokensPerSec * 10) / 10 }),
+          ...(e.inputTokens && { promptTokens: e.inputTokens }),
+          ...(e.tokens && { completionTokens: e.tokens }),
+          ...(e.firstTokenMs && { firstTokenMs: e.firstTokenMs }),
+          loadMs: e.loadMs ?? 0,
+        }));
     const model = body.model;
     const live = streamSource(graph);
     const events: RunEvent[] = [];
@@ -157,7 +187,14 @@ export function v1Routes(app: FastifyInstance) {
       if (!done || done.final === undefined)
         return reply.code(500).send(apiError(`The canvas "${row.name}" gave no answer${errors.length ? `: ${errors.join('; ')}` : ''} (run ${runId}, see Problems)`, 'server_error', 'run_failed'));
       const info = routeInfo(events);
-      return { ...completion(runId, model, done.final, usageOf(events)), ...(info && { hivemind: info }) };
+      const stats = statsOf(events);
+      const answering = live ? stats.find((s) => s.node === labelOf(live)) : stats.at(-1);
+      const reply1 = completion(runId, model, done.final, usageOf(events));
+      return {
+        ...reply1,
+        usage: { ...reply1.usage, ...(answering?.tokensPerSecond && { tokensPerSecond: answering.tokensPerSecond }) },
+        hivemind: { ...info, stats },
+      };
     }
 
     // Streaming: the only block feeding the Final answer streams live; otherwise the answer comes in one piece at the end.
@@ -168,6 +205,7 @@ export function v1Routes(app: FastifyInstance) {
     send(chunk(runId, model, { role: 'assistant', content: '' }));
     const ping = setInterval(() => res.write(': working\n\n'), 10_000);
     const liveText = new LiveText();
+    let lastLive = 0;
     await new Promise<void>((resolve) => {
       const sub = subscribe(
         runId,
@@ -175,6 +213,13 @@ export function v1Routes(app: FastifyInstance) {
         (ev) => {
           events.push(ev);
           if (ev.type === 'error' && ev.error) errors.push(ev.error);
+          // hivemind_vars.progress: which block works now, and what each AI block measured (robot animations).
+          if (progress && ev.type === 'node_start' && ev.nodeType !== 'input' && ev.nodeType !== 'output') send({ type: 'progress', node: labelOf(ev.nodeId) });
+          if (progress && ev.type === 'node_done' && ev.model) send({ type: 'stats', ...statsOf([ev])[0] });
+          if (progress && ev.type === 'token' && ev.tokensPerSec && Date.now() - lastLive > 1000) {
+            lastLive = Date.now();
+            send({ type: 'stats', live: true, node: labelOf(ev.nodeId), model: ev.model, tokensPerSecond: Math.round(ev.tokensPerSec * 10) / 10 });
+          }
           if (ev.type === 'token' && ev.nodeId === live && ev.text) {
             const out = liveText.push(ev.text);
             if (out) send(chunk(runId, model, { content: out }));
@@ -184,7 +229,9 @@ export function v1Routes(app: FastifyInstance) {
               // Whatever was not streamed live (all of it, or a tail held back or sent only at the end).
               const rest = liveText.finish(ev.final);
               if (rest) send(chunk(runId, model, { content: rest }));
-              send(chunk(runId, model, {}, 'stop'));
+              const st = statsOf(events);
+              const ans = live ? st.find((s) => s.node === labelOf(live)) : st.at(-1);
+              send({ ...chunk(runId, model, {}, 'stop'), usage: { ...usageOf(events), ...(ans?.tokensPerSecond && { tokensPerSecond: ans.tokensPerSecond }) } });
             } else {
               send(apiError(`The canvas "${row.name}" gave no answer${errors.length ? `: ${errors.join('; ')}` : ''} (run ${runId}, see Problems)`, 'server_error', 'run_failed'));
             }

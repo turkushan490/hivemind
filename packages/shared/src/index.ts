@@ -38,6 +38,12 @@ export interface NodeConfig {
   think?: boolean;
   /** Local (Ollama) models: keep the model loaded this long after a call ("30m", "1h"), so the next answer starts warm. */
   keepAlive?: string;
+  /**
+   * A quick answer when the GPU is busy: when this block's own (local) model has not got the GPU after afterSeconds
+   * (other work ahead in the queue), the block answers with this model instead. Pick one that doesn't need that GPU
+   * (the CPU-only Ollama, or a cloud model). The big model is not unloaded.
+   */
+  fallback?: { model: ModelRef; afterSeconds: number };
   /** LLM: send the chat history from /v1 as real messages instead of one prompt. */
   useMessages?: boolean;
   /** Audio prep: a folder in Files with recordings (besides the files attached to the question); clip length. */
@@ -131,7 +137,8 @@ export interface NodeConfig {
   loraStrength?: number;
   negative?: string;
   /** Home Assistant: read entity states, or call a service. */
-  haOp?: 'state' | 'service' | 'assist';
+  /** devices: list the house's devices (what can be switched, opened, locked …) with their names and states, for a model to pick from. */
+  haOp?: 'state' | 'service' | 'assist' | 'devices';
   /** Home Assistant Assist: the language of the sentence (en, nl, …). */
   haLanguage?: string;
   /** Home Assistant: entity ids to read (comma or newline separated; templates allowed). */
@@ -665,6 +672,9 @@ export interface RunEvent {
   loadMs?: number;
   /** node_done: from the block's start to its first word (thinking included). */
   firstTokenMs?: number;
+  /** node_done: the block answered with its quick fallback model, because the GPU was busy; fallbackFor = its own model. */
+  fallback?: boolean;
+  fallbackFor?: string;
   /** node_progress: what the block is doing right now. */
   note?: string;
   /** node_progress: a decision model's answer, for the probability bars. */

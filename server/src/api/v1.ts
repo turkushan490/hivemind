@@ -182,6 +182,7 @@ export function v1Routes(app: FastifyInstance) {
           ...(e.tokens && { completionTokens: e.tokens }),
           ...(e.firstTokenMs && { firstTokenMs: e.firstTokenMs }),
           loadMs: e.loadMs ?? 0,
+          ...(e.fallback && { fallback: true, fallbackFor: e.fallbackFor }),
         }));
     const model = body.model;
     const live = streamSource(graph);

@@ -23,6 +23,7 @@ export function BlockSettings(p: Props) {
       {p.kind === 'llm' && <AutoSettings {...p} />}
       <ModelOptions {...p} />
       {(p.kind === 'llm' || p.kind === 'decide') && <KeepLoaded {...p} />}
+      {p.kind === 'llm' && <QuickFallback {...p} />}
       {(p.kind === 'llm' || p.kind === 'review' || p.kind === 'judge') && <SkillsOption {...p} />}
       <TimeLimit {...p} />
       <KindSettings {...p} />
@@ -57,6 +58,44 @@ function KeepLoaded(p: Props) {
         Colibri models marked “always loaded” (Settings → Colibri) stay loaded whatever this says.
       </span>
     </label>
+  );
+}
+
+/** LLM: answer with a quick model when this block's local model would wait for a busy GPU. */
+function QuickFallback(p: Props) {
+  const fb = p.config.fallback;
+  return (
+    <div className="space-y-1 rounded-lg border border-[#30363d] p-2.5">
+      <label className="flex items-center gap-2 text-xs font-semibold text-slate-300">
+        <input
+          type="checkbox"
+          checked={!!fb}
+          onChange={(e) => p.onChange({ fallback: e.target.checked ? { model: fb?.model ?? { providerId: '', model: '' }, afterSeconds: fb?.afterSeconds ?? 8 } : undefined })}
+        />
+        Quick answer when the GPU is busy
+      </label>
+      {fb && (
+        <>
+          <ModelPicker models={p.models} providers={p.providers} value={fb.model.model ? fb.model : undefined} onChange={(model) => p.onChange({ fallback: { ...fb, model } })} />
+          <label className="flex items-center gap-2 text-xs text-slate-400">
+            after
+            <input
+              className="input w-20 py-0.5 text-xs"
+              type="number"
+              min={1}
+              max={600}
+              value={fb.afterSeconds}
+              onChange={(e) => p.onChange({ fallback: { ...fb, afterSeconds: Math.max(1, Math.min(600, Number(e.target.value) || 8)) } })}
+            />
+            seconds of waiting
+          </label>
+          <span className="block text-xs text-slate-500">
+            Pick a model that doesn't need the busy GPU: the CPU-only Ollama or a cloud model. The block's own model stays loaded;
+            the answer is marked as a fallback (/v1 stats: fallback: true).
+          </span>
+        </>
+      )}
+    </div>
   );
 }
 
@@ -772,13 +811,13 @@ function HomeAssistantSettings(p: Props) {
     <div className="space-y-2">
       {error && <p className="rounded-md bg-red-950/40 p-2 text-xs text-red-300">{error}</p>}
       <div className="flex gap-1">
-        {(['state', 'service', 'assist'] as const).map((m) => (
+        {(['state', 'service', 'assist', 'devices'] as const).map((m) => (
           <button
             key={m}
             className={`flex-1 rounded-md border px-2 py-1.5 text-sm ${op === m ? 'border-sky-400 bg-sky-400/15 text-sky-100' : 'border-[#30363d] text-slate-400'}`}
             onClick={() => p.onChange({ haOp: m })}
           >
-            {m === 'state' ? 'Read states' : m === 'service' ? 'Call a service' : 'Ask (Assist)'}
+            {m === 'state' ? 'Read states' : m === 'service' ? 'Call a service' : m === 'assist' ? 'Ask (Assist)' : 'My devices'}
           </button>
         ))}
       </div>
@@ -789,7 +828,18 @@ function HomeAssistantSettings(p: Props) {
           </option>
         ))}
       </datalist>
-      {op === 'assist' ? (
+      {op === 'devices' ? (
+        <>
+          <label className="block space-y-1">
+            <Label>Only these kinds (empty: all that can be switched)</Label>
+            <input className="input text-xs" placeholder="light switch lock cover climate" value={c.entities ?? ''} onChange={(e) => p.onChange({ entities: e.target.value || undefined })} />
+          </label>
+          <p className="text-xs text-slate-500">
+            Lists this house&apos;s devices with their names and states (lights, switches, locks, covers, climate …), read live from Home Assistant on every run.
+            Wire it into the model that turns a spoken request into a service call, so it knows the real entity ids.
+          </p>
+        </>
+      ) : op === 'assist' ? (
         <>
           <label className="block space-y-1">
             <Label>Language</Label>

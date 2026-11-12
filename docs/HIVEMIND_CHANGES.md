@@ -1144,6 +1144,27 @@ which project it works on, and can make a new one.
 
 ---
 
+## M24 — Quick answers when the GPU is busy (HiveBot H8), and talking to the house from Home Assistant
+
+- **Quick fallback per AI block** (`config.fallback {model, afterSeconds}`, Block settings → "Quick answer when the
+  GPU is busy"): when the block's local model has not got the GPU after `afterSeconds` (other work ahead in the
+  queue), the block leaves the queue and answers with the fallback model (the CPU-only Ollama or a cloud model). The
+  big model is not unloaded. `node_done` gets `fallback: true, fallbackFor`; the /v1 `stats` chunk and
+  `hivemind.stats` carry them, so a robot can say it gave a quick answer.
+- **Cloned voices back on the GPU**: a cloned voice that fell back to the CPU (under 4 GB free) checks every 2 minutes
+  while loaded and moves back to the GPU by itself once there is room (not while it is speaking).
+- **Home Assistant block, "My devices"** (`haOp: 'devices'`): lists the house's devices that can be switched, opened,
+  locked or set (light, switch, lock, cover, climate, fan, media_player, scene, script, vacuum …) with their names
+  and states, live from `/api/states`; `entities` narrows it to some kinds.
+- **"Voice smart home" template** reads the devices from Home Assistant instead of a hand-typed list, knows
+  locks/covers ("open the garage door"), and answers other questions with the conversation history.
+- **Standard workflow "Home Assistant voice"** (folder Home Assistant): added by itself once Home Assistant is
+  connected (Settings → Home Assistant → Test), with a button to add it again. Use it as the conversation agent of
+  Home Assistant's Assist through the HiveMind integration (HACS); HA keeps its own speech to text and text to speech.
+- Tests: fallback in `server/test/engine.test.ts`, devices in `server/test/actions.test.ts`.
+
+---
+
 ## The DungeonMind canvases (installed by DungeonMind, documented here)
 
 DungeonMind keeps the JSON in its repo under `hivemind/*.canvas.json` and installs it with `PUT /api/canvases/<id>`. The user picks the models per node in HiveMind afterwards. The defaults come from the Lab scoreboard (Part 2).

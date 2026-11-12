@@ -92,7 +92,7 @@ function pickImageModel(all: ModelInfo[]): ModelRef | undefined {
   return m && { providerId: m.providerId, model: m.model };
 }
 
-function prefillModels(all: ModelInfo[]): (ModelRef | undefined)[] {
+export function prefillModels(all: ModelInfo[]): (ModelRef | undefined)[] {
   const ms = all.filter((m) => !m.kind);
   const ref = (m: ModelInfo): ModelRef => ({ providerId: m.providerId, model: m.model });
   const local = ms.filter((m) => m.sizeBytes !== undefined && m.sizeBytes > 50e6).sort((a, b) => a.sizeBytes! - b.sizeBytes!);

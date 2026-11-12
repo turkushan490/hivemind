@@ -68,6 +68,23 @@ describe('Home Assistant block', () => {
     expect((init!.headers as Record<string, string>).authorization).toBe('Bearer llat');
   });
 
+  it('lists the devices a voice command can switch, open or lock, with their names', async () => {
+    const fetch = mockFetch(
+      json([
+        { entity_id: 'sensor.temp', state: '21.5', attributes: { friendly_name: 'Temp' } },
+        { entity_id: 'lock.front_door', state: 'locked', attributes: { friendly_name: 'Front door' } },
+        { entity_id: 'cover.garage', state: 'closed', attributes: { friendly_name: 'Garage door' } },
+        { entity_id: 'light.kitchen', state: 'unavailable', attributes: {} },
+        { entity_id: 'light.hall', state: 'off', attributes: { friendly_name: 'Hall' } },
+      ]),
+    );
+    const out = await NODES.homeassistant.execute(ctx('homeassistant', { haOp: 'devices' }).c);
+    expect(out.split('\n')).toEqual(['cover.garage (Garage door): closed', 'light.hall (Hall): off', 'lock.front_door (Front door): locked']);
+    expect(fetch.mock.calls[0][0]).toBe('http://ha.local:8123/api/states');
+    mockFetch(json([{ entity_id: 'lock.front_door', state: 'locked' }, { entity_id: 'light.hall', state: 'off' }]));
+    expect(await NODES.homeassistant.execute(ctx('homeassistant', { haOp: 'devices', entities: 'lock' }).c)).toBe('lock.front_door: locked');
+  });
+
   it('calls a service with templated JSON data', async () => {
     const fetch = mockFetch(json([{ entity_id: 'notify.phone', state: 'ok' }]));
     const { c } = ctx('homeassistant', { haOp: 'service', service: 'notify.mobile_app', body: '{"message": "{{input}}"}' }, { input: 'Say "hi"\nnow' });

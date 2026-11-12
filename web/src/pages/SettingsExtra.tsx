@@ -5,6 +5,26 @@ import { BuilderModelChooser } from '../canvas/BuilderModelChooser';
 import { toast } from '../notify';
 import { loadVoice, MicButton, SpeakButton } from '../voice';
 import { ModelPicker } from '../canvas/ModelPicker';
+import { prefillModels } from '../canvas/CanvasPage';
+import { TEMPLATES } from '../canvas/templates';
+import type { Canvas } from '@hivemind/shared';
+
+const HA_VOICE = 'Home Assistant voice';
+
+/**
+ * The standard workflow for talking to Home Assistant (Assist → HiveMind → HA does it). Added once when Home Assistant
+ * gets connected; force: add it again (e.g. after deleting it). Returns its name, or undefined when it was already there.
+ */
+async function addHomeVoiceWorkflow(force = false): Promise<string | undefined> {
+  const list = await api<Canvas[]>('/api/canvases', { quiet: true });
+  if (!force && list.some((c) => c.name === HA_VOICE)) return undefined;
+  const { models } = await api<{ models: ModelInfo[] }>('/api/models', { quiet: true });
+  const refs = prefillModels(models);
+  const graph = TEMPLATES.find((t) => t.id === 'voice-home')!.build({ text: refs.slice(0, 3), judge: refs[3] });
+  const name = list.some((c) => c.name === HA_VOICE) ? `${HA_VOICE} ${new Date().toISOString().slice(0, 10)}` : HA_VOICE;
+  await api('/api/canvases', { method: 'PUT', body: { name, ...graph, folder: 'Home Assistant' } });
+  return name;
+}
 
 /** Settings → Builder AI: the model that turns requests into canvases, and the setup wizard. */
 export function BuilderSettings({ active, onWizard }: { active: boolean; onWizard: () => void }) {
@@ -283,6 +303,8 @@ export function HomeAssistantPanel({ isAdmin, active }: { isAdmin: boolean; acti
     try {
       const list = await api<unknown[]>('/api/homeassistant/entities', { quiet: true });
       setTest({ ok: true, text: `Connected — ${list.length} entities` });
+      const added = await addHomeVoiceWorkflow().catch(() => undefined);
+      if (added) toast(`Added the workflow "${added}": pick it in Home Assistant as the conversation agent`, 'ok');
     } catch (err) {
       setTest({ ok: false, text: (err as Error).message });
     } finally {
@@ -345,6 +367,26 @@ export function HomeAssistantPanel({ isAdmin, active }: { isAdmin: boolean; acti
           {testing ? 'Testing…' : 'Test connection'}
         </button>
         {test && <span className={`text-xs ${test.ok ? 'text-emerald-400' : 'text-red-400'}`}>{test.text}</span>}
+      </div>
+      <div className="space-y-1 rounded-lg border border-[#30363d] p-3 text-sm">
+        <div className="font-semibold">Talk to your house</div>
+        <p className="text-xs text-slate-400">
+          The workflow <em>{HA_VOICE}</em> (folder Home Assistant) is added once Home Assistant is connected. Say &quot;open the garage door&quot; or &quot;turn off the
+          kitchen light&quot; to Home Assistant&apos;s Assist (phone app, voice satellite): HiveMind reads your devices from Home Assistant, picks the right one, and
+          Home Assistant does it. Other questions get a short spoken answer. In Home Assistant: install the HiveMind integration (HACS) with an API token from
+          Settings → API tokens, then Settings → Voice assistants → your assistant → Conversation agent: <em>{HA_VOICE}</em>. Speech to text and text to speech
+          stay Home Assistant&apos;s own.
+        </p>
+        <button
+          className="btn-ghost text-xs"
+          disabled={!s.url || !s.hasToken}
+          onClick={async () => {
+            const name = await addHomeVoiceWorkflow(true).catch((err) => void toast((err as Error).message));
+            if (name) toast(`Added the workflow "${name}"`, 'ok');
+          }}
+        >
+          Add the voice workflow again
+        </button>
       </div>
     </div>
   );

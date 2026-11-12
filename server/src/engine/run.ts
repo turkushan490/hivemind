@@ -364,7 +364,7 @@ export async function runGraph(
     if (!allowed(ref)) throw refused(ref.model);
   };
 
-  const runNode = async (node: CanvasNode): Promise<void> => {
+  const runNode = async (node: CanvasNode, fallbackFor?: string): Promise<void> => {
     const def = NODES[node.type];
     const model = node.config.model;
     const base = { nodeId: node.id, nodeType: node.type, model: model?.model };
@@ -693,6 +693,7 @@ export async function runGraph(
         inputTokens,
         tokensPerSec: genSecs > 0 ? tokens / genSecs : undefined,
         ...(firstToken && { firstTokenMs: firstToken - t0 }),
+        ...(fallbackFor && { fallback: true, fallbackFor }),
         cost: nodeCost,
         elapsedMs: Date.now() - t0,
         loadMs,
@@ -704,6 +705,35 @@ export async function runGraph(
     try {
       if (heldHost) {
         deps.emit({ ...base, type: 'node_queued' });
+        const fb = node.config.fallback;
+        if (fb?.model?.model && model && fb.afterSeconds > 0 && !fallbackFor && allowed(fb.model)) {
+          // Quick answer when the GPU is busy: wait at most afterSeconds for it, then answer with the fallback model.
+          const wait = new AbortController();
+          const stop = () => wait.abort();
+          signal.addEventListener('abort', stop, { once: true });
+          let started = false;
+          const timer = setTimeout(() => !started && wait.abort(), Math.round(fb.afterSeconds * 1000));
+          try {
+            await withHostLock(
+              heldHost,
+              () => {
+                started = true;
+                clearTimeout(timer);
+                return exec();
+              },
+              { signal: wait.signal, label: lockLabel, priority: deps.priority },
+            );
+            return;
+          } catch (err) {
+            if (started || signal.aborted) throw err;
+            deps.emit({ ...base, type: 'node_progress', note: `The GPU is busy — ${fb.model.model} answers instead of ${model.model}` });
+            const { fallback: _f, models: _m, ...rest } = node.config;
+            return runNode({ ...node, config: { ...rest, model: fb.model } }, model.model);
+          } finally {
+            clearTimeout(timer);
+            signal.removeEventListener('abort', stop);
+          }
+        }
         await withHostLock(heldHost, exec, { signal, label: lockLabel, priority: deps.priority });
         return;
       }

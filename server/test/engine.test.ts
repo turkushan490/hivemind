@@ -144,6 +144,41 @@ describe('runGraph', () => {
     expect((await long).status).toBe('done');
   });
 
+  it('a block with a quick fallback answers with it when the GPU stays busy, and marks the answer (HiveBot H8)', async () => {
+    const gpu = { ...fake({ local: true, delay: 1500 }), hostKey: 'h8gpu' };
+    const cpu = { ...fake({ local: true }), exclusive: false };
+    const one = (fallback?: object): CanvasGraph =>
+      ({
+        nodes: [
+          { id: 'q', type: 'input', position: { x: 0, y: 0 }, config: {} },
+          { id: 'a', type: 'llm', position: { x: 1, y: 0 }, config: { model: { providerId: 'gpu', model: 'big' }, ...(fallback && { fallback }) } },
+          { id: 'o', type: 'output', position: { x: 2, y: 0 }, config: {} },
+        ],
+        edges: [
+          { id: 'e1', source: 'q', target: 'a' },
+          { id: 'e2', source: 'a', target: 'o' },
+        ],
+      }) as never;
+    const events: RunEvent[] = [];
+    const deps = { resolve: async (id: string) => (id === 'cpu' ? cpu : gpu), emit: (e: unknown) => events.push(e as RunEvent) };
+    // A long job holds the GPU.
+    const long = runGraph(one(), 'long job', { ...deps, emit: () => {} }, new AbortController().signal);
+    await new Promise((r) => setTimeout(r, 100));
+    const t0 = Date.now();
+    const quick = await runGraph(one({ model: { providerId: 'cpu', model: 'small' }, afterSeconds: 0.2 }), 'hi', deps, new AbortController().signal);
+    expect(Date.now() - t0).toBeLessThan(900);
+    expect(quick.final).toBe('small: ok');
+    const done = events.find((e) => e.type === 'node_done' && e.nodeId === 'a')!;
+    expect(done).toMatchObject({ fallback: true, fallbackFor: 'big' });
+    expect(events.some((e) => e.type === 'node_progress' && /GPU is busy/.test(e.note ?? ''))).toBe(true);
+    expect((await long).status).toBe('done');
+    // With a free GPU the block's own model answers.
+    events.length = 0;
+    const free = await runGraph(one({ model: { providerId: 'cpu', model: 'small' }, afterSeconds: 0.2 }), 'hi', deps, new AbortController().signal);
+    expect(free.final).toBe('big: ok');
+    expect(events.find((e) => e.type === 'node_done' && e.nodeId === 'a')?.fallback).toBeUndefined();
+  });
+
   it('corrects "warm" when the model had to load after all (another context size)', async () => {
     const p = fake({ local: true });
     p.adapter.stream = async function* () {

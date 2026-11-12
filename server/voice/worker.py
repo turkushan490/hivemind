@@ -23,7 +23,7 @@ PORT, MODELS = int(sys.argv[1]), sys.argv[2]
 MODEL_ID = "Qwen/Qwen3-TTS-12Hz-0.6B-Base"
 SR = 24000
 lock = threading.Lock()
-state = {"model": None, "device": None, "prompts": {}}
+state = {"model": None, "device": None, "prompts": {}, "want": "auto"}
 
 
 def log(*a):
@@ -218,7 +218,8 @@ def speak(body: dict):
     text = str(body.get("text") or "").strip()[:2000]
     if not text:
         raise ValueError("text is empty")
-    device = pick_device(body.get("device", "auto"))
+    state["want"] = body.get("device", "auto")
+    device = pick_device(state["want"])
     try:
         model = load_model(device)
     except Exception as e:  # out of GPU memory after all: the CPU
@@ -292,5 +293,36 @@ class Handler(BaseHTTPRequestHandler):
             self.send(500, json.dumps({"error": str(e)[:1000]}).encode())
 
 
+def back_to_gpu():
+    """A voice that fell back to the CPU (the GPU had < 4 GB free) moves back to the GPU by itself once there is room,
+    checked every 2 minutes while it is loaded, instead of staying slow until "keep loaded" runs out."""
+    while True:
+        time.sleep(120)
+        if state["model"] is None or state["device"] != "cpu" or state["want"] != "auto":
+            continue
+        try:
+            import torch
+
+            if not torch.cuda.is_available() or torch.cuda.mem_get_info()[0] < 4.5e9:
+                continue
+        except Exception:
+            continue
+        if not lock.acquire(blocking=False):  # speaking right now: try again next time
+            continue
+        try:
+            log("the GPU has room again: moving the voice model back to the GPU")
+            load_model("cuda")
+        except Exception as e:
+            log(f"could not move to the GPU ({e}); staying on the CPU")
+            unload()
+            try:
+                load_model("cpu")
+            except Exception:
+                pass
+        finally:
+            lock.release()
+
+
+threading.Thread(target=back_to_gpu, daemon=True).start()
 log(f"voice worker on 127.0.0.1:{PORT}")
 ThreadingHTTPServer(("127.0.0.1", PORT), Handler).serve_forever()

@@ -88,7 +88,7 @@ export function serviceFromInput(text: string): { service: string; data: unknown
   }
 }
 
-interface HaState {
+export interface HaState {
   entity_id: string;
   state: string;
   attributes?: Record<string, unknown>;
@@ -103,6 +103,21 @@ function describeState(s: HaState): string {
     .map(([k, v]) => `${k} ${Array.isArray(v) ? v.join(',') : v}`)
     .join(', ');
   return `${s.entity_id}${friendly_name ? ` (${friendly_name})` : ''}: ${s.state}${extra ? ` — ${extra}` : ''}`;
+}
+
+/** Kinds of entities a voice command can switch, open, lock or set (sensors are read, not commanded). */
+export const HA_DEVICE_DOMAINS = ['light', 'switch', 'lock', 'cover', 'climate', 'fan', 'media_player', 'scene', 'script', 'vacuum', 'button', 'input_boolean', 'valve', 'humidifier', 'water_heater', 'siren', 'alarm_control_panel'];
+
+/** "lock.front_door (Front door): locked" per device of these domains, at most 400, sorted by kind then name. */
+export function haDeviceLines(states: HaState[], domains: string[]): string[] {
+  return states
+    .filter((s) => domains.includes(s.entity_id.split('.')[0]) && s.state !== 'unavailable')
+    .sort((a, b) => a.entity_id.localeCompare(b.entity_id))
+    .slice(0, 400)
+    .map((s) => {
+      const name = s.attributes?.friendly_name;
+      return `${s.entity_id}${typeof name === 'string' && name ? ` (${name})` : ''}: ${s.state}`;
+    });
 }
 
 export const ACTION_NODES: Record<'homeassistant' | 'webhook' | 'discord', NodeDefinition> = {
@@ -134,6 +149,17 @@ export const ACTION_NODES: Record<'homeassistant' | 'webhook' | 'discord', NodeD
         if (kind === 'error') throw new Error(speech || 'Home Assistant did not understand that');
         ctx.progress(`Home Assistant: ${kind || 'done'}`);
         return speech || 'Done.';
+      }
+
+      // Devices: what this house has (lights, switches, locks, covers …), so a model can pick the right entity_id.
+      if (c.haOp === 'devices') {
+        ctx.progress('Reading your devices from Home Assistant…');
+        const res = await send(`${ha.url}/api/states`, { headers }, ctx.signal, 'Home Assistant');
+        await ensureOk(res, 'Home Assistant');
+        const only = (c.entities ?? '').split(/[\s,]+/).map((d) => d.trim().replace(/\.$/, '')).filter(Boolean);
+        const lines = haDeviceLines((await res.json()) as HaState[], only.length ? only : HA_DEVICE_DOMAINS);
+        ctx.progress(`${lines.length} devices`);
+        return lines.length ? lines.join('\n') : 'Home Assistant has no devices of these kinds.';
       }
 
       if ((c.haOp ?? 'state') === 'state') {

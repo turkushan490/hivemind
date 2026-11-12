@@ -8,6 +8,7 @@ import { Models } from './Models';
 import { Providers } from './Providers';
 import { BuilderSettings, HomeAssistantPanel, HuggingFacePanel, VoicePanel, MemorySettings, OpenAIApiSettings, SearchSettingsPanel, TrainingPanel, RunLimitsPanel } from './SettingsExtra';
 import { Tokens } from './Tokens';
+import { T3CodePanel } from './T3Code';
 import { Users } from './Users';
 import { Access } from './Access';
 import { GithubPanel, SkillsPanel } from './GithubSkills';
@@ -34,6 +35,7 @@ const SECTIONS = {
   access: 'Access',
   tokens: 'API tokens',
   api: 'OpenAI API',
+  t3: 'T3 Code',
 } as const;
 type Section = keyof typeof SECTIONS;
 
@@ -92,6 +94,7 @@ export function Settings({ role, meId, active, onWizard }: { role: Role; meId: s
         {panel('access', <Access active={active && section === 'access'} />)}
         {panel('tokens', <Tokens isAdmin={isAdmin} />)}
         {panel('api', <OpenAIApiSettings active={active && section === 'api'} onTokens={() => setSection('tokens')} />)}
+        {panel('t3', <T3CodePanel active={active && section === 't3'} />)}
       </div>
     </div>
   );

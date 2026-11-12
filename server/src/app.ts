@@ -23,6 +23,7 @@ import { scheduleRoutes } from './api/schedules.js';
 import { scopeGuard } from './api/scope.js';
 import { settingsRoutes } from './api/settings.js';
 import { statsRoutes } from './api/stats.js';
+import { t3Routes } from './api/t3.js';
 import { v1Routes } from './api/v1.js';
 import { voiceRoutes } from './api/voice.js';
 import { config } from './config.js';
@@ -118,6 +119,7 @@ export async function buildApp(opts: { logger?: boolean; web?: boolean; onRoute?
   skillRoutes(app);
   colibriRoutes(app);
   robotRoutes(app);
+  t3Routes(app);
 
   if (opts.web !== false && existsSync(config.webDir)) {
     await app.register(staticFiles, {

@@ -1114,6 +1114,34 @@ which project it works on, and can make a new one.
 - **Fold the side panels**: on a PC the blocks panel (◂ in its header) and the Inspector/Builder panel (▸ at its
   left) fold to a thin edge with the panel's name; click the edge to open it again. The choice is remembered.
 
+## M23 — Settings → T3 Code: pick the models T3 offers, update T3 with one button
+
+- **Folder:** an optional template path **T3 Code OpenCode folder** → `/t3/opencode` (`T3_OPENCODE_DIR`): T3 Code's
+  OpenCode config folder (in T3's appdata: `.config/opencode`). No Docker socket and no SSH: HiveMind only writes files
+  in that folder. Without it, the page explains the template step and **Download opencode.json** gives the same file.
+- **List:** every `/v1` model of this person (single models and workflows, from the same code as `GET /v1/models`,
+  now `v1ModelData()`), with a checkbox, provider, local/cloud, "edits files" or "chat only", size, context and
+  "in T3" for the ones in the file now. A search box (name, id, provider, description) and filters: chosen, local,
+  cloud, workflows, edits files, in T3 now. Chosen models first.
+- **Per chosen model:** an own name, a short description, a role (fast, planner, coder, slow + best, check) and
+  "thinks" (OpenCode then offers a reasoning setting). In T3 the model is called
+  `<name> · <where> (<role>: <description>)`, where is GPU, GPU+CPU (Ollama models over 15 GB), Colibri CPU, cloud
+  or workflow. Without a description it gets a short one from its kind and size ("very fast: simple code, quick
+  checks", "best local, slow: hard code", "chat only, no file edits"). Saved per user (`user:<id>:t3`).
+- **Update T3** (`POST /api/t3/update`) replaces only `provider.hivemind` in `opencode.json`; every other provider and
+  key stays. A file that isn't a JSON object is left alone (409). The block has `@ai-sdk/openai-compatible`, the
+  address T3 uses (saved, else the one in the file, else this page's), the key as
+  `{file:~/.config/opencode/hivemind-token}`, and per model `tool_call`, `reasoning`, `limit.context` (Ollama: the
+  32768 HiveMind gives API calls; others their own) and `limit.output`. Chosen models that are no longer offered
+  are left out and reported. One backup (`opencode.json.hivemind-backup`); files are written via a temp file and
+  given the owner set on the page (default `99:100`, the user T3 runs as on Unraid).
+- **Token:** when T3 has no `hivemind-token`, Update T3 makes a full API token "T3 Code" for this user and writes it
+  (mode 600). **New token** (`POST /api/t3/token`) revokes the one made before and writes a new one. The token is
+  never shown or put in the downloaded file.
+- `/v1/models` single models also carry `hivemind.providerKind`, `modelName`, `local` and `sizeBytes`.
+- API: `GET/PUT /api/t3`, `POST /api/t3/update`, `POST /api/t3/token`, `GET /api/t3/opencode.json`.
+- Tests: `server/test/t3sync.test.ts`.
+
 ---
 
 ## The DungeonMind canvases (installed by DungeonMind, documented here)

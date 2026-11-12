@@ -28,34 +28,49 @@ async function requireToken(req: FastifyRequest, reply: FastifyReply) {
  * OpenAI-compatible API: every saved canvas is a model. Works with any OpenAI client
  * (Home Assistant, Open WebUI, scripts) pointed at http://<hivemind>/v1.
  */
+/** Provider kinds that run on this server's own hardware (the rest is cloud). */
+const LOCAL_KINDS = new Set(['ollama', 'colibri', 'colibri-decisions']);
+
+/** What GET /v1/models answers for this person: their workflows, plus single models when that is on. */
+export async function v1ModelData(user: Parameters<typeof canvasesFor>[0]) {
+  const rows = canvasesFor(user).map((r): CanvasModelRow => ({ id: r.id, name: r.name, description: r.description, updatedAt: r.updated_at }));
+  // With the canvas router on, "auto" picks the right canvas per request.
+  if (getPrefs(user).canvasRouter && rows.length) rows.unshift({ id: 'auto', name: 'Auto (picks the canvas)', description: 'A decision model picks the canvas for each request', updatedAt: rows[0].updatedAt });
+  const list = modelList(rows);
+  if (!apiModelsOn(user)) return list;
+  // Single models for coding agents: "<provider>/<model>", with whether it can call tools.
+  const access = allowedFor(user);
+  const providers = usableRows(user, access).filter((r) => r.enabled && r.kind !== 'comfyui' && r.kind !== 'decision');
+  const lists = await Promise.allSettled(providers.map((r) => allowedModelsOf(r, access)));
+  const now = Math.floor(Date.now() / 1000);
+  const singles = lists.flatMap((l, i) =>
+    l.status !== 'fulfilled'
+      ? []
+      : l.value
+          .filter((m) => isApiModel(m, providers[i].kind))
+          .map((m) => ({
+            id: `${providers[i].id}/${m.model}`,
+            object: 'model',
+            created: now,
+            owned_by: providers[i].name,
+            name: `${m.name} · ${providers[i].name}`,
+            hivemind: {
+              kind: 'model',
+              provider: providers[i].id,
+              providerKind: providers[i].kind,
+              modelName: m.name,
+              local: LOCAL_KINDS.has(providers[i].kind),
+              ...(m.contextLength && { contextLength: m.contextLength }),
+              ...(m.sizeBytes && { sizeBytes: m.sizeBytes }),
+              tools: toolSupport(m, providers[i].kind, providers[i].preset),
+            },
+          })),
+  );
+  return { ...list, data: [...list.data, ...singles] };
+}
+
 export function v1Routes(app: FastifyInstance) {
-  app.get('/v1/models', { preHandler: requireToken }, async (req) => {
-    const rows = canvasesFor(req.user!).map((r): CanvasModelRow => ({ id: r.id, name: r.name, description: r.description, updatedAt: r.updated_at }));
-    // With the canvas router on, "auto" picks the right canvas per request.
-    if (getPrefs(req.user!).canvasRouter && rows.length) rows.unshift({ id: 'auto', name: 'Auto (picks the canvas)', description: 'A decision model picks the canvas for each request', updatedAt: rows[0].updatedAt });
-    const list = modelList(rows);
-    if (!apiModelsOn(req.user!)) return list;
-    // Single models for coding agents: "<provider>/<model>", with whether it can call tools.
-    const access = allowedFor(req.user!);
-    const providers = usableRows(req.user!, access).filter((r) => r.enabled && r.kind !== 'comfyui' && r.kind !== 'decision');
-    const lists = await Promise.allSettled(providers.map((r) => allowedModelsOf(r, access)));
-    const now = Math.floor(Date.now() / 1000);
-    const singles = lists.flatMap((l, i) =>
-      l.status !== 'fulfilled'
-        ? []
-        : l.value
-            .filter((m) => isApiModel(m, providers[i].kind))
-            .map((m) => ({
-              id: `${providers[i].id}/${m.model}`,
-              object: 'model',
-              created: now,
-              owned_by: providers[i].name,
-              name: `${m.name} · ${providers[i].name}`,
-              hivemind: { kind: 'model', provider: providers[i].id, ...(m.contextLength && { contextLength: m.contextLength }), tools: toolSupport(m, providers[i].kind, providers[i].preset) },
-            })),
-    );
-    return { ...list, data: [...list.data, ...singles] };
-  });
+  app.get('/v1/models', { preHandler: requireToken }, async (req) => v1ModelData(req.user!));
 
   app.post('/v1/chat/completions', { preHandler: requireToken }, async (req, reply) => {
     const body = (req.body ?? {}) as { model?: string; messages?: unknown; stream?: boolean; hivemind_vars?: unknown };

@@ -6,6 +6,7 @@ import type { ChatMessage, ChatRequest, ToolCall, ToolDef } from '../providers/t
 import { isOllamaDecisionModel } from '../providers/decisions.js';
 import { allowedFor } from './access.js';
 import { apiError } from './openaiCompat.js';
+import { noteCall, startLiveCall } from './activity.js';
 import { callCost } from './pricing.js';
 import { runLimits } from './runLimits.js';
 import { newId } from '../crypto.js';
@@ -137,6 +138,7 @@ export async function callApiModel(
   },
 ) {
   const { user, id, providerId, model, provider: p, body } = o;
+  noteCall(req, { model: id });
   if (!allowedFor(user).model(providerId, model)) return reply.code(403).send(apiError(`You may not use ${model} (Settings → Access)`, 'permission_error', 'model_not_allowed'));
   let messages: ChatMessage[];
   let tools: ToolDef[] | undefined;
@@ -193,6 +195,9 @@ export async function callApiModel(
     send({ ...base, choices: [{ index: 0, delta: { role: 'assistant', content: '' }, finish_reason: null }] });
   }
 
+  const now = startLiveCall(req, id, tools?.length ?? 0);
+  now.set({ promptTokens: need });
+  let firstAt = 0;
   let content = '';
   let reasoning = '';
   const calls: { id: string; name: string; arguments: string; extra?: Record<string, unknown> }[] = [];
@@ -201,13 +206,23 @@ export async function callApiModel(
   let genMs: number | undefined;
   const work = async () => {
     note = ': working';
+    now.set({ state: 'reading the prompt' });
+    const t0 = Date.now();
     for await (const c of p.adapter.stream(chatReq, stop.signal)) {
-      if (c.type === 'loading') note = ': loading model';
+      if (c.type === 'loading') {
+        note = ': loading model';
+        now.set({ state: 'loading the model' });
+      } else if (c.type === 'warm') now.set({ state: 'reading the prompt' });
       else if (c.type === 'token') {
         note = ': working';
+        if (!firstAt) firstAt = Date.now();
+        now.write(c.text);
+        now.set({ tokensPerSec: Math.round((now.set({}).tokens / Math.max(0.2, (Date.now() - firstAt) / 1000)) * 10) / 10 });
         content += c.text;
         send?.({ ...base, choices: [{ index: 0, delta: { content: c.text }, finish_reason: null }] });
       } else if (c.type === 'thinking') {
+        if (!firstAt) firstAt = Date.now();
+        now.write(c.text, true);
         reasoning += c.text;
         send?.({ ...base, choices: [{ index: 0, delta: { reasoning_content: c.text }, finish_reason: null }] });
       } else if (c.type === 'tool_call') {
@@ -216,6 +231,8 @@ export async function callApiModel(
         if (c.name) call.name += c.name;
         if (c.arguments) call.arguments += c.arguments;
         if (c.extra) call.extra = { ...call.extra, ...c.extra };
+        if (!firstAt) firstAt = Date.now();
+        now.set({ state: 'calling a tool', toolCalls: calls.filter(Boolean).map((x) => x.name).filter(Boolean) });
         send?.({
           ...base,
           choices: [
@@ -241,6 +258,15 @@ export async function callApiModel(
         genMs = c.genMs;
       }
     }
+    // What the log shows for this call.
+    const secs = genMs ? genMs / 1000 : firstAt ? (Date.now() - firstAt) / 1000 : 0;
+    noteCall(req, {
+      promptTokens: usage.prompt_tokens || undefined,
+      completionTokens: usage.completion_tokens || undefined,
+      ...(secs > 0 && usage.completion_tokens && { tokensPerSec: Math.round((usage.completion_tokens / secs) * 10) / 10 }),
+      ...(firstAt && { firstTokenMs: firstAt - t0 }),
+      ...(calls.length && { toolCalls: calls.filter(Boolean).map((x) => x.name) }),
+    });
   };
 
   try {
@@ -256,6 +282,7 @@ export async function callApiModel(
     } else await work();
   } catch (err) {
     finished = true;
+    now.finish();
     clearTimeout(timer);
     if (ping) clearInterval(ping);
     const why = stop.signal.aborted && !reply.raw.destroyed ? `${model} was stopped after ${seconds} seconds` : (err as Error).message;
@@ -268,10 +295,12 @@ export async function callApiModel(
     return reply.code(502).send(apiError(why, 'server_error', 'model_failed'));
   }
   finished = true;
+  now.finish();
   clearTimeout(timer);
   if (ping) clearInterval(ping);
   const toolCalls = calls.filter(Boolean);
   const finish = toolCalls.length ? 'tool_calls' : stopped === 'length' ? 'length' : 'stop';
+  noteCall(req, { finish });
   try {
     const cost = callCost(info, model, usage.prompt_tokens, usage.completion_tokens);
     db.prepare('INSERT INTO run_usage (run_id, owner_id, node_id, node_type, provider_id, model, input_tokens, output_tokens, cost, gen_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(

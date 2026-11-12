@@ -2,7 +2,7 @@ import type { ActiveTraining, ActivityRunning } from '@hivemind/shared';
 import type { FastifyInstance } from 'fastify';
 import { db } from '../db/index.js';
 import { activeRuns, isFullAdmin } from '../events/runs.js';
-import { apiCalls } from '../services/activity.js';
+import { apiCalls, liveCalls } from '../services/activity.js';
 import { requireUser } from './auth.js';
 
 /** Training states that hold (or are about to take) the GPU. */
@@ -24,7 +24,7 @@ export function activityRoutes(app: FastifyInstance) {
         )
         .all(...TRAINING_NOW, ...(all ? [] : [user.id])) as { id: string; name: string; base: string; state: string; started_at: string; username: string }[]
     ).map((t): ActiveTraining => ({ id: t.id, name: t.name, base: t.base, state: t.state, owner: t.username, startedAt: t.started_at }));
-    return { runs: activeRuns(user), training };
+    return { runs: activeRuns(user), training, apiCalls: liveCalls(all ? undefined : user.id) };
   });
 
   /** ?limit=200 (at most 1000), ?token=<name>, ?failed=1. */

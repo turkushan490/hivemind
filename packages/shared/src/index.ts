@@ -889,6 +889,25 @@ export interface ActiveTraining {
 export interface ActivityRunning {
   runs: ActiveRun[];
   training: ActiveTraining[];
+  /** /v1 calls straight to a model (coding agents like T3 Code) that are going on now. */
+  apiCalls?: LiveApiCall[];
+}
+
+/** One /v1 model call going on now: what it is doing, how far it is, how fast. */
+export interface LiveApiCall {
+  id: number;
+  token: string;
+  user?: string;
+  model: string;
+  startedAt: number;
+  state: 'waiting for the GPU' | 'loading the model' | 'reading the prompt' | 'thinking' | 'writing' | 'calling a tool';
+  promptTokens?: number;
+  tokens: number;
+  tokensPerSec?: number;
+  /** The last ~300 characters it wrote (or thought). */
+  text: string;
+  toolCalls: string[];
+  tools: number;
 }
 
 /** GET /api/activity/calls: one API request made with a token (kept in memory, the last 1,000). */
@@ -903,6 +922,16 @@ export interface ApiCall {
   ms: number;
   runId?: string;
   canvasName?: string;
+  /** /v1: the model (or canvas) it asked for, and what came back. */
+  model?: string;
+  promptTokens?: number;
+  completionTokens?: number;
+  tokensPerSec?: number;
+  firstTokenMs?: number;
+  toolCalls?: string[];
+  finish?: string;
+  /** A failed call: why (the error it got). */
+  error?: string;
 }
 
 // ---- Templates ----

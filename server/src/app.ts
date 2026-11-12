@@ -28,7 +28,7 @@ import { voiceRoutes } from './api/voice.js';
 import { config } from './config.js';
 import { logError } from './errors.js';
 import { FEATURES } from './features.js';
-import { logApiCall } from './services/activity.js';
+import { captureError, logApiCall } from './services/activity.js';
 import { claimExistingFiles } from './services/files.js';
 
 /** The whole web app without listening: main.ts starts it, tests inject requests into it. */
@@ -39,6 +39,7 @@ export async function buildApp(opts: { logger?: boolean; web?: boolean; onRoute?
 
   if (opts.onRoute) app.addHook('onRoute', opts.onRoute);
   // Activity → Incoming API calls: every request with an API token, route pattern and status only.
+  app.addHook('onSend', captureError);
   app.addHook('onResponse', logApiCall);
   await app.register(cookie);
 

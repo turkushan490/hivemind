@@ -130,3 +130,20 @@ describe('Gemini thought signatures', () => {
     expect(out[1].tool_calls[0].extra_content.google.thought_signature).toBe('skip_thought_signature_validator');
   });
 });
+
+describe('Activity: what an API call did', () => {
+  it('logs the model, token counts and tool calls of a /v1 call, and why a call was refused', async () => {
+    fakeCloud();
+    try {
+      await app.inject({ method: 'POST', url: '/v1/chat/completions', headers: bearer(), payload: ASK });
+      await app.inject({ method: 'POST', url: '/v1/chat/completions', headers: bearer('u2'), payload: ASK });
+      const calls = (await app.inject({ method: 'GET', url: '/api/activity/calls', headers: bearer() })).json() as { model?: string; completionTokens?: number; toolCalls?: string[]; status: number; error?: string }[];
+      const ok = calls.find((c) => c.status === 200 && c.model === 'cloud/coder-1');
+      expect(ok).toMatchObject({ completionTokens: 12, toolCalls: ['write_file'] });
+      const refused = calls.find((c) => c.status === 403);
+      expect(refused?.error).toMatch(/Single models are off/);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+});

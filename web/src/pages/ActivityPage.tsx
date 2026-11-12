@@ -71,7 +71,29 @@ export function ActivityPage({ active, isAdmin, onOpenLab, onFollow }: { active:
       <section className="space-y-2">
         <h2 className="font-semibold">Running now</h2>
         {!now && <p className="text-sm text-slate-400">Loading…</p>}
-        {now && now.runs.length === 0 && now.training.length === 0 && <p className="text-sm text-slate-400">Nothing is running.</p>}
+        {now && now.runs.length === 0 && now.training.length === 0 && !now.apiCalls?.length && <p className="text-sm text-slate-400">Nothing is running.</p>}
+        {now?.apiCalls?.map((c) => (
+          <div key={`api-${c.id}`} className="card space-y-1">
+            <div className="flex flex-wrap items-center gap-2 text-sm">
+              <span className="font-medium">{c.model}</span>
+              <span className="rounded bg-[#21262d] px-1.5 text-xs text-slate-300">API: {c.token}</span>
+              <span className="text-xs text-slate-500">{since(c.startedAt)}</span>
+              <span className={`text-xs ${c.state === 'writing' || c.state === 'calling a tool' ? 'text-emerald-300' : 'text-amber-300'}`}>{c.state}</span>
+            </div>
+            <div className="text-xs text-slate-400">
+              {[
+                c.promptTokens && `prompt ~${c.promptTokens.toLocaleString()} tokens`,
+                c.tools && `${c.tools} tools offered`,
+                c.tokens > 0 && `${c.tokens.toLocaleString()} written`,
+                c.tokensPerSec && `${c.tokensPerSec} tok/s`,
+                c.toolCalls.length > 0 && `calls ${c.toolCalls.join(', ')}`,
+              ]
+                .filter(Boolean)
+                .join(' · ')}
+            </div>
+            {c.text && <pre className="max-h-24 overflow-auto text-xs whitespace-pre-wrap text-slate-300">{c.text}</pre>}
+          </div>
+        ))}
         {now?.runs.map((r) => (
           <div key={r.runId} className="card space-y-2">
             <div className="flex flex-wrap items-center gap-2 text-sm">
@@ -159,6 +181,7 @@ export function ActivityPage({ active, isAdmin, onOpenLab, onFollow }: { active:
                   <th className="px-2 py-1.5">Status</th>
                   <th className="px-2 py-1.5 text-right">ms</th>
                   <th className="px-2 py-1.5">Workflow</th>
+                  <th className="px-2 py-1.5">Details</th>
                 </tr>
               </thead>
               <tbody>
@@ -182,6 +205,26 @@ export function ActivityPage({ active, isAdmin, onOpenLab, onFollow }: { active:
                             canvas
                           </button>
                         </>
+                      )}
+                    </td>
+                    <td className="max-w-md px-2 py-1">
+                      {c.error ? (
+                        <span className="text-red-300" title={c.error}>
+                          {c.error}
+                        </span>
+                      ) : (
+                        <span className="text-slate-400">
+                          {[
+                            c.model,
+                            c.promptTokens && `${c.promptTokens.toLocaleString()} in`,
+                            c.completionTokens && `${c.completionTokens.toLocaleString()} out`,
+                            c.tokensPerSec && `${c.tokensPerSec} tok/s`,
+                            c.firstTokenMs && `first word ${(c.firstTokenMs / 1000).toFixed(1)} s`,
+                            c.toolCalls?.length && `tools: ${c.toolCalls.join(', ')}`,
+                          ]
+                            .filter(Boolean)
+                            .join(' · ')}
+                        </span>
                       )}
                     </td>
                   </tr>

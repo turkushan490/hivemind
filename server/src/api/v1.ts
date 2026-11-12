@@ -13,6 +13,7 @@ import { allowedModelsOf, gpuFreerFor, resolverFor, trainingFor, usableRow, usab
 import { canvasesFor, runSetup, sourceOf } from './runs.js';
 import { noteRun } from '../services/activity.js';
 import { allowedFor, notAllowed } from '../services/access.js';
+import { noteCall } from '../services/activity.js';
 
 
 /** Bearer API token (or the web session), answered in OpenAI's error format. */
@@ -95,6 +96,7 @@ export function v1Routes(app: FastifyInstance) {
       }
     }
     if (!row) return reply.code(404).send(apiError(`No canvas "${body.model}". GET /v1/models lists yours.`, 'invalid_request_error', 'model_not_found'));
+    noteCall(req, { model: row.name });
     // A canvas from the API always runs as saved (shared ones with their owner's providers).
     const { graph = JSON.parse(row.graph) as CanvasGraph, providerUser } = runSetup(req.user!, row, undefined);
     try {

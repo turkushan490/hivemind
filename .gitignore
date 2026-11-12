@@ -11,3 +11,4 @@ __pycache__/
 docs/HIVEMIND_*.md
 docs/hivemind-*.md
 docs/M17-screens/
+!docs/HIVEMIND_CHANGES.md

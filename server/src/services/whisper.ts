@@ -124,14 +124,24 @@ export async function whisperTranscribe(wav: Buffer, modelId: string, language?:
   const jsonPath = `${base}.json`;
   mkdirSync(dirname(wavPath), { recursive: true });
   const { writeFileSync } = await import('node:fs');
-  writeFileSync(wavPath, wav);
+  // whisper.cpp reads only WAV. The browser sends one, but the robot, Home Assistant and /v1 clients may send webm,
+  // ogg, mp3 or m4a: ffmpeg turns those into a 16 kHz mono WAV first.
+  const isWav = wav.length > 12 && wav.toString('latin1', 0, 4) === 'RIFF' && wav.toString('latin1', 8, 12) === 'WAVE';
+  const inPath = isWav ? wavPath : `${base}.in`;
+  writeFileSync(inPath, wav);
   const args = ['-m', modelFile(modelId), '-f', wavPath, '-oj', '-of', base, '-nt', '-l', language || 'auto'];
   try {
-    await runBin(bin, args, 120_000);
+    if (!isWav) await toWav(inPath, wavPath);
+    const errText = await runBin(bin, args, 120_000);
+    // whisper-cli ends with exit code 0 even when it could not read the audio: then there is no JSON.
+    if (!existsSync(jsonPath)) {
+      const why = errText.split('\n').filter((l) => /^error/i.test(l.trim())).join(' ').trim();
+      throw new Error(`Whisper could not read the recording${why ? `: ${why.slice(0, 300)}` : ''}`);
+    }
     const out = JSON.parse(readFileSync(jsonPath, 'utf8')) as { transcription?: { text?: string }[] };
     return (out.transcription ?? []).map((t) => t.text ?? '').join(' ').replace(/\s+/g, ' ').trim();
   } finally {
-    for (const f of [wavPath, jsonPath]) {
+    for (const f of [wavPath, jsonPath, `${base}.in`]) {
       try {
         rmSync(f, { force: true });
       } catch {}
@@ -139,8 +149,18 @@ export async function whisperTranscribe(wav: Buffer, modelId: string, language?:
   }
 }
 
-/** Runs the binary, failing on a non-zero exit or a timeout. */
-function runBin(bin: string, args: string[], timeoutMs: number): Promise<void> {
+/** Any audio file → 16 kHz mono 16-bit WAV with ffmpeg (in the Docker image; the exe needs ffmpeg on the PATH). */
+async function toWav(src: string, dest: string): Promise<void> {
+  try {
+    await runBin('ffmpeg', ['-loglevel', 'error', '-y', '-i', src, '-vn', '-ac', '1', '-ar', '16000', '-c:a', 'pcm_s16le', dest], 60_000);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') throw new Error('This recording is not a WAV file, and ffmpeg is not installed to convert it — send a 16 kHz WAV');
+    throw new Error(`Could not convert the recording to WAV: ${(err as Error).message.replace(/^whisper /, 'ffmpeg ')}`);
+  }
+}
+
+/** Runs the binary, failing on a non-zero exit or a timeout; returns what it wrote to stderr. */
+function runBin(bin: string, args: string[], timeoutMs: number): Promise<string> {
   return new Promise((resolve_, reject) => {
     const p = spawn(bin, args, { stdio: ['ignore', 'ignore', 'pipe'] });
     let err = '';
@@ -155,7 +175,7 @@ function runBin(bin: string, args: string[], timeoutMs: number): Promise<void> {
     });
     p.on('close', (code) => {
       clearTimeout(timer);
-      if (code === 0) resolve_();
+      if (code === 0) resolve_(err);
       else reject(new Error(`whisper exited with code ${code}${err ? `: ${err.replace(/\s+/g, ' ').slice(-300)}` : ''}`));
     });
   });

@@ -7,7 +7,7 @@ import { dirname, join, resolve } from 'node:path';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { fileURLToPath } from 'node:url';
-import { tmpdir } from 'node:os';
+import { availableParallelism, tmpdir } from 'node:os';
 import { config } from '../config.js';
 import { newId } from '../crypto.js';
 
@@ -124,14 +124,17 @@ export async function whisperTranscribe(wav: Buffer, modelId: string, language?:
   const jsonPath = `${base}.json`;
   mkdirSync(dirname(wavPath), { recursive: true });
   const { writeFileSync } = await import('node:fs');
-  // whisper.cpp reads only WAV. The browser sends one, but the robot, Home Assistant and /v1 clients may send webm,
-  // ogg, mp3 or m4a: ffmpeg turns those into a 16 kHz mono WAV first.
-  const isWav = wav.length > 12 && wav.toString('latin1', 0, 4) === 'RIFF' && wav.toString('latin1', 8, 12) === 'WAVE';
-  const inPath = isWav ? wavPath : `${base}.in`;
+  // whisper.cpp reads only 16 kHz WAV. The browser sends one, but the robot, Home Assistant and /v1 clients may send
+  // webm, ogg, mp3, m4a or a WAV at another rate (Kokoro / cloned voices are 24 kHz): ffmpeg makes those 16 kHz mono.
+  const ready = isWav16k(wav);
+  const inPath = ready ? wavPath : `${base}.in`;
   writeFileSync(inPath, wav);
-  const args = ['-m', modelFile(modelId), '-f', wavPath, '-oj', '-of', base, '-nt', '-l', language || 'auto'];
+  // English-only models (".en") ignore "auto"; all cores (whisper-cli uses 4 by default), at most 16.
+  const lang = modelId.endsWith('.en') ? 'en' : language || 'auto';
+  const threads = String(Math.max(1, Math.min(16, availableParallelism())));
+  const args = ['-m', modelFile(modelId), '-f', wavPath, '-oj', '-of', base, '-nt', '-l', lang, '-t', threads];
   try {
-    if (!isWav) await toWav(inPath, wavPath);
+    if (!ready) await toWav(inPath, wavPath);
     const errText = await runBin(bin, args, 120_000);
     // whisper-cli ends with exit code 0 even when it could not read the audio: then there is no JSON.
     if (!existsSync(jsonPath)) {
@@ -147,6 +150,25 @@ export async function whisperTranscribe(wav: Buffer, modelId: string, language?:
       } catch {}
     }
   }
+}
+
+/** A WAV whisper.cpp can read as is: RIFF/WAVE, PCM 16-bit, mono, 16000 Hz (the fmt chunk is checked). */
+export function isWav16k(b: Buffer): boolean {
+  if (b.length < 44 || b.toString('latin1', 0, 4) !== 'RIFF' || b.toString('latin1', 8, 12) !== 'WAVE') return false;
+  let at = 12;
+  while (at + 8 <= b.length) {
+    const id = b.toString('latin1', at, at + 4);
+    const size = b.readUInt32LE(at + 4);
+    if (id === 'fmt ' && at + 24 <= b.length) {
+      const format = b.readUInt16LE(at + 8);
+      const channels = b.readUInt16LE(at + 10);
+      const rate = b.readUInt32LE(at + 12);
+      const bits = b.readUInt16LE(at + 22);
+      return format === 1 && channels === 1 && rate === 16000 && bits === 16;
+    }
+    at += 8 + size + (size % 2);
+  }
+  return false;
 }
 
 /** Any audio file → 16 kHz mono 16-bit WAV with ffmpeg (in the Docker image; the exe needs ffmpeg on the PATH). */

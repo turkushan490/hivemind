@@ -10,6 +10,13 @@ import { fileURLToPath } from 'node:url';
 import { availableParallelism, tmpdir } from 'node:os';
 import { config } from '../config.js';
 import { newId } from '../crypto.js';
+import { logError } from '../errors.js';
+import { appendLog } from '../logfile.js';
+
+/** Hard limit on one transcription (STT_TIMEOUT_S, default 20 s): longer and the robot is told to say it again (H10). */
+const STT_TIMEOUT_MS = Math.max(5, Number(process.env.STT_TIMEOUT_S) || 20) * 1000;
+/** Seconds of 16 kHz mono 16-bit audio in a WAV, from its byte length (for the timing log). */
+const wavSeconds = (b: Buffer) => Math.max(0, (b.length - 44) / (16000 * 2));
 
 /** One Whisper model the owner can download and use. Sizes are the ggml download size. */
 export interface WhisperModel {
@@ -133,16 +140,37 @@ export async function whisperTranscribe(wav: Buffer, modelId: string, language?:
   const lang = modelId.endsWith('.en') ? 'en' : language || 'auto';
   const threads = String(Math.max(1, Math.min(16, availableParallelism())));
   const args = ['-m', modelFile(modelId), '-f', wavPath, '-oj', '-of', base, '-nt', '-l', lang, '-t', threads];
+  const t0 = Date.now();
+  let convertMs = 0;
   try {
-    if (!ready) await toWav(inPath, wavPath);
-    const errText = await runBin(bin, args, 120_000);
+    if (!ready) {
+      await toWav(inPath, wavPath);
+      convertMs = Date.now() - t0;
+    }
+    const engineStart = Date.now();
+    let errText: string;
+    try {
+      // The hard limit covers conversion already spent, so a slow box still fails within ~STT_TIMEOUT.
+      errText = await runBin(bin, args, Math.max(3000, STT_TIMEOUT_MS - convertMs));
+    } catch (err) {
+      if (/timed out/.test((err as Error).message)) throw new Error(`Speech to text took too long (over ${Math.round(STT_TIMEOUT_MS / 1000)} s) — say it again`);
+      throw err;
+    }
+    const engineMs = Date.now() - engineStart;
     // whisper-cli ends with exit code 0 even when it could not read the audio: then there is no JSON.
     if (!existsSync(jsonPath)) {
       const why = errText.split('\n').filter((l) => /^error/i.test(l.trim())).join(' ').trim();
       throw new Error(`Whisper could not read the recording${why ? `: ${why.slice(0, 300)}` : ''}`);
     }
     const out = JSON.parse(readFileSync(jsonPath, 'utf8')) as { transcription?: { text?: string }[] };
-    return (out.transcription ?? []).map((t) => t.text ?? '').join(' ').replace(/\s+/g, ' ').trim();
+    const text = (out.transcription ?? []).map((t) => t.text ?? '').join(' ').replace(/\s+/g, ' ').trim();
+    // Per-call timing (H10): always to the log file; a Problem when it was slow (> 10 s), so a busy CPU shows up.
+    const totalMs = Date.now() - t0;
+    const audioSec = ready ? wavSeconds(wav) : wavSeconds(readFileSync(wavPath));
+    const line = `STT ${modelId}: ${audioSec.toFixed(1)}s audio, ${text.length} letters, convert ${convertMs}ms, engine ${engineMs}ms, total ${totalMs}ms (cpu, ${threads} threads)`;
+    appendLog('voice', line);
+    if (totalMs > 10_000) logError({ source: 'voice', message: `Speech to text was slow: ${(totalMs / 1000).toFixed(1)} s`, detail: `${line}. A busy CPU (Unmanic/HandBrake/T3 Code/training) or a big model slows it down; a smaller model (small.en) is faster.` });
+    return text;
   } finally {
     for (const f of [wavPath, jsonPath, `${base}.in`]) {
       try {

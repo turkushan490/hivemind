@@ -5,6 +5,7 @@ import { liveRunCount, runEnded, startRun } from '../events/runs.js';
 import { logError } from '../errors.js';
 import { appendLog } from '../logfile.js';
 import * as memFiles from './memoryFiles.js';
+import { memoryFor } from './memory.js';
 import type { User } from '../api/auth.js';
 
 export interface NightWorkSettings {
@@ -52,10 +53,10 @@ const gpuBusy = () => liveRunCount() > 0;
 function writeFixList(ownerId: string): string {
   const problems = db.prepare("SELECT at, source, message FROM error_log WHERE at > datetime('now','-1 day') ORDER BY id DESC LIMIT 100").all() as { at: string; source: string; message: string }[];
   const failed = db.prepare("SELECT started_at, question, final FROM runs WHERE status = 'error' AND started_at > datetime('now','-1 day') ORDER BY started_at DESC LIMIT 50").all() as { started_at: string; question: string }[];
+  // The robot's daily log digest (it writes it to the memory key "hivebot-log-digest").
   let digest = '';
   try {
-    const mem = memFiles.read(ownerId, ['characters/jarvis/log-digest.md']);
-    digest = mem[0]?.content ?? '';
+    digest = memoryFor(ownerId).recall('hivebot-log-digest', 3).map((m) => `- ${m.text}`).join('\n');
   } catch {}
   const lines = [
     `# Fix next update`,

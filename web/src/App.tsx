@@ -125,11 +125,17 @@ export function App() {
         <header className="mb-3 flex flex-wrap items-center gap-2 sm:mb-4 sm:gap-3">
           <img src="/icon.svg" className="h-7 w-7 sm:h-8 sm:w-8" alt="" />
           <h1 className="text-lg font-semibold sm:text-xl">HiveMind</h1>
-          {build && (
-            <span className="rounded bg-amber-500/15 px-1.5 py-0.5 text-xs font-medium text-amber-300" title={`Commit ${build.version.slice(0, 7)}`}>
-              Beta · v{build.release}
-            </span>
-          )}
+          {build &&
+            // A clean release (e.g. 1.0.0) shows just its version; a rolling build (1.0.0-dev.N) is marked "Beta".
+            (build.release.includes('-') || build.release === 'dev' ? (
+              <span className="rounded bg-amber-500/15 px-1.5 py-0.5 text-xs font-medium text-amber-300" title={`Commit ${build.version.slice(0, 7)}`}>
+                Beta · v{build.release}
+              </span>
+            ) : (
+              <span className="rounded bg-emerald-500/15 px-1.5 py-0.5 text-xs font-medium text-emerald-300" title={`Commit ${build.version.slice(0, 7)}`}>
+                v{build.release}
+              </span>
+            ))}
           {!phone && (
             <nav className="ml-2 flex min-w-0 flex-1 gap-0.5 overflow-x-auto [scrollbar-width:none] 2xl:ml-4 2xl:gap-1">
               {(Object.keys(TABS) as Tab[]).filter(allowed).map((t) => (

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { api } from '../api';
 import { toast } from '../notify';
 
@@ -109,17 +109,7 @@ export function MemoryPage({ active }: { active: boolean }) {
           ) : files.length === 0 ? (
             <p className="p-2 text-sm text-slate-500">No memory files yet.</p>
           ) : (
-            files.map((f) => (
-              <button
-                key={f.path}
-                className={`block w-full rounded px-2 py-1 text-left hover:bg-[#21262d] ${sel === f.path ? 'bg-[#21262d]' : ''}`}
-                title={f.by ? `changed by ${f.by}` : undefined}
-                onClick={() => open(f.path)}
-              >
-                <div className="truncate text-sm">{f.path}</div>
-                {f.title && <div className="truncate text-xs text-slate-500">{f.title}</div>}
-              </button>
-            ))
+            <FolderTree files={files} sel={sel} onOpen={open} />
           )}
         </div>
 
@@ -156,4 +146,93 @@ export function MemoryPage({ active }: { active: boolean }) {
       </div>
     </div>
   );
+}
+
+interface TreeNode {
+  name: string;
+  full: string;
+  file?: MemFile;
+  dirs: Map<string, TreeNode>;
+}
+
+/** Build a nested folder tree from flat paths like "topics/food/potatoes.md". */
+function buildTree(files: MemFile[]): TreeNode {
+  const root: TreeNode = { name: '', full: '', dirs: new Map() };
+  for (const f of files) {
+    const parts = f.path.split('/');
+    let cur = root;
+    parts.forEach((p, i) => {
+      let child = cur.dirs.get(p);
+      if (!child) {
+        child = { name: p, full: parts.slice(0, i + 1).join('/'), dirs: new Map() };
+        cur.dirs.set(p, child);
+      }
+      if (i === parts.length - 1) child.file = f;
+      cur = child;
+    });
+  }
+  return root;
+}
+
+/** Folders first, then files, each alphabetical. */
+function sortedChildren(n: TreeNode): TreeNode[] {
+  return [...n.dirs.values()].sort((a, b) => {
+    const af = a.dirs.size > 0;
+    const bf = b.dirs.size > 0;
+    if (af !== bf) return af ? -1 : 1;
+    return a.name.localeCompare(b.name);
+  });
+}
+
+/** The memory files as a tree of folders you can open and close, files shown by their short name. */
+function FolderTree({ files, sel, onOpen }: { files: MemFile[]; sel?: string; onOpen: (p: string) => void }) {
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  const toggle = (p: string) =>
+    setCollapsed((c) => {
+      const n = new Set(c);
+      if (n.has(p)) n.delete(p);
+      else n.add(p);
+      return n;
+    });
+  const root = buildTree(files);
+  const render = (node: TreeNode, depth: number): ReactNode[] =>
+    sortedChildren(node).flatMap((child): ReactNode[] => {
+      const pad = { paddingLeft: `${depth * 14 + 6}px` };
+      if (child.dirs.size > 0) {
+        const open = !collapsed.has(child.full);
+        const count = countFiles(child);
+        return [
+          <button key={`d:${child.full}`} style={pad} className="flex w-full items-center gap-1 rounded px-1 py-1 text-left text-sm hover:bg-[#21262d]" onClick={() => toggle(child.full)}>
+            <span className="w-3 text-xs text-slate-500">{open ? '▾' : '▸'}</span>
+            <span className="truncate font-medium text-slate-200">{child.name}</span>
+            <span className="ml-1 text-xs text-slate-600">{count}</span>
+          </button>,
+          ...(open ? render(child, depth + 1) : []),
+        ];
+      }
+      const f = child.file!;
+      return [
+        <button
+          key={`f:${child.full}`}
+          style={pad}
+          title={f.by ? `changed by ${f.by}` : undefined}
+          className={`block w-full rounded px-1 py-1 text-left hover:bg-[#21262d] ${sel === f.path ? 'bg-[#21262d]' : ''}`}
+          onClick={() => onOpen(f.path)}
+        >
+          <div className="flex items-center gap-1 text-sm">
+            <span className="w-3" />
+            <span className="truncate">{child.name.replace(/\.md$/, '')}</span>
+          </div>
+          {f.title && <div className="truncate pl-4 text-xs text-slate-500">{f.title}</div>}
+        </button>,
+      ];
+    });
+  return <>{render(root, 0)}</>;
+}
+
+/** How many files sit under a folder (for the little count badge). */
+function countFiles(n: TreeNode): number {
+  let c = n.file ? 1 : 0;
+  for (const d of n.dirs.values()) c += countFiles(d);
+  return c;
 }

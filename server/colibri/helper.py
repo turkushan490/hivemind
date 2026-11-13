@@ -71,6 +71,23 @@ def cmd_download(model_id, models_dir):
     out({"type": "result", "dir": folder})
 
 
+def missing_parts(paths):
+    """Split GGUFs are named <name>-00001-of-00006.gguf: the parts of each set that are not in this list."""
+    import re
+
+    sets = {}
+    for p in paths:
+        m = re.match(r"^(.*)-(\d{5})-of-(\d{5})\.gguf$", p)
+        if m:
+            sets.setdefault((m.group(1), m.group(3)), set()).add(int(m.group(2)))
+    missing = []
+    for (stem, total), have in sets.items():
+        for n in range(1, int(total) + 1):
+            if n not in have:
+                missing.append(f"{stem}-{n:05d}-of-{total}.gguf")
+    return missing
+
+
 def cmd_gguf(repo, pattern, models_dir, name):
     token = setup_download.hf_token()
     src = os.path.join(models_dir, ".gguf", name)
@@ -80,12 +97,26 @@ def cmd_gguf(repo, pattern, models_dir, name):
     files = [f for f in files if f["path"].endswith(".gguf")]
     if not files:
         raise setup_download.DownloadError(f"{repo}: no .gguf file matches {pattern}")
+    # A split model needs every part; some repos are missing one (an upload that broke off). Say so before
+    # downloading tens of GB that can never be imported.
+    gone = missing_parts([f["path"] for f in files])
+    if gone:
+        raise RuntimeError(
+            f"{repo} is missing part of this model on Hugging Face ({', '.join(os.path.basename(g) for g in gone[:3])}"
+            f"{' …' if len(gone) > 3 else ''}), so it can't be imported. Pick another quant or repository, or try again once the uploader adds it."
+        )
     setup_download.download_repo(repo, "main", src, files, token=token, progress=progress_printer(name))
     first = sorted(f["path"] for f in files)[0]
     out({"type": "progress", "label": "Importing (coli import)", "done": 0, "total": 0, "file": first})
-    rc = subprocess.call([sys.executable, os.path.join(COLI_DIR, "coli"), "import", os.path.join(src, first), "--out", target], stdout=sys.stderr)
-    if rc:
-        raise RuntimeError(f"coli import failed (exit code {rc})")
+    p = subprocess.run([sys.executable, os.path.join(COLI_DIR, "coli"), "import", os.path.join(src, first), "--out", target], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    sys.stderr.write(p.stdout or "")
+    if p.returncode:
+        # coli's own words (its last lines, without the banner), not just the exit code.
+        banner = ("colibri v", "tiny engine", "model families", "─")
+        lines = [l.strip() for l in (p.stdout or "").splitlines()]
+        lines = [l for l in lines if l and l != "import" and not any(b in l for b in banner) and not l.startswith(("(\\", ")·>", "/ \\"))]
+        why = " ".join(lines[-2:])[:400]
+        raise RuntimeError(f"coli import failed: {why}" if why else f"coli import failed (exit code {p.returncode})")
     out({"type": "result", "dir": target})
 
 

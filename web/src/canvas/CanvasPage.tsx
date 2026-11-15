@@ -48,7 +48,7 @@ const edgeTypes = { hive: HiveEdge };
 const ACTIVE = new Set(['loading', 'thinking', 'streaming']);
 const DRAFT_KEY = 'hm.canvas.draft';
 
-const toFlow = (g: CanvasGraph): { nodes: HiveFlowNode[]; edges: Edge[] } => ({
+export const toFlow = (g: CanvasGraph): { nodes: HiveFlowNode[]; edges: Edge[] } => ({
   nodes: g.nodes.map((n) => ({ id: n.id, type: 'hive', position: n.position, data: { kind: n.type, label: n.label, config: n.config } })),
   edges: g.edges.map((e) => ({ id: e.id, source: e.source, target: e.target, type: 'hive' })),
 });

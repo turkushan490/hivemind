@@ -1165,6 +1165,17 @@ which project it works on, and can make a new one.
 
 ---
 
+## Active workflows
+
+- New tab **Active workflows**: every workflow running right now, each live on its own small canvas, newest on top.
+  It checks every 2 seconds; a run that starts while the page is open appears at the top by itself (with a short
+  highlight) and pushes the others down. Finished runs stay below, dimmed with their result, until "Clear finished"
+  (at most 12 cards; running ones always stay).
+- Look only: blocks can't be moved, wired, selected or deleted; the view can be panned and zoomed. Click a block to
+  read what it writes (thinking, text, errors) live; without a click the panel follows the block that is working, and
+  shows the final answer at the end.
+- `useRun(onProblem, quiet)`: quiet = no toasts, for a page that watches many runs.
+
 ## The DungeonMind canvases (installed by DungeonMind, documented here)
 
 DungeonMind keeps the JSON in its repo under `hivemind/*.canvas.json` and installs it with `PUT /api/canvases/<id>`. The user picks the models per node in HiveMind afterwards. The defaults come from the Lab scoreboard (Part 2).

@@ -147,7 +147,8 @@ export interface RunFinal {
  * Starts runs and follows their live event stream: per-node views, errors, the final answer,
  * and reconnecting after a dropped connection (the server replays the run, so state is rebuilt).
  */
-export function useRun(onProblem?: () => void) {
+/** quiet: no toasts for errors (a page that watches many runs at once). */
+export function useRun(onProblem?: () => void, quiet = false) {
   const [runId, setRunId] = useState('');
   const [views, setViews] = useState<Record<string, NodeView>>({});
   const [final, setFinal] = useState<RunFinal | null>(null);
@@ -200,7 +201,7 @@ export function useRun(onProblem?: () => void) {
         setViews({});
         setErrors([]);
         setPaused([]);
-        toast('Reconnected to the server', 'ok');
+        if (!quiet) toast('Reconnected to the server', 'ok');
       }
       lost = false;
       setConnLost(false);
@@ -219,7 +220,7 @@ export function useRun(onProblem?: () => void) {
       if (ev.type === 'error' && ev.error !== 'Cancelled' && ev.error !== 'All inputs failed') {
         const msg = `${label(ev.nodeId)} failed: ${ev.error}`;
         setErrors((e) => (e.includes(msg) ? e : [...e, msg]));
-        if (!lost) {
+        if (!lost && !quiet) {
           toast(msg);
           onProblem?.();
         }
@@ -242,7 +243,7 @@ export function useRun(onProblem?: () => void) {
       es.close();
       setConnLost(false);
       setFinal({ status: 'error' });
-      toast(`Can't follow this run: ${(JSON.parse(data) as { error?: string }).error ?? 'not found'}`);
+      if (!quiet) toast(`Can't follow this run: ${(JSON.parse(data) as { error?: string }).error ?? 'not found'}`);
     });
   };
 

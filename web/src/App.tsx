@@ -4,6 +4,7 @@ import { MemoryButton } from './components/MemoryButton';
 import { Toasts } from './components/Toasts';
 import { CanvasPage, type FollowRequest } from './canvas/CanvasPage';
 import { ActivityPage } from './pages/ActivityPage';
+import { ActiveWorkflowsPage } from './pages/ActiveWorkflows';
 import { FilesPage } from './pages/FilesPage';
 import { Login } from './pages/Login';
 import { Problems } from './pages/Problems';
@@ -24,7 +25,7 @@ interface Me {
   role: 'admin' | 'user' | 'viewer';
 }
 
-const TABS = { use: 'Use', canvas: 'Workflow', projects: 'Projects', files: 'Files', memory: 'Memory', run: 'Quick council', stats: 'Stats', lab: 'Lab', activity: 'Activity', settings: 'Settings', problems: 'Problems' } as const;
+const TABS = { use: 'Use', canvas: 'Workflow', active: 'Active workflows', projects: 'Projects', files: 'Files', memory: 'Memory', run: 'Quick council', stats: 'Stats', lab: 'Lab', activity: 'Activity', settings: 'Settings', problems: 'Problems' } as const;
 type Tab = keyof typeof TABS;
 /** Viewers only use canvases. */
 const VIEWER_TABS: Tab[] = ['use', 'activity', 'settings', 'problems'];
@@ -203,6 +204,11 @@ export function App() {
         {opened.has('lab') && (
           <div hidden={tab !== 'lab'}>
             <LabPage active={tab === 'lab'} />
+          </div>
+        )}
+        {opened.has('active') && (
+          <div hidden={tab !== 'active'}>
+            <ActiveWorkflowsPage active={tab === 'active'} />
           </div>
         )}
         {opened.has('activity') && (

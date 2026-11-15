@@ -1,8 +1,9 @@
 import type { ActiveRun, ActivityRunning } from '@hivemind/shared';
-import { Background, BackgroundVariant, Controls, ReactFlow, ReactFlowProvider, type Edge } from '@xyflow/react';
+import { Background, BackgroundVariant, Controls, ReactFlow, ReactFlowProvider, useReactFlow, type Edge } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../api';
+import { useStored } from '../stored';
 import { toFlow } from '../canvas/CanvasPage';
 import { HiveEdge } from '../canvas/HiveEdge';
 import { HiveNode, RunViews, type HiveFlowNode } from '../canvas/HiveNode';
@@ -129,6 +130,9 @@ function RunCard({ card }: { card: Card }) {
   const [flow, setFlow] = useState<{ nodes: HiveFlowNode[]; edges: Edge[] } | null>(null);
   const [picked, setPicked] = useState<string | undefined>();
   const textBox = useRef<HTMLDivElement>(null);
+  const rf = useReactFlow();
+  const [follow, setFollow] = useStored('active.follow', true);
+  const followed = useRef('');
 
   useEffect(() => {
     run.follow(card.runId, (g) => setFlow(toFlow(g)));
@@ -139,8 +143,8 @@ function RunCard({ card }: { card: Card }) {
   // Without a click, the panel follows the block that is working now (else the last one that wrote something).
   const workingId = useMemo(() => {
     const ids = Object.keys(run.views);
-    return ids.find((id) => LIVE.has(run.views[id].state)) ?? [...ids].reverse().find((id) => run.views[id].text);
-  }, [run.views]);
+    return ids.find((id) => LIVE.has(run.views[id].state)) ?? run.paused[0]?.nodeId ?? [...ids].reverse().find((id) => run.views[id].text);
+  }, [run.views, run.paused]);
   const shownId = picked ?? workingId;
   const shown = shownId ? run.views[shownId] : undefined;
   const shownNode = flow?.nodes.find((n) => n.id === shownId);
@@ -151,6 +155,35 @@ function RunCard({ card }: { card: Card }) {
     const el = textBox.current;
     if (el && el.scrollHeight - el.scrollTop - el.clientHeight < 80) el.scrollTop = el.scrollHeight;
   }, [shown?.text, shown?.thinking, run.final?.text]);
+
+  // The camera follows the block that is working (like the Workflow page), and shows the whole run at the end.
+  // Big workflows: the first view fits once the blocks have their real size.
+  useEffect(() => {
+    if (!flow) return;
+    const t = setTimeout(() => {
+      // Followed before the blocks were measured: center on that block again, now with its real size.
+      const id = followed.current;
+      const node = id && id !== 'all' ? rf.getNode(id) : undefined;
+      if (node) rf.setCenter(node.position.x + (node.measured?.width ?? 256) / 2, node.position.y + (node.measured?.height ?? 160) / 2, { zoom: 1.1 });
+      else rf.fitView({ padding: 0.12 });
+    }, 150);
+    return () => clearTimeout(t);
+  }, [flow, rf]);
+  useEffect(() => {
+    if (!flow || !follow) return;
+    const target = picked ?? Object.entries(run.views).find(([, v]) => LIVE.has(v.state))?.[0] ?? run.paused[0]?.nodeId;
+    if (target && target !== followed.current) {
+      const node = rf.getNode(target);
+      if (!node) return;
+      followed.current = target;
+      const w = node.measured?.width ?? 256;
+      const h = node.measured?.height ?? 160;
+      rf.setCenter(node.position.x + w / 2, node.position.y + h / 2, { zoom: 1.1, duration: 800 });
+    } else if (!target && done && followed.current !== 'all') {
+      followed.current = 'all';
+      rf.fitView({ padding: 0.12, duration: 800 });
+    }
+  }, [run.views, run.paused, picked, done, follow, flow, rf]);
 
   const nodes = useMemo(() => flow?.nodes.map((n) => ({ ...n, selected: n.id === shownId })) ?? [], [flow, shownId]);
 
@@ -168,13 +201,16 @@ function RunCard({ card }: { card: Card }) {
         <span className="rounded bg-[#21262d] px-1.5 text-xs text-slate-300">{card.source}</span>
         {!card.mine && <span className="text-xs text-slate-500">by {card.owner}</span>}
         <span className={`text-xs ${done ? 'text-slate-400' : 'text-emerald-300'}`}>{status}</span>
+        <label className="flex items-center gap-1 text-xs text-slate-400" title="The view moves to the block that is working">
+          <input type="checkbox" checked={follow} onChange={(e) => setFollow(e.target.checked)} /> Follow
+        </label>
         <span className="ml-auto text-xs text-slate-500">
           {done ? `took ${since(card.startedAt, card.finishedAt)}` : `running ${since(card.startedAt)}`} · started {new Date(card.startedAt).toLocaleTimeString()}
         </span>
       </div>
       {card.question && <p className="truncate text-xs text-slate-400" title={card.question}>Question: {card.question}</p>}
-      <div className="grid gap-2 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
-        <div className="h-72 overflow-hidden rounded-lg border border-[#30363d] bg-[#0d1117]">
+      <div className="grid gap-2 lg:grid-cols-[minmax(0,7fr)_minmax(0,3fr)]">
+        <div className="h-[calc(100dvh-260px)] min-h-[380px] overflow-hidden rounded-lg border border-[#30363d] bg-[#0d1117]">
           {flow ? (
             <Clock.Provider value={Date.now}>
               <RunViews.Provider value={run.views}>
@@ -184,8 +220,7 @@ function RunCard({ card }: { card: Card }) {
                   nodeTypes={nodeTypes}
                   edgeTypes={edgeTypes}
                   colorMode="dark"
-                  fitView
-                  fitViewOptions={{ padding: 0.15 }}
+                  minZoom={0.05}
                   nodesDraggable={false}
                   nodesConnectable={false}
                   nodesFocusable={false}
@@ -207,7 +242,7 @@ function RunCard({ card }: { card: Card }) {
             <div className="p-3 text-xs text-slate-500">Connecting…</div>
           )}
         </div>
-        <div className="flex h-72 flex-col rounded-lg border border-[#30363d] bg-[#0d1117]">
+        <div className="flex h-[calc(100dvh-260px)] min-h-[380px] flex-col rounded-lg border border-[#30363d] bg-[#0d1117] max-lg:h-72 max-lg:min-h-0">
           <div className="flex items-center gap-2 border-b border-[#30363d] px-3 py-1.5 text-xs">
             <span className="font-semibold text-slate-300">{run.final?.text && !picked ? 'Final answer' : shownNode ? shownNode.data.label || shownNode.data.config.model?.model || shownNode.data.kind : 'Waiting for the first block'}</span>
             {shown && !(run.final?.text && !picked) && <span className={STATE_TEXT[shown.state]}>{shown.state}</span>}

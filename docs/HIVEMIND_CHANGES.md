@@ -1175,6 +1175,8 @@ which project it works on, and can make a new one.
   read what it writes (thinking, text, errors) live; without a click the panel follows the block that is working, and
   shows the final answer at the end.
 - `useRun(onProblem, quiet)`: quiet = no toasts, for a page that watches many runs.
+- Each card follows its run like the Workflow page ("Follow", on by default): the camera moves to the block that is
+  working or waiting for you, and shows the whole run when it ends. The canvas fills the screen height.
 
 ## The DungeonMind canvases (installed by DungeonMind, documented here)
 

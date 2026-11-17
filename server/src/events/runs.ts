@@ -1,4 +1,5 @@
 import type { ActiveBlock, ActiveRun, CanvasGraph, PauseAction, PauseInfo, ResumeRequest, RunEvent, RunStatus } from '@hivemind/shared';
+import * as ws from '../services/workspaces.js';
 import { config } from '../config.js';
 import { newId } from '../crypto.js';
 import { db } from '../db/index.js';
@@ -317,6 +318,50 @@ export function startRun(opts: {
                   const { runShell } = await import('../services/sandbox.js');
                   // Without a project each run gets its own folder.
                   return runShell({ ...o, key: o.project ? o.key : `${id}-${o.key}` });
+                },
+              },
+              workspaces: {
+                list: (character: string) => ws.listWorkspace(opts.ownerId, character),
+                save: (character: string, o: { id: string; name?: string; graphText: string; ttlDays?: number; create: boolean }) => {
+                  let graph: CanvasGraph;
+                  try {
+                    graph = ws.graphFrom(o.graphText);
+                  } catch (e) {
+                    return { ok: false as const, problems: [(e as Error).message] };
+                  }
+                  return ws.saveWorkspace(opts.ownerId, character, { id: o.id, name: o.name, graph, ttlDays: o.ttlDays, create: o.create });
+                },
+                remove: (character: string, cid: string) => ws.deleteWorkspace(opts.ownerId, character, cid),
+                // Runs it like the robot would (same owner and token), waits for the answer up to timeoutSec.
+                run: async (character: string, cid: string, question: string, o: { timeoutSec: number; signal?: AbortSignal }) => {
+                  const clean = ws.checkId(character, cid);
+                  const row = db.prepare('SELECT graph, name FROM canvases WHERE id = ? AND owner_id = ?').get(clean, opts.ownerId) as { graph: string; name: string } | undefined;
+                  if (!row) return `There is no ${clean}`;
+                  const sub = startRun({
+                    ownerId: opts.ownerId,
+                    user: opts.user,
+                    canvasId: clean,
+                    graph: JSON.parse(row.graph) as CanvasGraph,
+                    question,
+                    vars: { ...(opts.vars ?? {}), character },
+                    resolve: opts.resolve,
+                    freeGpu: opts.freeGpu,
+                    source: `Workflow: ${canvasName ?? source}`,
+                    priority,
+                  });
+                  const stop = () => cancelRun(sub, opts.user ?? opts.ownerId, 'The workflow that started it stopped');
+                  o.signal?.addEventListener('abort', stop, { once: true });
+                  try {
+                    const ended = await runEnded(sub, Math.min(3600, Math.max(10, o.timeoutSec)) * 1000);
+                    if (!ended) return `${row.name} is still running (run ${sub}); its answer comes later in Activity`;
+                    // The answer: the live run's run_done event, else the stored run.
+                    const snap = runSnapshot(sub, opts.ownerId);
+                    const done = snap?.events.find((e) => e.type === 'run_done');
+                    const final = done?.final ?? snap?.final;
+                    return final ? `${row.name} answered:\n${final}` : `${row.name} finished without an answer (${done?.status ?? snap?.status ?? 'unknown'})`;
+                  } finally {
+                    o.signal?.removeEventListener('abort', stop);
+                  }
                 },
               },
               browser: {

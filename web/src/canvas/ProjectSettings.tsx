@@ -115,6 +115,15 @@ export function ProjectBlockSettings(p: Props) {
               ))}
             </select>
           </label>
+          {c.gitAction === 'create' && (
+            <div className="space-y-1">
+              <input className="input text-xs" placeholder="Repo name (empty: from the project name)" value={c.repoName ?? ''} onChange={(e) => p.onChange({ repoName: e.target.value || undefined })} />
+              <label className="flex items-center gap-2 text-xs text-slate-300">
+                <input type="checkbox" checked={!!c.repoPublic} onChange={(e) => p.onChange({ repoPublic: e.target.checked || undefined })} />
+                Public (else private; a Pause before this block answered “public” also makes it public)
+              </label>
+            </div>
+          )}
           {c.gitAction !== 'pull' && c.gitAction !== 'push' && (
             <label className="block space-y-1">
               <Label>{c.gitAction === 'pr' ? 'Pull request title' : 'Commit message'}</Label>

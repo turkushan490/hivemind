@@ -136,6 +136,15 @@ export const NODE_META: Record<NodeType, NodeMeta> = {
     hasInput: true,
     hasOutput: true,
   },
+  workflow: {
+    title: 'Workflow (make/run)',
+    color: '#38bdf8',
+    group: 'Logic',
+    description: "A HiveBot character makes, changes, runs or deletes its own workflows (only in its own workspace folder).",
+    usesModel: false,
+    hasInput: true,
+    hasOutput: true,
+  },
   browser: {
     title: 'Browser',
     color: '#a3e635',
@@ -422,7 +431,7 @@ export const NODE_META: Record<NodeType, NodeMeta> = {
 
 export const PALETTE: { group: NodeGroup; types: NodeType[] }[] = [
   { group: 'Core', types: ['input', 'llm', 'review', 'judge', 'output'] },
-  { group: 'Logic', types: ['router', 'condition', 'decide', 'debate', 'vote', 'panel', 'pause', 'foreach', 'collect'] },
+  { group: 'Logic', types: ['router', 'condition', 'workflow', 'decide', 'debate', 'vote', 'panel', 'pause', 'foreach', 'collect'] },
   { group: 'Data', types: ['template', 'file', 'search', 'deepSearch', 'memory'] },
   { group: 'Create', types: ['image', 'save'] },
   { group: 'Action', types: ['homeassistant', 'webhook', 'discord'] },
@@ -530,6 +539,7 @@ export const GIT_ACTIONS: Record<NonNullable<import('@hivemind/shared').NodeConf
   push: 'push',
   pull: 'pull',
   pr: 'pull request',
+  create: 'make the GitHub repo + push',
 };
 
 /** The project a block works on, as shown on the canvas: its own setting, or the run's vars.project. */

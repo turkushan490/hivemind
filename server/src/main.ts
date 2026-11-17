@@ -103,4 +103,6 @@ startScheduler(runScheduled);
 
 // Night work on Tower (H13): check every 15 minutes whether it is the quiet-hours window and the GPU is free.
 const { nightTick } = await import('./services/nightWork.js');
+// HiveBot workspace workflows (H20): unused ones are deleted after their ttlDays, checked every hour.
+(await import('./services/workspaces.js')).startWorkspaceSweeper();
 setInterval(() => void nightTick(), 15 * 60_000).unref();

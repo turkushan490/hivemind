@@ -654,6 +654,42 @@ function KindSettings(p: Props) {
           </p>
         </div>
       );
+    case 'workflow':
+      return (
+        <div className="space-y-2">
+          <div className="flex flex-wrap gap-1">
+            {(['list', 'create', 'update', 'run', 'delete'] as const).map((m) => (
+              <button
+                key={m}
+                className={`rounded-md border px-2 py-1 text-xs ${(p.config.wfOp ?? 'list') === m ? 'border-sky-400 bg-sky-400/15 text-sky-100' : 'border-[#30363d] text-slate-400'}`}
+                onClick={() => p.onChange({ wfOp: m })}
+              >
+                {m}
+              </button>
+            ))}
+          </div>
+          <label className="block space-y-1">
+            <Label>Workspace (character)</Label>
+            <input className="input text-xs" placeholder="{{vars.character}}" value={p.config.workspace ?? ''} onChange={(e) => p.onChange({ workspace: e.target.value || undefined })} />
+          </label>
+          {(p.config.wfOp ?? 'list') !== 'list' && (
+            <label className="block space-y-1">
+              <Label>Workflow id</Label>
+              <input className="input text-xs" placeholder={'hivebot-ws-ultron-1 (empty: {"id": …} from the block before)'} value={p.config.canvas ?? ''} onChange={(e) => p.onChange({ canvas: e.target.value || undefined })} />
+            </label>
+          )}
+          {(p.config.wfOp === 'create' || p.config.wfOp === 'update') && (
+            <label className="flex items-center gap-2 text-xs text-slate-300">
+              Delete after
+              <input className="input w-20 py-0.5 text-xs" type="number" min={1} max={365} placeholder="7" value={p.config.ttlDays ?? ''} onChange={(e) => p.onChange({ ttlDays: e.target.value ? Number(e.target.value) : undefined })} />
+              days without a run
+            </label>
+          )}
+          <p className="rounded-md bg-sky-950/30 p-2 text-xs text-sky-200/90">
+            Only in the character&apos;s own folder “HiveBot · Name workspace”, with ids hivebot-ws-name-…. Create/update take the graph JSON from the block before; problems come back as text so the model can fix it.
+          </p>
+        </div>
+      );
     case 'browser':
       return (
         <div className="space-y-2">

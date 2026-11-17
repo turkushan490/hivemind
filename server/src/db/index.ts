@@ -385,6 +385,10 @@ export const MIGRATIONS: string[] = [
   -- A firmware reinstall on its way to a robot (H8): {version, id} to put a version on again (same or older) over Wi-Fi.
   ALTER TABLE robots ADD COLUMN reinstall TEXT;
   `,
+  `
+  -- H20: a HiveBot workspace workflow is deleted by itself after this many days without a run (default 7).
+  ALTER TABLE canvases ADD COLUMN ttl_days INTEGER;
+  `,
 ];
 
 export const db = new DatabaseSync(join(config.dataDir, 'hivemind.db'));

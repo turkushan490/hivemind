@@ -245,14 +245,14 @@ function authorOf(userId: string): { name: string; email: string } {
  * repo's files (clone); a project with files starts the branch with them, which only works when that branch is
  * still empty on GitHub.
  */
-export async function connectProject(p: ProjectGit, userId: string, body: { repo?: unknown; branch?: unknown; create?: unknown }) {
+export async function connectProject(p: ProjectGit, userId: string, body: { repo?: unknown; branch?: unknown; create?: unknown; public?: unknown }) {
   const token = needToken(userId);
   const branch = checkBranch(body.branch);
   let repo = String(body.repo ?? '').trim().replace(/^https:\/\/github\.com\//, '').replace(/\.git$/, '');
   if (body.create) {
     const name = repo.includes('/') ? repo.split('/')[1] : repo;
     if (!/^[A-Za-z0-9._-]{1,100}$/.test(name)) throw err(400, 'Give the new repo a name (letters, numbers, . - _)');
-    const made = await githubFetch<{ full_name: string }>(token, '/user/repos', { method: 'POST', body: { name, private: true, auto_init: false } });
+    const made = await githubFetch<{ full_name: string }>(token, '/user/repos', { method: 'POST', body: { name, private: body.public !== true, auto_init: false } });
     repo = made.full_name;
   }
   if (!REPO_RE.test(repo)) throw err(400, 'Pick a repo as owner/name');

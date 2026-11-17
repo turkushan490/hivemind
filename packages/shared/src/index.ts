@@ -1,7 +1,7 @@
 // Types shared by the server, the web UI and (later) the Android app.
 // The canvas format and run events are the contract between them.
 
-export const NODE_TYPES = ['input', 'llm', 'review', 'judge', 'output', 'router', 'debate', 'vote', 'decide', 'template', 'file', 'search', 'memory', 'readMemory', 'writeMemory', 'save', 'image', 'homeassistant', 'webhook', 'discord', 'generate', 'dataset', 'train', 'evaluate', 'deploy', 'readProject', 'writeFiles', 'updateNotes', 'git', 'build', 'pause', 'foreach', 'collect', 'deepSearch', 'panel', 'audioPrep', 'voiceDataset', 'voiceClone', 'speak', 'runWorkflow', 'sayNow', 'condition', 'shell', 'browser'] as const;
+export const NODE_TYPES = ['input', 'llm', 'review', 'judge', 'output', 'router', 'debate', 'vote', 'decide', 'template', 'file', 'search', 'memory', 'readMemory', 'writeMemory', 'save', 'image', 'homeassistant', 'webhook', 'discord', 'generate', 'dataset', 'train', 'evaluate', 'deploy', 'readProject', 'writeFiles', 'updateNotes', 'git', 'build', 'pause', 'foreach', 'collect', 'deepSearch', 'panel', 'audioPrep', 'voiceDataset', 'voiceClone', 'speak', 'runWorkflow', 'sayNow', 'condition', 'shell', 'browser', 'workflow'] as const;
 export type NodeType = (typeof NODE_TYPES)[number];
 
 /** Which model a node uses: a configured provider plus a model id on it. */
@@ -145,6 +145,11 @@ export interface NodeConfig {
   /** Browser (H19): test every page of the project (test mode), and may open sites on the internet (default: only
    * HiveMind's own pages, the project preview and localhost). The steps go in `commands`. */
   browserTest?: boolean;
+  /** workflow (H20): what to do (list | create | update | run | delete), whose workspace (default {{vars.character}}),
+   * and after how many unused days a workflow it makes is deleted (default 7). The id goes in `canvas`. */
+  wfOp?: 'list' | 'create' | 'update' | 'run' | 'delete';
+  workspace?: string;
+  ttlDays?: number;
   internet?: boolean;
   commands?: string;
   timeoutSec?: number;
@@ -205,7 +210,11 @@ export interface NodeConfig {
   /** Write files: an answer without files is fine (a reviewer that found nothing to fix). */
   optionalWrite?: boolean;
   /** Git: what to do, the commit message (template) and, for a pull request, the branch to push to. */
-  gitAction?: 'commit' | 'push' | 'commitPush' | 'pull' | 'pr';
+  gitAction?: 'commit' | 'push' | 'commitPush' | 'pull' | 'pr' | 'create';
+  /** Git create (H23): the new repo's name (default: from the project name) and whether it is public (default private;
+   * a Pause before it answered "public" makes it public too). */
+  repoName?: string;
+  repoPublic?: boolean;
   message?: string;
   branch?: string;
   /** Build: the npm script to run (default "build") and the folder it writes (default dist, else build). */

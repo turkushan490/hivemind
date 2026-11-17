@@ -2,8 +2,10 @@ import type { FileChange } from '@hivemind/shared';
 import type { ProjectServices } from '../nodes/projects.js';
 import { buildProject } from './build.js';
 import type { FileUser } from './files.js';
-import { gitCommit, gitPull, gitPullRequest, gitPush } from './git.js';
-import { deleteProjectPath, findProject, getProject, previewUrl, projectTree, readProjectText, recordChanges, writeProjectFile } from './projects.js';
+import { connectProject, gitCommit, gitPull, gitPullRequest, gitPush } from './git.js';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { deleteProjectPath, findProject, getProject, previewUrl, rootOf, projectTree, readProjectText, recordChanges, writeProjectFile } from './projects.js';
 
 /** The project blocks' services for one run, as the person who runs it (their projects, their GitHub token). */
 export function projectServicesFor(user: FileUser, run: { id: string; source: string }): ProjectServices {
@@ -46,5 +48,17 @@ export function projectServicesFor(user: FileUser, run: { id: string; source: st
       return { text: `${text ? `${text}. ` : ''}Pushed to ${pushed.branch}`, url: pushed.url, ...(sha && { sha }) };
     },
     build: (id, opts) => buildProject(own(id), opts),
+    async createRepo(id, o) {
+      const p = own(id);
+      const root = rootOf(p);
+      // A .gitignore and a README (from the project notes) when the project has none.
+      if (!existsSync(join(root, '.gitignore'))) writeFileSync(join(root, '.gitignore'), 'node_modules/\n.DS_Store\n*.log\n.env\n.env.*\n');
+      if (!existsSync(join(root, 'README.md'))) {
+        const notes = ['NOTES.md', 'notes.md', 'PROJECT.md'].map((f) => join(root, f)).find((f) => existsSync(f));
+        writeFileSync(join(root, 'README.md'), notes ? readFileSync(notes, 'utf8') : `# ${p.name}\n\nMade with HiveMind.\n`);
+      }
+      const r = await connectProject(p, user.id, { repo: o.name, create: true, public: o.public });
+      return { repo: r.repo, url: `https://github.com/${r.repo}` };
+    },
   };
 }

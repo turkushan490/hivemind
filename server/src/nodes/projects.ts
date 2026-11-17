@@ -22,9 +22,11 @@ export interface ProjectServices {
   previewUrl(id: string, path?: string): string;
   git(
     id: string,
-    action: 'commit' | 'push' | 'commitPush' | 'pull' | 'pr',
+    action: 'commit' | 'push' | 'commitPush' | 'pull' | 'pr' | 'create',
     opts: { message: string; body?: string; branch?: string; signal?: AbortSignal },
   ): Promise<{ text: string; url?: string; sha?: string; skipped?: boolean }>;
+  /** H23: makes a GitHub repo for the project (private unless asked), connects it, adds .gitignore + README. */
+  createRepo?(id: string, o: { name: string; public: boolean; signal?: AbortSignal }): Promise<{ repo: string; url: string }>;
   build(id: string, opts: { script?: string; outDir?: string; signal?: AbortSignal; onLog?: (t: string) => void }): Promise<BuildResult>;
 }
 
@@ -275,6 +277,25 @@ const GIT: NodeDefinition = {
     const p = projectOf(ctx);
     const action = ctx.node.config.gitAction ?? 'commitPush';
     const pass = inputText(ctx);
+    // H23: make the repo for this project on GitHub, then commit + push. A Pause before it answered "public" makes it public.
+    if (action === 'create') {
+      if (p.repo) {
+        ctx.progress(`${p.name} is already on GitHub (${p.repo})`);
+      } else {
+        if (!svc.createRepo) throw err('Making a GitHub repo is not available here');
+        const said = ctx.inputs.filter((i) => i.type === 'pause').map((i) => i.text).join(' ');
+        const pub = !!ctx.node.config.repoPublic || /\bpublic\b|\bopenbaar\b/i.test(said);
+        const name = (ctx.node.config.repoName ? fill(ctx.node.config.repoName, ctx).trim() : '') || p.name.toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 90) || 'project';
+        ctx.progress(`Making the ${pub ? 'public' : 'private'} repo ${name}…`);
+        const made = await svc.createRepo(p.id, { name, public: pub, signal: ctx.signal });
+        p.repo = made.repo;
+        ctx.progress(`Made ${made.repo}`);
+      }
+      const message = fill(ctx.node.config.message?.trim() || 'First version from HiveMind', ctx, labelled(answers(ctx.inputs))).trim().slice(0, 2000);
+      const r = await svc.git(p.id, 'commitPush', { message, body: message, signal: ctx.signal });
+      ctx.progress(r.text);
+      return `${p.name} is on GitHub: https://github.com/${p.repo}\n${r.text}`;
+    }
     if (!p.repo) {
       // Workflows like the Site builder push only when the project is connected: otherwise this block passes.
       ctx.progress(`${p.name} is not connected to GitHub — nothing to ${action === 'pull' ? 'pull' : 'push'}`);

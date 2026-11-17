@@ -61,6 +61,7 @@ const ROBOT_ROUTES = new Set([
   'POST /api/voice/speak',
   'GET /api/voice/voices',
   'GET /api/installers/:app/:version/:file',
+  'GET /api/workspaces/:character',
 ]);
 
 /** Only for tokens with skills: true (their user's own skills; the routes check ownership themselves). */

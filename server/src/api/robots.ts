@@ -67,6 +67,16 @@ function robotOf(req: FastifyRequest, reply: FastifyReply): RobotRow | undefined
 
 /** Settings → Robots (HiveBot devices), the robot API, and Installers. */
 export function robotRoutes(app: FastifyInstance) {
+  // H20: a character's own workflows, with their last run (the characters' nightly check). The robot's token: its owner's.
+  app.get('/api/workspaces/:character', { preHandler: requireUser }, async (req, reply) => {
+    try {
+      const { listWorkspace, workspaceOf } = await import('../services/workspaces.js');
+      const character = (req.params as { character: string }).character;
+      return { folder: workspaceOf(character).folder, workflows: listWorkspace(req.user!.id, character) };
+    } catch (e) {
+      return reply.code(400).send({ error: (e as Error).message });
+    }
+  });
   // ---- the owner ----
   app.get('/api/robots', { preHandler: requireAdmin }, async (req) => ({ robots: listRobots(req.user!.id), urls: robotUrls() }));
   app.post('/api/robots', { preHandler: requireAdmin }, async (req, reply) => safe(reply, () => createRobot(req.user!.id, (req.body ?? {}) as Record<string, unknown>)));

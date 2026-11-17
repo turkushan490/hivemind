@@ -1,4 +1,4 @@
-// HiveBot round 5: blocks that let the characters act — run commands (shell, H18), use a browser (H19).
+// HiveBot round 5: blocks that let the characters act — run commands (shell, H18), use a browser (H19), make their own workflows (H20).
 import type { NodeDefinition } from './index.js';
 import { fill } from './index.js';
 import { projectOf } from './projects.js';
@@ -26,6 +26,14 @@ export interface BrowserServices {
   ): Promise<{ text: string; screenshots: { name: string; data: Buffer }[] }>;
 }
 
+/** H20: a character's own workflows (services/workspaces.ts), checked by HiveMind. */
+export interface WorkspaceServices {
+  list(character: string): { id: string; name: string; updatedAt: string; ttlDays: number; lastRun?: { at: string; status: string }; sizeBytes: number }[];
+  save(character: string, o: { id: string; name?: string; graphText: string; ttlDays?: number; create: boolean }): { ok: true; id: string } | { ok: false; problems: string[] };
+  remove(character: string, id: string): boolean;
+  run(character: string, id: string, question: string, o: { timeoutSec: number; signal?: AbortSignal }): Promise<string>;
+}
+
 const inputOf = (ctx: Parameters<NodeDefinition['execute']>[0]) => ctx.inputs.map((i) => i.text).join('\n');
 
 /** Commands from a model often come in a ```bash block: take its contents. */
@@ -34,7 +42,7 @@ export function commandsFrom(text: string): string {
   return (m ? m[1] : text).trim();
 }
 
-export const AGENT_NODES: Record<'shell' | 'browser', NodeDefinition> = {
+export const AGENT_NODES: Record<'shell' | 'browser' | 'workflow', NodeDefinition> = {
   shell: {
     usesModel: false,
     check: (c) => (c.timeoutSec !== undefined && (c.timeoutSec < 5 || c.timeoutSec > 3600) ? 'Shell: the time limit is 5–3600 seconds' : undefined),
@@ -107,6 +115,53 @@ export const AGENT_NODES: Record<'shell' | 'browser', NodeDefinition> = {
       }
       ctx.progress(`${steps.length} step${steps.length === 1 ? '' : 's'} done${files.length ? ` · ${files.length} screenshot${files.length === 1 ? '' : 's'}` : ''}`);
       return `${r.text}${files.length ? `\n\n${files.join('\n')}` : ''}`;
+    },
+  },
+  workflow: {
+    usesModel: false,
+    async execute(ctx) {
+      const svc = ctx.services.workspaces;
+      if (!svc) throw new Error('The workflow block is for the owner and the HiveBot robot only');
+      const c = ctx.node.config;
+      const input = inputOf(ctx);
+      const character = (c.workspace?.trim() ? fill(c.workspace, ctx, input) : ctx.vars.character ?? '').trim();
+      const op = c.wfOp ?? 'list';
+      // The id: the block's (filled), else {"id": …} in the input.
+      let json: { id?: string; name?: string; question?: string; graph?: unknown; ttlDays?: number } = {};
+      try {
+        const m = /```(?:json)?[^\n]*\n([\s\S]*?)```/.exec(input);
+        const parsed = JSON.parse((m ? m[1] : input).trim()) as unknown;
+        if (parsed && typeof parsed === 'object') json = parsed as typeof json;
+      } catch {}
+      const id = (c.canvas?.trim() ? fill(c.canvas, ctx, input) : json.id ?? '').trim();
+      if (op === 'list') {
+        const list = svc.list(character);
+        ctx.progress(`${list.length} workflow${list.length === 1 ? '' : 's'}`);
+        return list.length
+          ? list.map((w) => `- ${w.id} "${w.name}" · changed ${w.updatedAt}${w.lastRun ? ` · last run ${w.lastRun.at} (${w.lastRun.status})` : ' · never ran'} · deleted after ${w.ttlDays} days unused`).join('\n')
+          : 'No workflows in this workspace yet.';
+      }
+      if (!id) throw new Error(`workflow (${op}): give the id (on the block, or {"id": "hivebot-ws-<name>-…"} from the block before)`);
+      if (op === 'delete') {
+        const gone = svc.remove(character, id);
+        ctx.progress(gone ? `Deleted ${id}` : `${id} was not there`);
+        return gone ? `Deleted ${id}` : `There is no ${id}`;
+      }
+      if (op === 'run') {
+        const question = (c.prompt?.trim() ? fill(c.prompt, ctx, input) : json.question ?? ctx.question).trim();
+        ctx.progress(`Running ${id}…`);
+        return svc.run(character, id, question, { timeoutSec: c.timeoutSec ?? 300, signal: ctx.signal });
+      }
+      // create / update: the graph JSON comes from the input (a model wrote it).
+      const graphText = json.graph ? JSON.stringify(json.graph) : input;
+      const r = svc.save(character, { id, name: json.name, graphText, ttlDays: c.ttlDays ?? json.ttlDays, create: op === 'create' });
+      if (!r.ok) {
+        ctx.progress(`${r.problems.length} problem${r.problems.length === 1 ? '' : 's'} in the graph`);
+        // Back to the model as text, so it can fix its JSON (the run goes on).
+        return `NOT SAVED: fix these and send the whole graph again:\n${r.problems.map((p) => `- ${p}`).join('\n')}`;
+      }
+      ctx.progress(`${op === 'create' ? 'Made' : 'Changed'} ${r.id}`);
+      return `${op === 'create' ? 'Made' : 'Changed'} ${r.id}`;
     },
   },
 };

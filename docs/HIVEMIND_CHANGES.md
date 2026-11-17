@@ -1165,6 +1165,39 @@ which project it works on, and can make a new one.
 
 ---
 
+## HiveBot round 5, part 2 — agents that can act (H18–H23)
+
+- **Shell** block (H18): bash or PowerShell in `/data/sandbox/<key>/`, as the build user (no rights on the rest of
+  `/data`), with an empty environment (no HiveMind secrets), a time limit (5–3600 s, default 120) that stops the whole
+  process group, at most 512 processes and 4 GB files. Commands from the block (`{{inputs}}` filled) or from the block
+  before (a ```bash block is fine). Output: exit code + the last 20 KB; `failOnError` fails the block. With a project
+  its files are copied in and `dist/`, `out/` or `build/` come back (so an .exe built here can be downloaded).
+  Refused: `rm -r /`, mount/mkfs/reboot and the like, writing to devices, fork bombs, Docker, `/data/` outside the
+  sandbox, ssh/scp to the LAN. "Network off" points every proxy nowhere (best effort: the container can't take the
+  network from one process). For a full admin, or the robot's token in a workflow whose name starts with "HiveBot".
+  The image now has PowerShell 7, Go, the .NET 8 SDK, Wine (64-bit) + Xvfb (`xvfb-run`), zip/7z and python3-venv.
+- **Browser** block (H19): headless Chromium (Playwright, in the image). Steps one per line: goto, click (text or
+  selector), type, press, wait, screenshot, text, console, links (each checked); `/page.html` opens the project's
+  preview. Test mode: every page of a project, every button once, console errors, buttons that do nothing, broken
+  links, a screenshot per page. Never clicks pay / order / buy / confirm unless a Pause right before it was approved;
+  sites on the internet only when the block allows it. Screenshots go to Files as `hm-file:` links.
+- **Workflow** block (H20): a character makes, changes, runs, lists and deletes its own workflows, only in
+  `HiveBot · <Name> workspace` with ids `hivebot-ws-<name>-…`. The graph JSON is checked first (engine checks, one
+  input, an output, providers that exist) and the problems come back as text so the model can fix it. Unused
+  workspace workflows are deleted after `ttlDays` (default 7, checked hourly, logged). `GET /api/workspaces/:character`
+  lists them with their last run (also for the robot's token).
+- **Agent** block (H21): a model does a task with tools in turns (readMemory, writeMemory, search, readProject,
+  writeFiles, shell, browser, workflow, runWorkflow, askCharacter, sayNow, pause), one JSON step at a time, up to
+  `maxSteps` (12) and `maxMinutes` (20). Every step shows on the block; `askCharacter` asks a teammate through the
+  HiveBot canvas (`vars.character` = the teammate); it pauses before paying, ordering, sending or pushing.
+- **Git create** (H23): the Git block makes the GitHub repo for a project (private; public when the block says so or a
+  Pause before it was answered "public"), adds a `.gitignore` and a README from the project notes, then commits and
+  pushes.
+- **Night** (H22): an AI or Agent block can wait for the night window before it runs (`preferNight`). Colibri already
+  sizes its expert cache from the RAM it gets, and a model that fits gets its full size.
+- Tests: `sandbox.test.ts`, `browser.test.ts` (a real browser), `workspaces.test.ts`, `agent.test.ts`,
+  `hivebotRound5.test.ts`.
+
 ## HiveBot round 5, part 1 — memory, routing, voice and Colibri fixes (H14, H16, H17, H24, H25)
 
 - **H17** memory versions: the writer's name in a version file name is made safe (no `/ \ : * ? " < > |`), so a

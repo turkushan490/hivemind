@@ -36,6 +36,8 @@ export interface NodeConfig {
   maxSeconds?: number;
   /** false: thinking models answer straight away, without thinking first. */
   think?: boolean;
+  /** H22: wait for the night window (Settings → Night work) before this block runs, so big (Colibri) jobs keep the day free. */
+  preferNight?: boolean;
   /** Local (Ollama) models: keep the model loaded this long after a call ("30m", "1h"), so the next answer starts warm. */
   keepAlive?: string;
   /**

@@ -65,6 +65,8 @@ export interface EngineDeps {
   lockLabel?: string;
   /** This run's GPU priority (1 = first … 200, default 100): a lower number takes the GPU before a higher one. */
   priority?: number;
+  /** H22: a block with preferNight waits for the night window first. */
+  waitNight?(signal: AbortSignal, onWait: (note: string) => void): Promise<void>;
   /** H16: blocks after an Output (the memory tail) wait for this once the answer is out (the robot's voice is done). */
   afterAnswer?(answeredAt: number): Promise<void>;
   /**
@@ -730,6 +732,7 @@ export async function runGraph(
     };
 
     try {
+      if (node.config.preferNight && deps.waitNight) await deps.waitNight(signal, (note) => deps.emit({ ...base, type: 'node_progress', note }));
       if (heldHost) {
         deps.emit({ ...base, type: 'node_queued' });
         const fb = node.config.fallback;

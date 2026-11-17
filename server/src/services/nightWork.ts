@@ -136,6 +136,23 @@ export async function runNightWork(reason: string): Promise<{ ran: string[]; ski
   return { ran, skipped };
 }
 
+/** Is this moment inside the night window (fromHour–toHour, local time)? */
+export function inNightWindow(d = new Date(), s = nightSettings()): boolean {
+  const h = d.getHours();
+  return s.fromHour <= s.toHour ? h >= s.fromHour && h < s.toHour : h >= s.fromHour || h < s.toHour;
+}
+
+/** H22: a block marked "at night" waits here until the night window opens (checked every minute). */
+export async function waitForNight(signal?: AbortSignal, onWait?: (note: string) => void): Promise<void> {
+  const s = nightSettings();
+  if (inNightWindow(new Date(), s)) return;
+  onWait?.(`Waiting for the night (${String(s.fromHour).padStart(2, '0')}:00–${String(s.toHour).padStart(2, '0')}:00) so the GPU stays free in the day`);
+  while (!inNightWindow()) {
+    if (signal?.aborted) throw new Error('Cancelled');
+    await new Promise((r) => setTimeout(r, 60_000));
+  }
+}
+
 let lastRunDay = '';
 /** The night a moment belongs to: before noon counts as the night that began the evening before (local time). */
 export const nightOf = (d: Date) => {

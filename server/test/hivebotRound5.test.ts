@@ -143,6 +143,17 @@ describe('H14 memory and routing', () => {
   });
 });
 
+describe('H22 night window', () => {
+  it('knows the window, also across midnight', async () => {
+    const { inNightWindow } = await import('../src/services/nightWork.js');
+    const s = { enabled: true, fromHour: 23, toHour: 6 };
+    expect(inNightWindow(new Date(2026, 10, 17, 23, 30), s)).toBe(true);
+    expect(inNightWindow(new Date(2026, 10, 18, 5, 59), s)).toBe(true);
+    expect(inNightWindow(new Date(2026, 10, 18, 6, 0), s)).toBe(false);
+    expect(inNightWindow(new Date(2026, 10, 18, 12, 0), { enabled: true, fromHour: 0, toHour: 6 })).toBe(false);
+  });
+});
+
 describe('H16 the tail after the Output', () => {
   it('waits until the answer is out and the voice is quiet', async () => {
     const { runGraph } = await import('../src/engine/run.js');

@@ -278,6 +278,7 @@ export function startRun(opts: {
       save: saveCheckpoint,
       lockLabel: source.includes(': ') ? source.slice(source.indexOf(': ') + 2) : (canvasName ?? source),
       priority,
+      waitNight: (signal: AbortSignal, onWait: (note: string) => void) => import('../services/nightWork.js').then((m) => m.waitForNight(signal, onWait)),
       // H16: for the robot and its characters, the memory tail waits until the answer has been spoken.
       ...((opts.user?.scope?.robot || opts.vars?.character) && {
         afterAnswer: (at: number) => import('../services/speaking.js').then((m) => m.voiceQuiet(opts.ownerId, { since: at, signal: run.abort.signal })),

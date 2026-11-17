@@ -24,6 +24,12 @@ export function BlockSettings(p: Props) {
       <ModelOptions {...p} />
       {(p.kind === 'llm' || p.kind === 'decide') && <KeepLoaded {...p} />}
       {p.kind === 'llm' && <QuickFallback {...p} />}
+      {(p.kind === 'llm' || p.kind === 'agent') && (
+        <label className="flex items-center gap-2 rounded-lg border border-[#30363d] p-2.5 text-xs text-slate-300">
+          <input type="checkbox" checked={!!p.config.preferNight} onChange={(e) => p.onChange({ preferNight: e.target.checked || undefined })} />
+          Wait for the night (Settings → Night work) before this block runs — for big slow models
+        </label>
+      )}
       {(p.kind === 'llm' || p.kind === 'review' || p.kind === 'judge') && <SkillsOption {...p} />}
       <TimeLimit {...p} />
       <KindSettings {...p} />

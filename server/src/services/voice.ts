@@ -222,7 +222,15 @@ export interface SpeakOptions {
   format?: 'mp3' | 'wav';
   /** An app with an API token: it has no browser voice, so a configured server is used even in browser mode. */
   app?: boolean;
+  /** Speak with the built-in voice (Kokoro) whatever the settings say: the fallback for a cloned voice. */
+  builtin?: boolean;
 }
+
+/** The built-in voice of each HiveBot character, used when its cloned voice can't speak (H24). */
+const CHARACTER_VOICES: Record<string, string> = { jev: 'am_puck', jarvis: 'bm_george', ultron: 'am_fenrir', vision: 'bm_fable', ghost: 'am_michael' };
+
+/** An online speech server needs a key; a server on this machine or the LAN usually doesn't. */
+const isLocalUrl = (url: string) => /^https?:\/\/(localhost|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|\[?::1|[^./:]+(:\d+)?(\/|$))/i.test(url);
 
 /** Text to speech on the server: returns the audio and its type. */
 export async function speak(input: string, userId: string, opts: SpeakOptions = {}): Promise<{ audio: Buffer; type: string; note?: string }> {
@@ -242,21 +250,30 @@ export async function speak(input: string, userId: string, opts: SpeakOptions = 
       const out = await speakClone(input, mapped, { ...(opts.speed !== undefined && { speed: opts.speed }), ...(check && { check }) });
       return { audio: out.audio, type: out.type };
     } catch (err) {
+      const why = (err as Error).message;
+      // H24: say why, so it can be fixed (busy GPU, engine off, timeout).
+      logError({ source: 'server', message: `Voice: ${mapped} could not speak, the built-in voice said it`, detail: why.slice(0, 1000) });
       if (!kokoroAvailable()) throw err;
-      // The voice it had before the clone (Voices for apps, e.g. jarvis = bm_george), else the default.
-      const r = await speak(input, userId, { ...opts, voice: pinned && !isCloneVoice(pinned) ? pinned : 'af_heart' });
-      return { ...r, note: `${mapped} could not speak (${(err as Error).message.slice(0, 160)}); the built-in voice said it` };
+      // The character's own built-in voice (jarvis = bm_george…), never an online server without a key.
+      const name = mapped.replace(/^clone:/i, '').toLowerCase();
+      const fallback = (pinned && !isCloneVoice(pinned) && pinned) || CHARACTER_VOICES[name] || CHARACTER_VOICES[(wanted ?? '').toLowerCase()] || 'af_heart';
+      const r = await speak(input, userId, { ...opts, voice: fallback, builtin: true });
+      return { ...r, note: `${mapped} could not speak (${why.slice(0, 160)}); the built-in voice said it` };
     }
   }
   // The built-in voice (Kokoro in this container): chosen in Settings, or for apps when no speech server is set.
-  const builtin = kokoroAvailable() && (s.ttsMode === 'builtin' || (!!opts.app && s.ttsMode !== 'server' && !s.ttsUrl));
+  // H24: an online server without a key can only fail (HTTP 401): the built-in voice speaks instead.
+  const keyless = !!s.ttsUrl && !isLocalUrl(s.ttsUrl) && !keyFor(s.ttsUrl, s.ttsKey, userId);
+  const builtin = kokoroAvailable() && (!!opts.builtin || s.ttsMode === 'builtin' || (!!opts.app && s.ttsMode !== 'server' && !s.ttsUrl) || (keyless && (s.ttsMode === 'server' || !!opts.app)));
   if (!builtin) {
     if (!s.ttsUrl) throw new TtsNotConfigured('Text to speech has no server address (Settings → Voice)');
     if (s.ttsMode !== 'server' && !opts.app) throw new TtsNotConfigured('Text to speech uses the browser voice (Settings → Voice)');
   }
   const asked = opts.voice?.trim();
   // A name from Voices for apps ("jarvis"), else the voice id as given, else the stored voice.
-  const voice = (asked && s.appVoices?.[asked.toLowerCase()]) || asked || s.ttsVoice || (builtin ? 'af_heart' : 'alloy');
+  const mappedVoice = (asked && s.appVoices?.[asked.toLowerCase()]) || asked || s.ttsVoice || (builtin ? 'af_heart' : 'alloy');
+  // A character name or a clone id has no Kokoro voice of its own: its built-in one.
+  const voice = builtin && (isCloneVoice(mappedVoice) || CHARACTER_VOICES[mappedVoice.toLowerCase()]) ? CHARACTER_VOICES[mappedVoice.replace(/^clone:/i, '').toLowerCase()] ?? 'af_heart' : mappedVoice;
   if (builtin) {
     const base = await ensureKokoro();
     const format = opts.format === 'wav' ? 'wav' : 'mp3';

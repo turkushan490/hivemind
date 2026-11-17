@@ -1,7 +1,7 @@
 // H13 — Night work on Tower: when the GPU is quiet (00:00–06:00), sort the memory, write Jarvis's fix list, and train,
 // each as a background priority-100 job, then leave a morning report. "Run the night work now" starts it at once.
 import { db, getSetting, setSetting } from '../db/index.js';
-import { liveRunCount, runEnded, startRun } from '../events/runs.js';
+import { activeRuns, liveRunCount, runEnded, startRun } from '../events/runs.js';
 import { logError } from '../errors.js';
 import { appendLog } from '../logfile.js';
 import * as memFiles from './memoryFiles.js';
@@ -80,6 +80,9 @@ async function runCanvasJob(user: User, canvas: string, question: string): Promi
   const providers = await import('../api/providers.js');
   const row = runs.canvasFor(user, canvas) ?? runs.canvasesFor(user).find((r) => r.name === canvas);
   if (!row) return `skipped: no canvas "${canvas}"`;
+  // H14.8: never a second run of the same canvas on top of one that is still going.
+  const busy = activeRuns(user).find((r) => r.canvasId === row.id);
+  if (busy) return `skipped: "${row.name}" is still running (run ${busy.runId})`;
   const runId = startRun({
     ownerId: user.id,
     user,
@@ -106,6 +109,8 @@ export async function runNightWork(reason: string): Promise<{ ran: string[]; ski
   if (!user) return { ran: [], skipped: ['no admin user to run as'] };
   if (running) return { ran: [], skipped: ['already running'] };
   running = true;
+  // H14.8: a run asked for by hand counts as tonight's, so the scheduled one doesn't run on top of it.
+  lastRunDay = nightOf(new Date());
   const ran: string[] = [];
   const skipped: string[] = [];
   appendLog('server', `Night work started (${reason})`);
@@ -132,6 +137,11 @@ export async function runNightWork(reason: string): Promise<{ ran: string[]; ski
 }
 
 let lastRunDay = '';
+/** The night a moment belongs to: before noon counts as the night that began the evening before (local time). */
+export const nightOf = (d: Date) => {
+  const n = new Date(d.getTime() - 12 * 3600_000);
+  return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, '0')}-${String(n.getDate()).padStart(2, '0')}`;
+};
 
 /** Called every ~15 min: inside the window, GPU quiet, once per night. */
 export async function nightTick(): Promise<void> {
@@ -141,10 +151,8 @@ export async function nightTick(): Promise<void> {
   const hour = now.getHours();
   const inWindow = s.fromHour <= s.toHour ? hour >= s.fromHour && hour < s.toHour : hour >= s.fromHour || hour < s.toHour;
   if (!inWindow) return;
-  const day = now.toISOString().slice(0, 10);
-  if (lastRunDay === day) return; // already done tonight
+  if (lastRunDay === nightOf(now)) return; // already done tonight (also when it was asked for by hand)
   if (gpuBusy()) return; // try again next tick
-  lastRunDay = day;
   try {
     await runNightWork('scheduled');
   } catch (err) {

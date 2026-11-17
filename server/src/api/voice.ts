@@ -1,4 +1,5 @@
 import type { FastifyInstance } from 'fastify';
+import { speaking } from '../services/speaking.js';
 import { logError } from '../errors.js';
 import { saveVoiceSettings, speak, speakable, transcribe, TtsNotConfigured, voiceSettings } from '../services/voice.js';
 import { requireAdmin, requireUser } from './auth.js';
@@ -99,14 +100,14 @@ export function voiceRoutes(app: FastifyInstance) {
     const text = speakable(String(b.text ?? '')).slice(0, MAX_SPEAK);
     if (!text) return reply.code(400).send({ error: 'Nothing to say' });
     try {
-      const { audio, type, note } = await speak(text, req.user!.id, {
+      const { audio, type, note } = await speaking(req.user!.id, () => speak(text, req.user!.id, {
         ...(typeof b.voice === 'string' && { voice: b.voice.slice(0, 100) }),
         ...(typeof b.model === 'string' && { model: b.model.slice(0, 100) }),
         ...(typeof b.speed === 'number' && { speed: b.speed }),
         format: b.format === 'wav' ? 'wav' : 'mp3',
         // An app with an API token (a robot) has no browser to speak with.
         app: !!req.user!.tokenId,
-      });
+      }));
       if (note) reply.header('x-voice-note', encodeURIComponent(note));
       return reply.header('content-type', type).header('cache-control', 'no-store').send(audio);
     } catch (err) {

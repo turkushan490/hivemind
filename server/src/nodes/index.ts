@@ -105,6 +105,7 @@ export interface NodeServices {
     read(paths: string[], guest?: boolean): { path: string; content?: string }[];
     write(path: string, text: string, opts?: { mode?: 'replace' | 'append'; by?: string; guest?: boolean }): void;
     move(from: string, to: string, by?: string, guest?: boolean): void;
+    remove?(path: string, guest?: boolean): void;
   };
   /** runWorkflow block (H12): start another canvas as a background job (shows in /api/robot/jobs). */
   runCanvas?(o: { canvas: string; question: string; priority?: number; title?: string; character?: string }): Promise<{ jobId: string; runId: string; title: string }>;
@@ -266,6 +267,12 @@ export function memoryKey(tpl: string | undefined, ctx: Pick<NodeContext, 'quest
 
 /** Upstream results that are more than the bare question. */
 export const answers = (inputs: NodeInput[]) => inputs.filter((i) => i.type !== 'input');
+
+/** A label or value compared loosely: lower case, letters and digits only. */
+const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, '');
+
+/** Text without the "### label" header lines that labelled() puts in front of each input. */
+export const stripHeaders = (text: string) => text.replace(/^###[^\n]*\n?/gm, '');
 
 export function labelled(inputs: NodeInput[]): string {
   return inputs.map((i) => `### ${i.label}\n${i.text}`).join('\n\n');
@@ -548,14 +555,25 @@ export const NODES: Record<NodeType, NodeDefinition> = {
 
   router: {
     usesModel: true,
-    modelOptional: (c) => c.decideWith === 'jev' && !!c.decider,
-    check: (c) => (c.decideWith === 'jev' && !c.decider ? 'Router: pick the decision model that chooses the route' : undefined),
+    modelOptional: (c) => (c.decideWith === 'jev' && !!c.decider) || !!c.routeBy?.trim(),
+    check: (c) => (c.decideWith === 'jev' && !c.decider && !c.routeBy?.trim() ? 'Router: pick the decision model that chooses the route' : undefined),
     async execute(ctx) {
       const options = ctx.outgoing;
       if (options.length === 0) throw new Error('Wire the Router to the blocks it can choose between');
       const passOn = answers(ctx.inputs).length ? labelled(answers(ctx.inputs)) : ctx.question;
       if (options.length === 1) {
         ctx.choose([options[0].id]);
+        return passOn;
+      }
+      // H14.3: route by a value (e.g. {{vars.character}}) without a model: the branch whose name is that value
+      // (no case, spaces or punctuation), else one named "else"/"other"/"default", else the first.
+      if (ctx.node.config.routeBy?.trim()) {
+        const value = norm(fill(ctx.node.config.routeBy, ctx, ctx.inputs.map((i) => i.text).join('\n')));
+        const hit = options.filter((o) => norm(o.label) === value).map((o) => o.id);
+        const pick = hit.length ? hit : options.filter((o) => /^(else|other|default|otherwise)$/.test(norm(o.label))).map((o) => o.id);
+        const ids = pick.length ? pick : [options[0].id];
+        ctx.choose(ids);
+        ctx.progress(`Route: ${options.find((o) => o.id === ids[0])?.label} (by value "${value.slice(0, 40)}")`);
         return passOn;
       }
       if (ctx.node.config.decideWith === 'jev' && ctx.node.config.decider) {
@@ -587,6 +605,34 @@ export const NODES: Record<NodeType, NodeDefinition> = {
       ctx.choose([pick.id]);
       ctx.progress(`Route: ${pick.label}`);
       return passOn;
+    },
+  },
+
+  // H14.5: if the text coming in contains (or doesn't contain) something → the "yes" branch, else "no".
+  condition: {
+    usesModel: false,
+    check: (c) => (!c.conditionText?.trim() ? 'Condition: say what to look for' : undefined),
+    async execute(ctx) {
+      const input = ctx.inputs.map((i) => i.text).join('\n');
+      const want = fill(ctx.node.config.conditionText ?? '', ctx, input).trim();
+      const rx = /^\/(.+)\/([a-z]*)$/.exec(want);
+      let hit: boolean;
+      if (rx) {
+        try {
+          hit = new RegExp(rx[1], rx[2].includes('i') ? rx[2] : `${rx[2]}i`).test(input);
+        } catch {
+          throw new Error(`Condition: "${want}" is not a valid pattern`);
+        }
+      } else hit = input.toLowerCase().includes(want.toLowerCase());
+      if (ctx.node.config.conditionNot) hit = !hit;
+      const yes = ctx.outgoing.filter((o) => /^(yes|true|then|ja)\b/i.test(o.label));
+      const no = ctx.outgoing.filter((o) => /^(no|false|else|otherwise|nee)\b/i.test(o.label));
+      // Without names: the first branch is yes, the second no.
+      const yesIds = (yes.length ? yes : ctx.outgoing.slice(0, 1)).map((o) => o.id);
+      const noIds = (no.length ? no : ctx.outgoing.slice(1, 2)).map((o) => o.id);
+      ctx.choose(hit ? yesIds : noIds);
+      ctx.progress(hit ? 'Yes' : 'No');
+      return input;
     },
   },
 
@@ -675,7 +721,9 @@ export const NODES: Record<NodeType, NodeDefinition> = {
   template: {
     usesModel: false,
     async execute(ctx) {
-      return fill(ctx.node.config.prompt ?? '{{question}}\n\n{{inputs}}', ctx, labelled(answers(ctx.inputs))).trim();
+      // raw: the inputs exactly as they are, without "### label" headers (a path, JSON) — H14.7.
+      const ins = ctx.node.config.raw ? answers(ctx.inputs).map((i) => i.text).join('\n') : labelled(answers(ctx.inputs));
+      return fill(ctx.node.config.prompt ?? (ctx.node.config.raw ? '{{inputs}}' : '{{question}}\n\n{{inputs}}'), ctx, ins).trim();
     },
   },
 
@@ -822,7 +870,8 @@ export const NODES: Record<NodeType, NodeDefinition> = {
       const parts: string[] = [];
       if (ctx.node.config.memoryIndex) {
         const idx = svc.read(['index.md'], guest)[0]?.content;
-        const list = svc.tree(guest).map((f) => `- ${f.path}${f.title ? ` — ${f.title}` : ''}`).join('\n');
+        // The archive (old and deleted notes) stays out of the list a model picks from (H14.1).
+        const list = svc.tree(guest).filter((f) => !f.path.startsWith('archive/')).map((f) => `- ${f.path}${f.title ? ` — ${f.title}` : ''}`).join('\n');
         parts.push(`Memory index:\n${idx?.trim() || '(no index yet)'}\n\nAll memory files:\n${list || '(none yet)'}`);
       }
       if (paths.length) {
@@ -842,25 +891,35 @@ export const NODES: Record<NodeType, NodeDefinition> = {
       const by = (ctx.node.config.memoryBy ? fill(ctx.node.config.memoryBy, ctx, '') : '').trim() || 'owner';
       const input = ctx.inputs.map((i) => i.text).join('\n').trim();
       const mode = ctx.node.config.memoryMode ?? 'replace';
-      if (mode === 'move') {
-        const from = fill(ctx.node.config.memoryPath ?? '', ctx, '').trim();
-        const to = fill(ctx.node.config.memoryTo ?? '', ctx, '').trim();
-        if (!from || !to) throw new Error('writeMemory (move) needs memoryPath (from) and memoryTo (to)');
+      // H14.6: the input may say what to do as JSON: {"from","to"} moves, {"path","delete":true} deletes.
+      let j: { from?: string; to?: string; path?: string; text?: string; delete?: boolean } | undefined;
+      try {
+        const parsed = JSON.parse(fenced(input, ['json', '']) ?? input) as unknown;
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) j = parsed as typeof j;
+      } catch {}
+      if (mode === 'delete' || j?.delete === true) {
+        const path = (j?.path ?? fill(ctx.node.config.memoryPath ?? '', ctx, input)).trim();
+        if (!path) throw new Error('writeMemory (delete) needs a path: in the block, or {"path","delete":true} from the block before it');
+        if (!svc.remove) throw new Error('Deleting memory files is not available here');
+        svc.remove(path, guest);
+        ctx.progress(`Moved ${path} to archive/deleted`);
+        return `Deleted ${path} (kept in archive/deleted)`;
+      }
+      if (mode === 'move' || (typeof j?.from === 'string' && typeof j?.to === 'string')) {
+        const from = (typeof j?.from === 'string' ? j.from : fill(ctx.node.config.memoryPath ?? '', ctx, input)).trim();
+        const to = (typeof j?.to === 'string' ? j.to : fill(ctx.node.config.memoryTo ?? '', ctx, input)).trim();
+        if (!from || !to) throw new Error('writeMemory (move) needs memoryPath (from) and memoryTo (to), or {"from","to"} from the block before it');
         svc.move(from, to, by, guest);
         ctx.progress(`Moved ${from} → ${to}`);
         return `Moved ${from} → ${to}`;
       }
       // The path and text come from the block config, or from the input as JSON {"path","text"} (a model can write that).
-      let path = fill(ctx.node.config.memoryPath ?? '', ctx, '').trim();
+      // memoryPath may use {{inputs}} (a path written by the block before, H14.6).
+      let path = fill(ctx.node.config.memoryPath ?? '', ctx, input).trim();
       let text = input;
-      if (!path) {
-        try {
-          const j = JSON.parse(input) as { path?: string; text?: string };
-          if (j && typeof j.path === 'string') {
-            path = j.path.trim();
-            if (typeof j.text === 'string') text = j.text;
-          }
-        } catch {}
+      if (!path && j && typeof j.path === 'string') {
+        path = j.path.trim();
+        if (typeof j.text === 'string') text = j.text;
       }
       if (!path) throw new Error('writeMemory needs a path (in the block, or as JSON {"path","text"} from the block before it)');
       svc.write(path, text, { mode: mode === 'append' ? 'append' : 'replace', by, guest });
@@ -874,8 +933,9 @@ export const NODES: Record<NodeType, NodeDefinition> = {
     usesModel: false,
     async execute(ctx) {
       const input = ctx.inputs.map((i) => i.text).join('\n');
-      const text = (ctx.node.config.prompt ? fill(ctx.node.config.prompt, ctx, input) : input).trim();
-      if (text) ctx.say?.(text);
+      // H14.4: no "### label" headers (a Router or Template puts them in front), and nothing for empty or "-".
+      const text = stripHeaders(ctx.node.config.prompt ? fill(ctx.node.config.prompt, ctx, input) : input).trim();
+      if (text && !/^[-–—.\s]*$/.test(text)) ctx.say?.(text);
       ctx.progress(text ? `Said: ${text.slice(0, 60)}` : 'Nothing to say');
       // Pass what came in through unchanged, so the chain continues.
       return input.trim() || text;

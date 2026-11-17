@@ -1,7 +1,7 @@
 // Types shared by the server, the web UI and (later) the Android app.
 // The canvas format and run events are the contract between them.
 
-export const NODE_TYPES = ['input', 'llm', 'review', 'judge', 'output', 'router', 'debate', 'vote', 'decide', 'template', 'file', 'search', 'memory', 'readMemory', 'writeMemory', 'save', 'image', 'homeassistant', 'webhook', 'discord', 'generate', 'dataset', 'train', 'evaluate', 'deploy', 'readProject', 'writeFiles', 'updateNotes', 'git', 'build', 'pause', 'foreach', 'collect', 'deepSearch', 'panel', 'audioPrep', 'voiceDataset', 'voiceClone', 'speak', 'runWorkflow', 'sayNow'] as const;
+export const NODE_TYPES = ['input', 'llm', 'review', 'judge', 'output', 'router', 'debate', 'vote', 'decide', 'template', 'file', 'search', 'memory', 'readMemory', 'writeMemory', 'save', 'image', 'homeassistant', 'webhook', 'discord', 'generate', 'dataset', 'train', 'evaluate', 'deploy', 'readProject', 'writeFiles', 'updateNotes', 'git', 'build', 'pause', 'foreach', 'collect', 'deepSearch', 'panel', 'audioPrep', 'voiceDataset', 'voiceClone', 'speak', 'runWorkflow', 'sayNow', 'condition'] as const;
 export type NodeType = (typeof NODE_TYPES)[number];
 
 /** Which model a node uses: a configured provider plus a model id on it. */
@@ -130,8 +130,8 @@ export interface NodeConfig {
   memoryPaths?: string;
   /** readMemory: also include index.md and the file tree (so a model/robot can see what memory exists). */
   memoryIndex?: boolean;
-  /** writeMemory: replace the file, append to it, or move it. */
-  memoryMode?: 'replace' | 'append' | 'move';
+  /** writeMemory: replace the file, append to it, move it, or delete it (to archive/deleted). */
+  memoryMode?: 'replace' | 'append' | 'move' | 'delete';
   /** writeMemory: the file path to write (replace/append) or move from ({{...}} filled). Empty = from input JSON {path,text}. */
   memoryPath?: string;
   /** writeMemory move: the destination path. */
@@ -139,6 +139,13 @@ export interface NodeConfig {
   /** readMemory / writeMemory: who the change is by (owner / a character / a job), and the guest memory sub-tree. */
   memoryBy?: string;
   memoryGuest?: boolean;
+  /** Router (H14.3): route by this value ("{{vars.character}}") to the branch with that name, without a model. */
+  routeBy?: string;
+  /** Template (H14.7): the inputs as they are, without "### label" headers. */
+  raw?: boolean;
+  /** Condition (H14.5): look for this text (or /pattern/) in the text coming in; conditionNot turns it around. */
+  conditionText?: string;
+  conditionNot?: boolean;
   /** runWorkflow (H12): the canvas (id or name) to start as a background job, and its title / character / GPU priority. */
   canvas?: string;
   jobTitle?: string;

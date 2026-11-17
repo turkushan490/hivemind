@@ -52,7 +52,9 @@ export function MemoryPage({ active }: { active: boolean }) {
     api<{ versions: Version[] }>(`/api/memory-files/versions?path=${encodeURIComponent(sel)}${guest ? '&guest=1' : ''}`, { quiet: true }).then((v) => setVersions(v.versions)).catch(() => {});
   };
   const del = async () => {
-    if (!sel || !confirm(`Move ${sel} to archive/deleted?`)) return;
+    if (!sel) return;
+    const forever = sel.startsWith('archive/deleted/');
+    if (!confirm(forever ? `Delete ${sel} forever? This can't be undone.` : `Move ${sel} to archive/deleted?`)) return;
     await api(`/api/memory-files`, { method: 'DELETE', body: { path: sel, guest } }).catch(() => {});
     setSel(undefined);
     setText('');
@@ -120,7 +122,7 @@ export function MemoryPage({ active }: { active: boolean }) {
                 <span className="font-mono text-sm">{sel}</span>
                 <span className="ml-auto flex gap-1">
                   <button className="btn" disabled={!dirty} onClick={save}>Save</button>
-                  <button className="btn-ghost text-red-300" onClick={del}>Delete</button>
+                  <button className="btn-ghost text-red-300" onClick={del}>{sel?.startsWith('archive/deleted/') ? 'Delete forever' : 'Delete'}</button>
                 </span>
               </div>
               <textarea

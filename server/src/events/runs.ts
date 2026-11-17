@@ -276,6 +276,10 @@ export function startRun(opts: {
       save: saveCheckpoint,
       lockLabel: source.includes(': ') ? source.slice(source.indexOf(': ') + 2) : (canvasName ?? source),
       priority,
+      // H16: for the robot and its characters, the memory tail waits until the answer has been spoken.
+      ...((opts.user?.scope?.robot || opts.vars?.character) && {
+        afterAnswer: (at: number) => import('../services/speaking.js').then((m) => m.voiceQuiet(opts.ownerId, { since: at, signal: run.abort.signal })),
+      }),
       access,
       // Stats: every model call and every Judge/Vote pick, kept even when the run is deleted from History.
       record: {
@@ -311,6 +315,7 @@ export function startRun(opts: {
             read: (paths: string[], guest?: boolean) => memFiles.read(opts.ownerId, paths, guest),
             write: (path: string, text: string, o?: { mode?: 'replace' | 'append'; by?: string; guest?: boolean }) => void memFiles.write(opts.ownerId, path, text, o),
             move: (from: string, to: string, by?: string, guest?: boolean) => memFiles.move(opts.ownerId, from, to, by, guest),
+            remove: (path: string, guest?: boolean) => memFiles.remove(opts.ownerId, path, guest),
           },
           // runWorkflow (H12): start another canvas as a background job, for the owner / robot.
           runCanvas: async (o: { canvas: string; question: string; priority?: number; title?: string; character?: string }) => {

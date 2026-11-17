@@ -136,6 +136,15 @@ export const NODE_META: Record<NodeType, NodeMeta> = {
     hasInput: true,
     hasOutput: true,
   },
+  condition: {
+    title: 'Condition',
+    color: '#fb923c',
+    group: 'Logic',
+    description: 'No model: if the text coming in contains a word (or /pattern/), the branch named "yes" runs, else the one named "no".',
+    usesModel: false,
+    hasInput: true,
+    hasOutput: true,
+  },
   sayNow: {
     title: 'Say now',
     color: '#38bdf8',
@@ -395,7 +404,7 @@ export const NODE_META: Record<NodeType, NodeMeta> = {
 
 export const PALETTE: { group: NodeGroup; types: NodeType[] }[] = [
   { group: 'Core', types: ['input', 'llm', 'review', 'judge', 'output'] },
-  { group: 'Logic', types: ['router', 'decide', 'debate', 'vote', 'panel', 'pause', 'foreach', 'collect'] },
+  { group: 'Logic', types: ['router', 'condition', 'decide', 'debate', 'vote', 'panel', 'pause', 'foreach', 'collect'] },
   { group: 'Data', types: ['template', 'file', 'search', 'deepSearch', 'memory'] },
   { group: 'Create', types: ['image', 'save'] },
   { group: 'Action', types: ['homeassistant', 'webhook', 'discord'] },
@@ -418,6 +427,7 @@ export function summary(kind: NodeType, c: import('@hivemind/shared').NodeConfig
         const sizes = (['local', 'small', 'medium', 'large'] as const).filter((t) => c.auto![t]);
         return sizes.length ? { text: `Auto ⚡ ${sizes.join(' / ')}` } : { text: 'Pick models per size →', missing: true };
       }
+      if (kind === 'router' && c.routeBy?.trim()) return { text: `By value ${c.routeBy.trim()}` };
       if (kind === 'router' && c.decideWith === 'jev') return c.decider ? { text: `Jev ⚡ ${c.decider.model}` } : { text: 'Pick a decision model →', missing: true };
       return c.model ? { text: c.model.model } : { text: 'Pick a model →', missing: true };
     case 'image':

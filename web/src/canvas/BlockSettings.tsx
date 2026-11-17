@@ -229,8 +229,29 @@ function KindSettings(p: Props) {
               <span className="text-xs text-slate-500">One choice question over the branch names: about 0.1 s and a fraction of a cent, instead of a model call.</span>
             </div>
           )}
+          <label className="block space-y-1">
+            <Label>Or route by a value (no model)</Label>
+            <input className="input text-xs" placeholder="{{vars.character}}" value={p.config.routeBy ?? ''} onChange={(e) => p.onChange({ routeBy: e.target.value || undefined })} />
+            <span className="text-xs text-slate-500">Filled in, then the branch named that value runs (else one named “else”). Instant, no model call.</span>
+          </label>
           <p className="rounded-md bg-orange-950/30 p-2 text-xs text-orange-200/90">
             Wire the Router to two or more blocks and give each a clear name — it picks one by its name. The other branches are skipped.
+          </p>
+        </div>
+      );
+    case 'condition':
+      return (
+        <div className="space-y-2">
+          <label className="block space-y-1">
+            <Label>Look for</Label>
+            <input className="input text-xs" placeholder="a word, {{vars.x}}, or /pattern/" value={p.config.conditionText ?? ''} onChange={(e) => p.onChange({ conditionText: e.target.value || undefined })} />
+          </label>
+          <label className="flex items-center gap-2 text-xs text-slate-300">
+            <input type="checkbox" checked={!!p.config.conditionNot} onChange={(e) => p.onChange({ conditionNot: e.target.checked || undefined })} />
+            Turn it around (yes when it is <em>not</em> there)
+          </label>
+          <p className="rounded-md bg-orange-950/30 p-2 text-xs text-orange-200/90">
+            Name the block after it “yes” and the other “no” (without names: the first wire is yes). No model, no cost; the text goes on unchanged.
           </p>
         </div>
       );
@@ -285,6 +306,10 @@ function KindSettings(p: Props) {
           />
           <span className="text-xs text-slate-500">
             <code>{'{{question}}'}</code> = the question, <code>{'{{inputs}}'}</code> = what is wired into this block, <code>{'{{vars.name}}'}</code> = a value sent with the run.
+          </span>
+          <span className="flex items-center gap-2 text-xs text-slate-300">
+            <input type="checkbox" checked={!!p.config.raw} onChange={(e) => p.onChange({ raw: e.target.checked || undefined })} />
+            Raw: the inputs exactly as they are (no “### name” lines), for a path or JSON
           </span>
         </label>
       );
@@ -394,7 +419,7 @@ function KindSettings(p: Props) {
       return (
         <div className="space-y-2">
           <div className="flex gap-1">
-            {(['replace', 'append', 'move'] as const).map((m) => (
+            {(['replace', 'append', 'move', 'delete'] as const).map((m) => (
               <button
                 key={m}
                 className={`flex-1 rounded-md border px-2 py-1.5 text-sm ${(p.config.memoryMode ?? 'replace') === m ? 'border-lime-500 bg-lime-500/15 text-lime-200' : 'border-[#30363d] text-slate-400'}`}
@@ -408,7 +433,7 @@ function KindSettings(p: Props) {
             <Label>{(p.config.memoryMode ?? 'replace') === 'move' ? 'Move from' : 'File path'}</Label>
             <input
               className="input text-xs"
-              placeholder="topics/food/potatoes.md (empty = JSON {path,text} from the block before it)"
+              placeholder="topics/food/potatoes.md or {{inputs}} (empty = JSON {path,text} / {from,to} / {path,delete} from the block before it)"
               value={p.config.memoryPath ?? ''}
               onChange={(e) => p.onChange({ memoryPath: e.target.value || undefined })}
             />

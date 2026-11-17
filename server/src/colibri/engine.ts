@@ -553,7 +553,12 @@ async function start(m: InstalledModel, ramBytes: number, opts: { keepAlive?: st
         logError({ source: 'server', message: 'Colibri: the CUDA build would not start here, using the CPU build', detail: tail });
         return start(m, ramBytes, opts, true);
       }
-      throw new Error(`Colibri could not start ${m.model}: ${tail.split('\n').slice(-4).join(' ').slice(0, 600) || 'no output'}`);
+      // H25: the engine's own reason (a missing file, out of memory, a format it can't read), not a traceback line.
+      const lines = tail.split('\n').map((l) => l.trim()).filter(Boolean);
+      const reasons = lines.filter((l) => /error|no such|not found|missing|cannot|can't|unsupported|out of memory|killed|incomplete|failed/i.test(l) && !/^File "/.test(l));
+      const why = (reasons.length ? reasons.slice(-3) : lines.slice(-4)).join(' ').slice(0, 600) || 'no output';
+      logError({ source: 'server', message: `Colibri could not start ${m.model}`, detail: tail });
+      throw new Error(`Colibri could not start ${m.model}: ${why}`);
     }
     if (await healthy(port, opts.signal)) {
       e.state = 'ready';

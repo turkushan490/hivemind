@@ -1165,6 +1165,27 @@ which project it works on, and can make a new one.
 
 ---
 
+## HiveBot round 5, part 1 — memory, routing, voice and Colibri fixes (H14, H16, H17, H24, H25)
+
+- **H17** memory versions: the writer's name in a version file name is made safe (no `/ \ : * ? " < > |`), so a
+  "by" like `ghost (from topics/a.md)` no longer makes the next write fail; a version that can't be saved never blocks
+  the write itself (a Problem says why).
+- **H14.1** readMemory with the index and the memory search leave `archive/` out. **H14.2** Delete on a file that is
+  already in `archive/deleted/` deletes it for real (Memory page: "Delete forever").
+- **H14.3** Router `routeBy` (e.g. `{{vars.character}}`): the branch named that value runs, else one named "else"; no
+  model. **H14.5** new **Condition** block: text contains a word or /pattern/ → branch "yes", else "no".
+- **H14.4** sayNow drops "### label" headers and says nothing for empty text or "-". **H14.7** Template `raw`: the
+  inputs without headers. **H14.6** writeMemory: `{"from","to"}` moves, `{"path","delete":true}` deletes (mode
+  `delete` too), and `memoryPath` may use `{{inputs}}`.
+- **H14.8** night work: a run asked for by hand counts as tonight's; a canvas that is still running is skipped.
+- **H16** the "tail" (blocks no Output needs, e.g. the memory writer) waits until the answer is out and, for the robot
+  and its characters, until its voice is quiet (no speech call for 2.5 s; goes on after 6 s when nothing is spoken).
+- **H24** a cloned voice that can't speak falls back to the character's own built-in voice (jarvis = bm_george …),
+  never to an online server without a key; why it failed goes to Problems. An online speech server without a key is
+  not used at all when the built-in voice is there.
+- **H25** Colibri start errors show the engine's own reason, and the full log goes to Problems.
+- Tests: `server/test/hivebotRound5.test.ts`.
+
 ## Active workflows
 
 - New tab **Active workflows**: every workflow running right now, each live on its own small canvas, newest on top.

@@ -65,6 +65,8 @@ export interface EngineDeps {
   lockLabel?: string;
   /** This run's GPU priority (1 = first … 200, default 100): a lower number takes the GPU before a higher one. */
   priority?: number;
+  /** H16: blocks after an Output (the memory tail) wait for this once the answer is out (the robot's voice is done). */
+  afterAnswer?(answeredAt: number): Promise<void>;
   /**
    * Settings → Access: what the person who started the run may use. Checked again on every call, because Auto
    * model blocks and Routers pick models while the run goes. Left out: everything (engine tests).
@@ -316,6 +318,18 @@ export async function runGraph(
     children.get(e.source)!.push(e.target);
   }
 
+  // H16: the "tail" = blocks the answer doesn't need (no Output depends on them), e.g. the memory writer after it.
+  const needed = new Set<string>();
+  const stack = graph.nodes.filter((n) => n.type === 'output').map((n) => n.id);
+  while (stack.length) {
+    const id = stack.pop()!;
+    if (needed.has(id)) continue;
+    needed.add(id);
+    stack.push(...(parents.get(id) ?? []));
+  }
+  const tail = new Set(needed.size ? graph.nodes.filter((n) => !needed.has(n.id) && n.type !== 'input').map((n) => n.id) : []);
+  let answeredAt = 0;
+
   const outputs = new Map<string, string>();
   const failed = new Set<string>();
   const skipped = new Set<string>();
@@ -365,6 +379,12 @@ export async function runGraph(
   };
 
   const runNode = async (node: CanvasNode, fallbackFor?: string): Promise<void> => {
+    // H16: the tail after an Output waits until the answer has been spoken, so it never holds up the voice.
+    if (deps.afterAnswer && tail.has(node.id) && !fallbackFor) {
+      // First the answer (or every block it needs has finished), then a quiet voice.
+      while (!answeredAt && !signal.aborted && [...needed].some((id) => !outputs.has(id) && !failed.has(id) && !skipped.has(id))) await new Promise((r) => setTimeout(r, 200));
+      if (answeredAt) await deps.afterAnswer(answeredAt).catch(() => {});
+    }
     const def = NODES[node.type];
     const model = node.config.model;
     const base = { nodeId: node.id, nodeType: node.type, model: model?.model };
@@ -703,7 +723,10 @@ export async function runGraph(
       });
       // Early output (H12): the moment an Output block has its answer, announce it, so a client can reply before the
       // tail blocks (e.g. writeMemory) finish. The run keeps going; run_done still carries the final.
-      if (node.type === 'output') deps.emit({ ...base, type: 'answer', final: text });
+      if (node.type === 'output') {
+        answeredAt ||= Date.now();
+        deps.emit({ ...base, type: 'answer', final: text });
+      }
     };
 
     try {

@@ -4,6 +4,7 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, posix, relative, sep } from 'node:path';
 import { config } from '../config.js';
+import { logError } from '../errors.js';
 
 const KEEP_VERSIONS = 20;
 /** Folders kept out of the tree and searches (version snapshots and the "changed by" sidecars). */
@@ -96,6 +97,9 @@ export function read(userId: string, paths: string[], guest = false): { path: st
   });
 }
 
+/** A writer's name as part of a file name: no path or reserved characters, at most 80 long. */
+export const safeName = (by: string) => by.replace(/[/\\:*?"<>|\x00-\x1f]+/g, '-').replace(/__+/g, '_').trim().slice(0, 80) || 'unknown';
+
 /** Snapshots the current content as a version (keeping the newest 20), before it is overwritten. */
 function snapshot(base: string, rel: string) {
   const full = join(base, rel);
@@ -104,7 +108,8 @@ function snapshot(base: string, rel: string) {
   mkdirSync(vdir, { recursive: true });
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
   const meta = readMeta(base, rel);
-  writeFileSync(join(vdir, `${stamp}__${meta.by ?? 'unknown'}.md`), readFileSync(full));
+  // H17: "by" may hold a path ("ghost (from topics/a.md)"): a / or \ would turn the name into folders.
+  writeFileSync(join(vdir, `${stamp}__${safeName(meta.by ?? 'unknown')}.md`), readFileSync(full));
   const versions = readdirSync(vdir).filter((f) => f.endsWith('.md')).sort();
   for (const old of versions.slice(0, Math.max(0, versions.length - KEEP_VERSIONS))) {
     try {
@@ -118,7 +123,12 @@ export function write(userId: string, path: string, text: string, opts: { mode?:
   const { full, rel, base } = at(userId, path, opts.guest);
   if (!rel.endsWith('.md')) throw err(400, 'Memory files end in .md');
   mkdirSync(dirname(full), { recursive: true });
-  snapshot(base, rel);
+  // A version that can't be saved must never block the write itself (H17).
+  try {
+    snapshot(base, rel);
+  } catch (e) {
+    logError({ source: 'server', message: `Memory: could not keep a version of ${rel}`, detail: (e as Error).message });
+  }
   if (opts.mode === 'append' && existsSync(full)) {
     const prev = readFileSync(full, 'utf8');
     writeFileSync(full, `${prev}${prev.endsWith('\n') ? '' : '\n'}${text}`);
@@ -152,10 +162,19 @@ export function move(userId: string, from: string, to: string, by?: string, gues
   write(userId, to, readFileSync(b.full, 'utf8'), { by: by || 'owner', guest }); // record the move as a change (keeps a version)
 }
 
-/** Delete a file by moving it under archive/deleted (never really gone). */
+/** Delete a file by moving it under archive/deleted; a file already in archive/deleted is deleted for real (H14.2). */
 export function remove(userId: string, path: string, guest = false): void {
   const { full, rel, base } = at(userId, path, guest);
   if (!existsSync(full)) return;
+  if (rel.startsWith('archive/deleted/')) {
+    rmSync(full, { force: true });
+    for (const side of [metaPath(base, rel), versionDir(base, rel)]) {
+      try {
+        rmSync(side, { recursive: true, force: true });
+      } catch {}
+    }
+    return;
+  }
   const dest = join(base, 'archive', 'deleted', `${new Date().toISOString().replace(/[:.]/g, '-')}__${rel.split('/').join('__')}`);
   mkdirSync(dirname(dest), { recursive: true });
   renameSync(full, dest);
@@ -170,7 +189,8 @@ export function search(userId: string, query: string, guest = false, limit = 20)
   if (!q) return [];
   const base = root(userId, guest);
   const out: { path: string; title?: string; snippet: string }[] = [];
-  for (const f of tree(userId, guest)) {
+  // The archive holds old and deleted notes: never offered as an answer (H14.1).
+  for (const f of tree(userId, guest).filter((x) => !x.path.startsWith('archive/'))) {
     if (out.length >= limit) break;
     let content = '';
     try {

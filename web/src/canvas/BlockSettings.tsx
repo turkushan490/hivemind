@@ -654,6 +654,57 @@ function KindSettings(p: Props) {
           </p>
         </div>
       );
+    case 'agent': {
+      const ALL = ['readMemory', 'writeMemory', 'search', 'readProject', 'writeFiles', 'shell', 'browser', 'workflow', 'runWorkflow', 'askCharacter', 'sayNow', 'pause'];
+      const tools = p.config.agentTools ?? ['readMemory', 'search', 'sayNow'];
+      return (
+        <div className="space-y-2">
+          <label className="block space-y-1">
+            <Label>Task</Label>
+            <textarea className="input min-h-20 text-xs" placeholder="Empty: the text wired in. {{inputs}}, {{question}}, {{vars.x}} are filled in." value={p.config.prompt ?? ''} onChange={(e) => p.onChange({ prompt: e.target.value || undefined })} />
+          </label>
+          <div className="space-y-1">
+            <Label>Tools it may use</Label>
+            <div className="flex flex-wrap gap-1">
+              {ALL.map((t) => (
+                <button
+                  key={t}
+                  className={`rounded-md border px-2 py-0.5 text-xs ${tools.includes(t) ? 'border-pink-400 bg-pink-400/15 text-pink-100' : 'border-[#30363d] text-slate-500'}`}
+                  onClick={() => p.onChange({ agentTools: tools.includes(t) ? tools.filter((x) => x !== t) : [...tools, t] })}
+                >
+                  {t}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-3 text-xs text-slate-300">
+            <label className="flex items-center gap-1">
+              At most
+              <input className="input w-16 py-0.5 text-xs" type="number" min={1} max={50} placeholder="12" value={p.config.maxSteps ?? ''} onChange={(e) => p.onChange({ maxSteps: e.target.value ? Number(e.target.value) : undefined })} />
+              steps
+            </label>
+            <label className="flex items-center gap-1">
+              and
+              <input className="input w-16 py-0.5 text-xs" type="number" min={1} max={240} placeholder="20" value={p.config.maxMinutes ?? ''} onChange={(e) => p.onChange({ maxMinutes: e.target.value ? Number(e.target.value) : undefined })} />
+              minutes
+            </label>
+          </div>
+          {tools.includes('askCharacter') && (
+            <label className="block space-y-1">
+              <Label>Teammates answer through</Label>
+              <input className="input text-xs" placeholder="hivebot (the canvas, with vars.character = the teammate)" value={p.config.agentAskCanvas ?? ''} onChange={(e) => p.onChange({ agentAskCanvas: e.target.value || undefined })} />
+            </label>
+          )}
+          <label className="flex items-center gap-2 text-xs text-slate-300">
+            <input type="checkbox" checked={!!p.config.agentLog} onChange={(e) => p.onChange({ agentLog: e.target.checked || undefined })} />
+            Put the list of steps under the answer
+          </label>
+          <p className="rounded-md bg-pink-950/30 p-2 text-xs text-pink-200/90">
+            Every step shows on the block and in the run. It asks you (pause) before paying, ordering, sending or pushing to GitHub. Pick a model that follows JSON well (a 7B+ model or a cloud model).
+          </p>
+        </div>
+      );
+    }
     case 'workflow':
       return (
         <div className="space-y-2">

@@ -6,6 +6,7 @@ import { ACTION_NODES } from './actions.js';
 import { TRAINING_NODES } from './training.js';
 import { PROJECT_NODES, type PauseServices, type ProjectServices } from './projects.js';
 import { AGENT_NODES, type BrowserServices, type SandboxServices, type WorkspaceServices } from './agents.js';
+import { AGENT_NODE } from './agent.js';
 import { RESEARCH_NODES } from './research.js';
 import { VOICE_NODES } from './voice.js';
 
@@ -114,6 +115,8 @@ export interface NodeServices {
   browser?: BrowserServices;
   /** workflow block (H20): the characters' own workflows. */
   workspaces?: WorkspaceServices;
+  /** Agent askCharacter (H21): runs a canvas (id or name) with these vars and waits for its answer. */
+  askCanvas?(o: { canvas: string; question: string; vars: Record<string, string>; signal?: AbortSignal }): Promise<string>;
   /** runWorkflow block (H12): start another canvas as a background job (shows in /api/robot/jobs). */
   runCanvas?(o: { canvas: string; question: string; priority?: number; title?: string; character?: string }): Promise<{ jobId: string; runId: string; title: string }>;
 }
@@ -974,6 +977,7 @@ export const NODES: Record<NodeType, NodeDefinition> = {
   // ---- Projects ----
   ...PROJECT_NODES,
   ...AGENT_NODES,
+  agent: AGENT_NODE,
 
   // ---- Research ----
   ...RESEARCH_NODES,

@@ -1,7 +1,7 @@
 // Types shared by the server, the web UI and (later) the Android app.
 // The canvas format and run events are the contract between them.
 
-export const NODE_TYPES = ['input', 'llm', 'review', 'judge', 'output', 'router', 'debate', 'vote', 'decide', 'template', 'file', 'search', 'memory', 'readMemory', 'writeMemory', 'save', 'image', 'homeassistant', 'webhook', 'discord', 'generate', 'dataset', 'train', 'evaluate', 'deploy', 'readProject', 'writeFiles', 'updateNotes', 'git', 'build', 'pause', 'foreach', 'collect', 'deepSearch', 'panel', 'audioPrep', 'voiceDataset', 'voiceClone', 'speak', 'runWorkflow', 'sayNow', 'condition', 'shell', 'browser', 'workflow'] as const;
+export const NODE_TYPES = ['input', 'llm', 'review', 'judge', 'output', 'router', 'debate', 'vote', 'decide', 'template', 'file', 'search', 'memory', 'readMemory', 'writeMemory', 'save', 'image', 'homeassistant', 'webhook', 'discord', 'generate', 'dataset', 'train', 'evaluate', 'deploy', 'readProject', 'writeFiles', 'updateNotes', 'git', 'build', 'pause', 'foreach', 'collect', 'deepSearch', 'panel', 'audioPrep', 'voiceDataset', 'voiceClone', 'speak', 'runWorkflow', 'sayNow', 'condition', 'shell', 'browser', 'workflow', 'agent'] as const;
 export type NodeType = (typeof NODE_TYPES)[number];
 
 /** Which model a node uses: a configured provider plus a model id on it. */
@@ -148,6 +148,13 @@ export interface NodeConfig {
   /** workflow (H20): what to do (list | create | update | run | delete), whose workspace (default {{vars.character}}),
    * and after how many unused days a workflow it makes is deleted (default 7). The id goes in `canvas`. */
   wfOp?: 'list' | 'create' | 'update' | 'run' | 'delete';
+  /** Agent (H21): the tools it may use, at most this many steps (default 12) and minutes (default 20), the canvas that
+   * answers askCharacter (default "hivebot", with vars.character = the teammate), and the steps under the answer. */
+  agentTools?: string[];
+  maxSteps?: number;
+  maxMinutes?: number;
+  agentAskCanvas?: string;
+  agentLog?: boolean;
   workspace?: string;
   ttlDays?: number;
   internet?: boolean;

@@ -320,6 +320,35 @@ export function startRun(opts: {
                   return runShell({ ...o, key: o.project ? o.key : `${id}-${o.key}` });
                 },
               },
+              // Agent askCharacter (H21): a teammate answers through a canvas (the HiveBot front desk), as this owner.
+              askCanvas: async (o: { canvas: string; question: string; vars: Record<string, string>; signal?: AbortSignal }) => {
+                const runsApi = await import('../api/runs.js');
+                const u = opts.user ?? ({ id: opts.ownerId, username: 'owner', role: 'admin' } as User);
+                const row = runsApi.canvasFor(u, o.canvas) ?? runsApi.canvasesFor(u).find((r) => r.name.toLowerCase() === o.canvas.toLowerCase());
+                if (!row) return `There is no workflow "${o.canvas}" to ask`;
+                const sub = startRun({
+                  ownerId: opts.ownerId,
+                  user: opts.user,
+                  canvasId: row.id,
+                  graph: JSON.parse(row.graph) as CanvasGraph,
+                  question: o.question,
+                  vars: o.vars,
+                  resolve: opts.resolve,
+                  freeGpu: opts.freeGpu,
+                  source: `Agent: ${canvasName ?? source}`,
+                  priority,
+                });
+                const stop = () => cancelRun(sub, opts.user ?? opts.ownerId, 'The agent that asked stopped');
+                o.signal?.addEventListener('abort', stop, { once: true });
+                try {
+                  await runEnded(sub, 15 * 60_000);
+                  const snap = runSnapshot(sub, opts.ownerId);
+                  const done = snap?.events.find((e) => e.type === 'run_done');
+                  return done?.final ?? snap?.final ?? `${o.vars.character ?? 'The teammate'} gave no answer`;
+                } finally {
+                  o.signal?.removeEventListener('abort', stop);
+                }
+              },
               workspaces: {
                 list: (character: string) => ws.listWorkspace(opts.ownerId, character),
                 save: (character: string, o: { id: string; name?: string; graphText: string; ttlDays?: number; create: boolean }) => {

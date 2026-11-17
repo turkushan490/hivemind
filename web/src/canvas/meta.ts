@@ -136,6 +136,15 @@ export const NODE_META: Record<NodeType, NodeMeta> = {
     hasInput: true,
     hasOutput: true,
   },
+  agent: {
+    title: 'Agent',
+    color: '#f472b6',
+    group: 'Core',
+    description: 'A character that does a task itself with tools (memory, search, project files, shell, browser, its own workflows, teammates), step by step.',
+    usesModel: true,
+    hasInput: true,
+    hasOutput: true,
+  },
   workflow: {
     title: 'Workflow (make/run)',
     color: '#38bdf8',
@@ -430,7 +439,7 @@ export const NODE_META: Record<NodeType, NodeMeta> = {
 };
 
 export const PALETTE: { group: NodeGroup; types: NodeType[] }[] = [
-  { group: 'Core', types: ['input', 'llm', 'review', 'judge', 'output'] },
+  { group: 'Core', types: ['input', 'llm', 'agent', 'review', 'judge', 'output'] },
   { group: 'Logic', types: ['router', 'condition', 'workflow', 'decide', 'debate', 'vote', 'panel', 'pause', 'foreach', 'collect'] },
   { group: 'Data', types: ['template', 'file', 'search', 'deepSearch', 'memory'] },
   { group: 'Create', types: ['image', 'save'] },

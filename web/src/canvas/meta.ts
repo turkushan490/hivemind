@@ -136,6 +136,15 @@ export const NODE_META: Record<NodeType, NodeMeta> = {
     hasInput: true,
     hasOutput: true,
   },
+  shell: {
+    title: 'Shell',
+    color: '#a3e635',
+    group: 'Project',
+    description: 'Runs commands (bash or PowerShell) in a sandbox: build, test, make a Windows exe with Go or .NET, run it with Wine. Admins and HiveBot only.',
+    usesModel: false,
+    hasInput: true,
+    hasOutput: true,
+  },
   condition: {
     title: 'Condition',
     color: '#fb923c',
@@ -408,7 +417,7 @@ export const PALETTE: { group: NodeGroup; types: NodeType[] }[] = [
   { group: 'Data', types: ['template', 'file', 'search', 'deepSearch', 'memory'] },
   { group: 'Create', types: ['image', 'save'] },
   { group: 'Action', types: ['homeassistant', 'webhook', 'discord'] },
-  { group: 'Project', types: ['readProject', 'writeFiles', 'updateNotes', 'build', 'git'] },
+  { group: 'Project', types: ['readProject', 'writeFiles', 'updateNotes', 'build', 'git', 'shell'] },
   { group: 'Train', types: ['generate', 'dataset', 'train', 'evaluate', 'deploy'] },
   { group: 'Voice', types: ['audioPrep', 'voiceDataset', 'voiceClone', 'speak'] },
 ];

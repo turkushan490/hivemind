@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react';
 import { api } from '../api';
 import { toast } from '../notify';
 import { ModelPicker } from './ModelPicker';
-import { ForeachSettings, PauseSettings, ProjectBlockSettings, SkillsOption } from './ProjectSettings';
+import { ForeachSettings, PauseSettings, ProjectBlockSettings, ProjectPicker, SkillsOption } from './ProjectSettings';
 
 interface Props {
   nodeId: string;
@@ -605,6 +605,55 @@ function KindSettings(p: Props) {
     case 'git':
     case 'build':
       return <ProjectBlockSettings {...p} />;
+    case 'shell':
+      return (
+        <div className="space-y-2">
+          <Segmented
+            value={p.config.shellKind ?? 'bash'}
+            options={[
+              ['bash', 'bash'],
+              ['pwsh', 'PowerShell'],
+            ]}
+            onChange={(v) => p.onChange({ shellKind: v as 'bash' | 'pwsh' })}
+          />
+          <label className="block space-y-1">
+            <Label>Commands</Label>
+            <textarea
+              className="input min-h-28 font-mono text-xs"
+              placeholder={'go version\nGOOS=windows GOARCH=amd64 go build -o dist/hello.exe .\nxvfb-run -a wine dist/hello.exe'}
+              value={p.config.commands ?? ''}
+              onChange={(e) => p.onChange({ commands: e.target.value || undefined })}
+            />
+            <span className="text-xs text-slate-500">Empty: the commands the block before wrote (a ```bash block is fine). <code>{'{{inputs}}'}</code> and <code>{'{{vars.x}}'}</code> are filled in.</span>
+          </label>
+          <div className="space-y-1">
+            <Label>Project (optional)</Label>
+            <ProjectPicker value={p.config.project} onChange={(project) => p.onChange({ project })} />
+            <span className="text-xs text-slate-500">Its files are copied into the sandbox; dist/, out/ or build/ come back into the project (an .exe too).</span>
+          </div>
+          <label className="flex items-center gap-2 text-xs text-slate-300">
+            Time limit
+            <input className="input w-24 py-0.5 text-xs" type="number" min={5} max={3600} placeholder="120" value={p.config.timeoutSec ?? ''} onChange={(e) => p.onChange({ timeoutSec: e.target.value ? Number(e.target.value) : undefined })} />
+            seconds
+          </label>
+          <label className="flex items-center gap-2 text-xs text-slate-300">
+            <input type="checkbox" checked={p.config.network !== false} onChange={(e) => p.onChange({ network: e.target.checked ? undefined : false })} />
+            Network (off blocks downloads through a proxy; best effort)
+          </label>
+          <label className="flex items-center gap-2 text-xs text-slate-300">
+            <input type="checkbox" checked={!!p.config.keepFiles} onChange={(e) => p.onChange({ keepFiles: e.target.checked || undefined })} />
+            Keep the sandbox's files for the next run
+          </label>
+          <label className="flex items-center gap-2 text-xs text-slate-300">
+            <input type="checkbox" checked={!!p.config.failOnError} onChange={(e) => p.onChange({ failOnError: e.target.checked || undefined })} />
+            Fail the block when a command fails (else the output goes on with its exit code)
+          </label>
+          <p className="rounded-md bg-lime-950/30 p-2 text-xs text-lime-200/90">
+            Runs as a separate user in /data/sandbox, without HiveMind&apos;s data or secrets. Has bash, PowerShell, git, node/npm, python3, Go, .NET 8, gcc, zip/7z, Wine and xvfb-run.
+            Disk wipes, mounts, Docker and ssh to the LAN are refused.
+          </p>
+        </div>
+      );
     case 'pause':
       return <PauseSettings {...p} />;
     case 'foreach':

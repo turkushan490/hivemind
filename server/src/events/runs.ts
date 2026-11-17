@@ -308,6 +308,18 @@ export function startRun(opts: {
         // Projects: the runner's own. Not for limited API tokens, except a robot's own token — the robot starts its
         // own project jobs (build/fix a HiveMind project by voice) when the PC app is off (H7).
         ...((!opts.user?.scope || opts.user.scope.robot) && { projects: projectServicesFor(fileUser, { id, source: canvasName ? `Run: ${canvasName}` : `Run: ${source}` }) }),
+        // Shell (H18): only for a full admin, or the robot in a HiveBot workflow (its own canvases, H20).
+        ...((!opts.user?.scope && (opts.user?.role ?? 'admin') === 'admin') || (opts.user?.scope?.robot && /^hivebot/i.test(canvasName ?? ''))
+          ? {
+              sandbox: {
+                run: async (o: Parameters<NonNullable<NodeServices['sandbox']>['run']>[0]) => {
+                  const { runShell } = await import('../services/sandbox.js');
+                  // Without a project each run gets its own folder.
+                  return runShell({ ...o, key: o.project ? o.key : `${id}-${o.key}` });
+                },
+              },
+            }
+          : {}),
         // Memory as MD files (H11): the owner's memory, for readMemory / writeMemory. The robot's own token may use it too.
         ...((!opts.user?.scope || opts.user.scope.robot) && {
           memoryFiles: {

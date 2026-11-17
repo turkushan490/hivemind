@@ -77,6 +77,16 @@ RUN /opt/unsloth-venv/bin/pip install --no-cache-dir --quiet --target /opt/voice
 # /data/whisper/fast from Settings → Voice.
 RUN /opt/unsloth-venv/bin/pip install --no-cache-dir --quiet --target /opt/voice-lib --no-deps faster-whisper==1.2.1 ctranslate2==4.9.0  && rm -rf /opt/voice-lib/bin && PYTHONPATH=/opt/voice-lib:/opt/kokoro-lib /opt/unsloth-venv/bin/python -c 'import sys, types; sys.modules.setdefault("av", types.ModuleType("av")); import yaml, tqdm, onnxruntime, ctranslate2, faster_whisper; print("fast speech ok", ctranslate2.__version__, faster_whisper.__version__)'
 COPY server/voice/worker.py ./server/voice/worker.py
+# The Shell block's sandbox (HiveBot H18): build and run code, make Windows .exe files without Windows. Go and the .NET 8
+# SDK cross-build for Windows, Wine (64-bit) + Xvfb start an .exe headless, PowerShell 7 for pwsh scripts.
+ARG PWSH_VERSION=7.4.6
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      zip unzip p7zip-full xvfb xauth wine wine64 golang-go dotnet-sdk-8.0 python3-venv python3-pip curl ca-certificates libicu74 \
+ && rm -rf /var/lib/apt/lists/* \
+ && curl -fsSL "https://github.com/PowerShell/PowerShell/releases/download/v${PWSH_VERSION}/powershell-${PWSH_VERSION}-linux-x64.tar.gz" -o /tmp/pwsh.tgz \
+ && mkdir -p /opt/microsoft/powershell/7 && tar -xzf /tmp/pwsh.tgz -C /opt/microsoft/powershell/7 && rm /tmp/pwsh.tgz \
+ && chmod +x /opt/microsoft/powershell/7/pwsh && ln -sf /opt/microsoft/powershell/7/pwsh /usr/local/bin/pwsh \
+ && go version && dotnet --version && pwsh -NoLogo -NoProfile -Command '$PSVersionTable.PSVersion.ToString()' && wine --version && command -v xvfb-run
 # Skills that come with HiveMind (the workflow guide), installed and shared at start.
 COPY server/skills ./server/skills
 RUN (ldconfig -p | grep -q 'libgomp.so.1' || (apt-get update && apt-get install -y --no-install-recommends libgomp1 && rm -rf /var/lib/apt/lists/*))  && (cat /opt/colibri/build.json 2>/dev/null || echo 'colibri: not in this image')

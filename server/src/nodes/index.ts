@@ -5,6 +5,7 @@ import { DECIDE_NODE, DEFAULT_THRESHOLD, toView } from './decide.js';
 import { ACTION_NODES } from './actions.js';
 import { TRAINING_NODES } from './training.js';
 import { PROJECT_NODES, type PauseServices, type ProjectServices } from './projects.js';
+import { AGENT_NODES, type SandboxServices } from './agents.js';
 import { RESEARCH_NODES } from './research.js';
 import { VOICE_NODES } from './voice.js';
 
@@ -107,6 +108,8 @@ export interface NodeServices {
     move(from: string, to: string, by?: string, guest?: boolean): void;
     remove?(path: string, guest?: boolean): void;
   };
+  /** Shell block (H18): commands in /data/sandbox (admins and HiveBot workflows only). */
+  sandbox?: SandboxServices;
   /** runWorkflow block (H12): start another canvas as a background job (shows in /api/robot/jobs). */
   runCanvas?(o: { canvas: string; question: string; priority?: number; title?: string; character?: string }): Promise<{ jobId: string; runId: string; title: string }>;
 }
@@ -966,6 +969,7 @@ export const NODES: Record<NodeType, NodeDefinition> = {
 
   // ---- Projects ----
   ...PROJECT_NODES,
+  ...AGENT_NODES,
 
   // ---- Research ----
   ...RESEARCH_NODES,

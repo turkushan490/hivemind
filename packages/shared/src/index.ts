@@ -1,7 +1,7 @@
 // Types shared by the server, the web UI and (later) the Android app.
 // The canvas format and run events are the contract between them.
 
-export const NODE_TYPES = ['input', 'llm', 'review', 'judge', 'output', 'router', 'debate', 'vote', 'decide', 'template', 'file', 'search', 'memory', 'readMemory', 'writeMemory', 'save', 'image', 'homeassistant', 'webhook', 'discord', 'generate', 'dataset', 'train', 'evaluate', 'deploy', 'readProject', 'writeFiles', 'updateNotes', 'git', 'build', 'pause', 'foreach', 'collect', 'deepSearch', 'panel', 'audioPrep', 'voiceDataset', 'voiceClone', 'speak', 'runWorkflow', 'sayNow', 'condition'] as const;
+export const NODE_TYPES = ['input', 'llm', 'review', 'judge', 'output', 'router', 'debate', 'vote', 'decide', 'template', 'file', 'search', 'memory', 'readMemory', 'writeMemory', 'save', 'image', 'homeassistant', 'webhook', 'discord', 'generate', 'dataset', 'train', 'evaluate', 'deploy', 'readProject', 'writeFiles', 'updateNotes', 'git', 'build', 'pause', 'foreach', 'collect', 'deepSearch', 'panel', 'audioPrep', 'voiceDataset', 'voiceClone', 'speak', 'runWorkflow', 'sayNow', 'condition', 'shell'] as const;
 export type NodeType = (typeof NODE_TYPES)[number];
 
 /** Which model a node uses: a configured provider plus a model id on it. */
@@ -139,6 +139,14 @@ export interface NodeConfig {
   /** readMemory / writeMemory: who the change is by (owner / a character / a job), and the guest memory sub-tree. */
   memoryBy?: string;
   memoryGuest?: boolean;
+  /** Shell (H18): bash or PowerShell, the commands ({{inputs}} filled; empty = what the block before wrote), the time
+   * limit (5–3600 s, default 120), network (default on), keep the sandbox's files between runs, fail on a non-zero exit. */
+  shellKind?: 'bash' | 'pwsh';
+  commands?: string;
+  timeoutSec?: number;
+  network?: boolean;
+  keepFiles?: boolean;
+  failOnError?: boolean;
   /** Router (H14.3): route by this value ("{{vars.character}}") to the branch with that name, without a model. */
   routeBy?: string;
   /** Template (H14.7): the inputs as they are, without "### label" headers. */

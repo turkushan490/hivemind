@@ -44,7 +44,7 @@ export function lockDataDir() {
   try {
     chmodSync(config.dataDir, 0o711);
     for (const name of readdirSync(config.dataDir)) {
-      if (name === 'builds' || name === 'cache') continue;
+      if (name === 'builds' || name === 'cache' || name === 'sandbox') continue;
       const full = join(config.dataDir, name);
       const st = lstatSync(full);
       if (st.isSymbolicLink()) continue;
@@ -54,6 +54,9 @@ export function lockDataDir() {
     chmodSync(buildsDir, 0o711);
     mkdirSync(npmCacheDir, { recursive: true });
     chmodSync(join(config.dataDir, 'cache'), 0o711);
+    // The Shell block's sandbox (H18): each folder in it belongs to the build user.
+    mkdirSync(join(config.dataDir, 'sandbox'), { recursive: true });
+    chmodSync(join(config.dataDir, 'sandbox'), 0o711);
     chownSync(npmCacheDir, user.uid, user.gid);
   } catch (e) {
     console.warn(`Could not lock the data folder for builds: ${(e as Error).message}`);

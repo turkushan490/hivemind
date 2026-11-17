@@ -5,6 +5,7 @@ import { requireAdmin, requireUser } from './auth.js';
 import { KOKORO_VOICES, kokoroAvailable } from '../services/kokoro.js';
 import { listClonedVoices, previousVoice, saveVoiceEngineSettings, voiceEngineAvailable, voiceEngineSettings } from '../services/voiceTraining.js';
 import { deleteWhisperModel, downloadWhisperModel, WHISPER_MODELS, whisperStatus } from '../services/whisper.js';
+import { deleteFastWhisperModel, downloadFastWhisperModel, FAST_WHISPER_MODELS, fastWhisperStatus } from '../services/fastWhisper.js';
 
 const MAX_AUDIO = 25 * 1024 * 1024;
 const MAX_SPEAK = 4096;
@@ -59,6 +60,21 @@ export function voiceRoutes(app: FastifyInstance) {
   /** Delete a downloaded Whisper model. */
   app.delete('/api/voice/whisper/:id', { preHandler: requireAdmin }, async (req) => {
     deleteWhisperModel((req.params as { id: string }).id);
+    return { ok: true };
+  });
+
+  /** The fast engine (faster-whisper): whether it ships here, each model's size / downloaded / progress, and the chosen one. */
+  app.get('/api/voice/fast-whisper', { preHandler: requireUser }, async () => fastWhisperStatus(voiceSettings().fastWhisperModel ?? 'large-v3-turbo'));
+
+  app.post('/api/voice/fast-whisper/:id/download', { preHandler: requireAdmin }, async (req, reply) => {
+    const id = (req.params as { id: string }).id;
+    if (!FAST_WHISPER_MODELS.some((m) => m.id === id)) return reply.code(404).send({ error: 'No such fast Whisper model' });
+    downloadFastWhisperModel(id).catch((err) => logError({ source: 'voice', message: `Fast Whisper download (${id}): ${(err as Error).message}` }));
+    return { started: true };
+  });
+
+  app.delete('/api/voice/fast-whisper/:id', { preHandler: requireAdmin }, async (req) => {
+    deleteFastWhisperModel((req.params as { id: string }).id);
     return { ok: true };
   });
 

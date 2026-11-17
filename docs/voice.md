@@ -7,6 +7,28 @@ Everything is set up in **Settings → Voice** (admins change it; everyone uses 
 
 ## Speech to text
 
+There are three engines. Pick one in **Settings → Voice → Speech to text**.
+
+### Built-in, fast (faster-whisper) — Docker image
+
+[faster-whisper](https://github.com/SYSTRAN/faster-whisper) (MIT) runs inside HiveMind's voice engine, the same worker that speaks cloned voices.
+
+- **The model stays loaded** between recordings (until the voice engine has been idle for its "keep loaded" time), so the microphone, the Voice trainer and the check on cloned voices don't load it again for every clip.
+- **GPU when it has room:** it follows the Voice engine's device setting. On *auto* it uses the GPU when that has enough free memory for the model (about 2.5 GB for Large v3 Turbo), so ComfyUI and Ollama are never pushed out. Otherwise it runs on the processor (int8), and it moves back to the GPU once there is room again.
+- **Models:** download one in the list and pick it.
+  - **Large v3 Turbo** (recommended with a GPU): about large-v3 accuracy, many languages including Dutch.
+  - **Small:** quick on the processor.
+  - **Medium**, **Large v3**, **Distil Large v3** (English only), **Base** and **Tiny** are also offered.
+  - Models are stored in `/data/whisper/fast`.
+- **Fallback:** if the fast engine fails (for example the GPU libraries don't load), the local whisper.cpp engine below takes over when it has a downloaded model, and the reason is logged in **Problems**. When the GPU failed but the processor worked, that is logged in Problems too.
+- **Not switched off with cloned voices:** it works even when the Voice engine is switched off for cloned voices.
+
+### Built-in (whisper.cpp)
+
+A small CPU program that ships in the Docker image and in the Windows app. It loads the model for every recording, so it is slower than the fast engine on bigger models. Models are stored in `/data/whisper/models`.
+
+### Speech server
+
 HiveMind uses any server with the OpenAI `POST /audio/transcriptions` endpoint:
 
 | Choice | Address | Model | Key |
@@ -42,5 +64,6 @@ Markdown, links and code blocks are stripped before the text is spoken. Answers 
 - `POST /api/voice/transcribe`: the body is the raw recording (`audio/*`); the answer is `{ "text": "…" }`.
 - `POST /api/voice/speak`: the body is `{ "text": "…" }`; the answer is the audio (`audio/mpeg`).
 - `GET`/`PUT /api/settings/voice`: keys are never sent back, only whether one is saved.
+- `GET /api/voice/fast-whisper`, `POST /api/voice/fast-whisper/:id/download`, `DELETE /api/voice/fast-whisper/:id`: the fast engine's models (download and delete are for admins); `/api/voice/whisper/…` does the same for whisper.cpp.
 
 Both routes accept the session cookie or an API token. A phone app can use them too.

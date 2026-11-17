@@ -62,6 +62,27 @@ const python = () => [process.env.VOICE_PYTHON, '/opt/unsloth-venv/bin/python', 
 /** The image has the voice engine (or a test stands in for it). */
 export const voiceEngineAvailable = () => !!state.launch || (existsSync(join(state.lib, 'qwen_tts')) && !!script());
 
+/** The image has fast speech to text (faster-whisper in the voice worker), or a test stands in for it. */
+export const fastSttAvailable = () => !!state.launch || (existsSync(join(state.lib, 'faster_whisper')) && !!script());
+
+/**
+ * CUDA libraries the image's PyTorch ships as pip packages (cuBLAS, cuDNN, …): faster-whisper's engine (CTranslate2)
+ * looks for them by name, so the worker gets their folders on LD_LIBRARY_PATH. Empty on a machine without them.
+ */
+function cudaLibDirs(): string[] {
+  const py = python();
+  const venv = resolve(dirname(py), '..');
+  const out: string[] = [];
+  try {
+    for (const lib of readdirSync(join(venv, 'lib')).filter((d) => d.startsWith('python3'))) {
+      const nv = join(venv, 'lib', lib, 'site-packages', 'nvidia');
+      if (!existsSync(nv)) continue;
+      for (const pkg of readdirSync(nv)) if (existsSync(join(nv, pkg, 'lib'))) out.push(join(nv, pkg, 'lib'));
+    }
+  } catch {}
+  return out;
+}
+
 let proc: ChildProcess | undefined;
 let starting: Promise<string> | undefined;
 let idle: NodeJS.Timeout | undefined;
@@ -83,9 +104,10 @@ async function healthy(): Promise<boolean> {
   }
 }
 
-function ensureWorker(): Promise<string> {
-  if (!voiceEngineAvailable()) return Promise.reject(new Error('This HiveMind image has no voice engine (Qwen3-TTS)'));
-  if (!voiceEngineSettings().enabled) return Promise.reject(new Error('The voice engine is off (Settings → Voice → Voice engine)'));
+/** `stt`: for speech to text, which has its own switch (Settings → Voice → Speech to text), not the cloned-voices one. */
+function ensureWorker(stt = false): Promise<string> {
+  if (stt ? !fastSttAvailable() : !voiceEngineAvailable()) return Promise.reject(new Error(stt ? 'This HiveMind image has no fast speech engine (faster-whisper)' : 'This HiveMind image has no voice engine (Qwen3-TTS)'));
+  if (!stt && !voiceEngineSettings().enabled) return Promise.reject(new Error('The voice engine is off (Settings → Voice → Voice engine)'));
   touch();
   const base = `http://127.0.0.1:${state.port}`;
   if (proc && proc.exitCode === null) return starting ?? Promise.resolve(base);
@@ -93,7 +115,13 @@ function ensureWorker(): Promise<string> {
     mkdirSync(state.modelsDir, { recursive: true });
     const { cmd, args } = state.launch ? state.launch(state.port) : { cmd: python(), args: [script()!, String(state.port), state.modelsDir] };
     const child = spawn(cmd, args, {
-      env: { ...process.env, PYTHONPATH: [state.lib, state.extraLib].join(':'), PYTHONUNBUFFERED: '1', HF_HUB_DISABLE_PROGRESS_BARS: '1' },
+      env: {
+        ...process.env,
+        PYTHONPATH: [state.lib, state.extraLib].join(':'),
+        PYTHONUNBUFFERED: '1',
+        HF_HUB_DISABLE_PROGRESS_BARS: '1',
+        LD_LIBRARY_PATH: [...cudaLibDirs(), process.env.LD_LIBRARY_PATH].filter(Boolean).join(':'),
+      },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     proc = child;
@@ -131,8 +159,25 @@ export async function stopVoiceWorker() {
 }
 process.once('exit', () => proc?.kill('SIGTERM'));
 
-async function call(path: string, body: unknown, timeoutMs: number): Promise<Response> {
-  const base = await ensureWorker();
+/** What the worker has loaded right now, without starting it (undefined when it is not running). */
+export async function voiceWorkerStatus(): Promise<{ loaded?: string | null; stt?: string | null; sttDevice?: string | null } | undefined> {
+  if (!proc || proc.exitCode !== null) return undefined;
+  try {
+    const res = await fetch(`http://127.0.0.1:${state.port}/health`, { signal: AbortSignal.timeout(2000) });
+    return res.ok ? ((await res.json()) as { stt?: string | null }) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Speech to text in the worker (starts it when needed). */
+export async function workerTranscribe(body: { file: string; model: string; name: string; language?: string; device: 'auto' | 'cpu' }, timeoutMs: number) {
+  const res = await call('/transcribe', body, timeoutMs, true);
+  return (await res.json()) as { text: string; language?: string; device: string; seconds: number; ms: number; note?: string };
+}
+
+async function call(path: string, body: unknown, timeoutMs: number, stt = false): Promise<Response> {
+  const base = await ensureWorker(stt);
   inFlight++;
   let res: Response;
   try {

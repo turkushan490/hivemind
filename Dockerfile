@@ -72,6 +72,10 @@ COPY server/kokoro/serve.py ./server/kokoro/serve.py
 # folder (the training stack keeps its own versions); onnxruntime and soundfile come from /opt/kokoro-lib. Its model
 # (~2.5 GB) is downloaded into /data/models/voice the first time a voice speaks.
 RUN /opt/unsloth-venv/bin/pip install --no-cache-dir --quiet --target /opt/voice-lib --no-deps qwen-tts==0.1.1 transformers==4.57.3 accelerate==1.12.0 sox==1.5.0 tokenizers==0.22.1 'huggingface_hub<1.0'  && rm -rf /opt/voice-lib/bin && PYTHONPATH=/opt/voice-lib:/opt/kokoro-lib /opt/unsloth-venv/bin/python -c 'import qwen_tts; print("voice engine ok")'
+# Fast speech to text in the same worker: faster-whisper (MIT) on CTranslate2 (MIT), next to Qwen3-TTS. No PyAV (ffmpeg
+# decodes, the worker stands in for it); the GPU uses the CUDA 12 libraries PyTorch already ships. Models download into
+# /data/whisper/fast from Settings → Voice.
+RUN /opt/unsloth-venv/bin/pip install --no-cache-dir --quiet --target /opt/voice-lib --no-deps faster-whisper==1.2.1 ctranslate2==4.9.0  && rm -rf /opt/voice-lib/bin && PYTHONPATH=/opt/voice-lib:/opt/kokoro-lib /opt/unsloth-venv/bin/python -c 'import sys, types; sys.modules.setdefault("av", types.ModuleType("av")); import yaml, tqdm, onnxruntime, ctranslate2, faster_whisper; print("fast speech ok", ctranslate2.__version__, faster_whisper.__version__)'
 COPY server/voice/worker.py ./server/voice/worker.py
 # Skills that come with HiveMind (the workflow guide), installed and shared at start.
 COPY server/skills ./server/skills

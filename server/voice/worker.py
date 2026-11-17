@@ -1,4 +1,5 @@
-"""HiveMind's voice worker: audio prep for voice datasets, and cloned voices with Qwen3-TTS (Apache 2.0).
+"""HiveMind's voice worker: audio prep for voice datasets, cloned voices with Qwen3-TTS (Apache 2.0), and fast
+speech to text with faster-whisper (MIT; CTranslate2, MIT).
 
 Started by HiveMind on 127.0.0.1 when needed, stopped after a while without requests.
 Usage: worker.py <port> <models dir>
@@ -24,6 +25,9 @@ MODEL_ID = "Qwen/Qwen3-TTS-12Hz-0.6B-Base"
 SR = 24000
 lock = threading.Lock()
 state = {"model": None, "device": None, "prompts": {}, "want": "auto"}
+# Speech to text has its own lock: a microphone question never waits for a cloned voice that is still speaking.
+stt_lock = threading.Lock()
+stt = {"model": None, "key": None, "device": None}
 
 
 def log(*a):
@@ -32,9 +36,9 @@ def log(*a):
 
 # ---- audio prep ----
 
-def to_wav(src: str) -> np.ndarray:
-    """Any audio or video file → 24 kHz mono float32 (ffmpeg)."""
-    p = subprocess.run(["ffmpeg", "-loglevel", "error", "-i", src, "-vn", "-ac", "1", "-ar", str(SR), "-f", "f32le", "pipe:1"], capture_output=True, timeout=1800)
+def to_wav(src: str, rate: int = SR) -> np.ndarray:
+    """Any audio or video file → mono float32 at `rate` (24 kHz for voices, 16 kHz for speech to text) with ffmpeg."""
+    p = subprocess.run(["ffmpeg", "-loglevel", "error", "-i", src, "-vn", "-ac", "1", "-ar", str(rate), "-f", "f32le", "pipe:1"], capture_output=True, timeout=1800)
     if p.returncode != 0:
         raise RuntimeError(f"ffmpeg could not read {os.path.basename(src)}: {p.stderr.decode()[-300:]}")
     return np.frombuffer(p.stdout, dtype=np.float32).copy()
@@ -249,6 +253,109 @@ def speak(body: dict):
     return w, sr, device
 
 
+# ---- speech to text (faster-whisper) ----
+
+# GPU memory a model needs in float16, with room for decoding; below that the CPU (int8) is used, so ComfyUI and Ollama
+# are never pushed out.
+STT_NEED = {"tiny": 0.6e9, "base": 0.8e9, "small": 1.3e9, "medium": 2.6e9, "large-v3-turbo": 2.4e9, "distil-large-v3": 2.4e9, "large-v3": 4.2e9}
+
+
+def whisper_class():
+    """faster-whisper imports PyAV only for its own audio decoding, which HiveMind never uses (ffmpeg decodes, as for
+    voices): an empty stand-in keeps PyAV out of the image."""
+    try:
+        import av  # noqa: F401
+    except ImportError:
+        import types
+
+        sys.modules["av"] = types.ModuleType("av")
+    from faster_whisper import WhisperModel
+
+    return WhisperModel
+
+
+def stt_unload():
+    if stt["model"] is None:
+        return
+    stt.update(model=None, key=None, device=None)
+    gc.collect()
+
+
+def stt_device(want: str, name: str) -> str:
+    """auto: the GPU when it has room for this model (a model that fell back to the CPU moves back once there is room)."""
+    if want == "cpu":
+        return "cpu"
+    try:
+        import ctranslate2
+
+        if ctranslate2.get_cuda_device_count() < 1:
+            return "cpu"
+        if stt["device"] == "cuda" and stt["key"] == name:
+            return "cuda"
+        import torch
+
+        need = STT_NEED.get(name, 2.5e9) + (0.5e9 if stt["device"] == "cpu" else 0)
+        if torch.cuda.mem_get_info()[0] > need:
+            return "cuda"
+    except Exception as e:
+        log(f"speech to text: no GPU ({e})")
+    return "cpu"
+
+
+def stt_load(path: str, name: str, device: str):
+    if stt["model"] is not None and stt["key"] == name and stt["device"] == device:
+        return stt["model"]
+    stt_unload()
+    WhisperModel = whisper_class()
+    t = time.time()
+    if device == "cuda":
+        model = WhisperModel(path, device="cuda", compute_type="float16")
+    else:
+        model = WhisperModel(path, device="cpu", compute_type="int8", cpu_threads=max(4, (os.cpu_count() or 8) // 2))
+    stt.update(model=model, key=name, device=device)
+    log(f"speech to text: {name} loaded on {device} in {time.time() - t:.1f}s")
+    return model
+
+
+def stt_run(model, audio: np.ndarray, language, vad: bool) -> tuple:
+    segments, info = model.transcribe(audio, language=language, beam_size=5, vad_filter=vad, condition_on_previous_text=False)
+    # The segments come lazily: joining them is where the work happens.
+    return " ".join(s.text.strip() for s in segments).strip(), info
+
+
+def transcribe(body: dict) -> dict:
+    """Body: file (any audio), model (its folder), name (e.g. small), language (empty = detect), device (auto / cpu)."""
+    name = str(body.get("name") or "small")
+    lang = str(body.get("language") or "").strip() or None
+    if name.endswith(".en") or name.startswith("distil-"):
+        lang = "en"
+    audio = to_wav(body["file"], 16000)
+    if audio.size < 1600:
+        raise ValueError("the recording is shorter than 0.1 s")
+    t = time.time()
+    device = stt_device(str(body.get("device") or "auto"), name)
+    note = ""
+    try:
+        model = stt_load(body["model"], name, device)
+        text, info = stt_run(model, audio, lang, True)
+    except Exception as e:  # GPU libraries missing or out of GPU memory: the CPU, and the reason goes back to HiveMind
+        if device != "cuda":
+            raise
+        note = f"the GPU did not work ({str(e)[:200]}), used the CPU"
+        log(f"speech to text: {note}")
+        stt_unload()
+        device = "cpu"
+        model = stt_load(body["model"], name, "cpu")
+        text, info = stt_run(model, audio, lang, True)
+    # Voice activity detection drops silence (no made-up "Thank you." on a quiet clip), but can drop a very short, soft
+    # word as well: nothing heard in a short clip gets one more try without it.
+    if not text and audio.size < 16000 * 30:
+        text, info = stt_run(model, audio, lang, False)
+    ms = int((time.time() - t) * 1000)
+    log(f"speech to text: {audio.size / 16000:.1f}s audio in {ms}ms on {device} ({name})")
+    return {"text": text, "language": info.language, "device": device, "seconds": round(audio.size / 16000, 2), "ms": ms, **({"note": note} if note else {})}
+
+
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, *a):
         pass
@@ -264,7 +371,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.path == "/health":
-            return self.send(200, json.dumps({"ok": True, "loaded": state["device"]}).encode())
+            return self.send(200, json.dumps({"ok": True, "loaded": state["device"], "stt": stt["key"], "sttDevice": stt["device"]}).encode())
         self.send(404, b'{"error":"not found"}')
 
     def do_POST(self):
@@ -283,9 +390,14 @@ class Handler(BaseHTTPRequestHandler):
                     data = f.read()
                 os.unlink(tmp)
                 return self.send(200, data, "audio/wav", {"x-voice-device": device})
+            if self.path == "/transcribe":
+                with stt_lock:
+                    return self.send(200, json.dumps(transcribe(body)).encode())
             if self.path == "/unload":
                 with lock:
                     unload()
+                with stt_lock:
+                    stt_unload()
                 return self.send(200, b'{"ok":true}')
             self.send(404, b'{"error":"not found"}')
         except Exception as e:

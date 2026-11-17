@@ -4,6 +4,9 @@ import { db, getSetting, setSetting } from '../db/index.js';
 import { ensureKokoro, KOKORO_VOICES, kokoroAvailable } from './kokoro.js';
 import { isCloneVoice, listClonedVoices, speakClone } from './voiceTraining.js';
 import { whisperAvailable, whisperTranscribe } from './whisper.js';
+import { fastWhisperReady, fastWhisperTranscribe } from './fastWhisper.js';
+import { fastSttAvailable } from './voiceTraining.js';
+import { logError } from '../errors.js';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { config } from '../config.js';
@@ -14,8 +17,10 @@ import { config } from '../config.js';
  * or any OpenAI-compatible /audio/speech (OpenAI, Kokoro, Piper).
  */
 interface Stored {
-  sttEngine?: 'server' | 'builtin';
+  /** builtin: whisper.cpp (CPU, one process per recording); fast: faster-whisper in the voice worker (GPU when free). */
+  sttEngine?: 'server' | 'builtin' | 'fast';
   whisperModel?: string;
+  fastWhisperModel?: string;
   sttUrl?: string;
   sttKey?: string;
   sttModel?: string;
@@ -30,6 +35,8 @@ interface Stored {
 }
 
 const KEY = 'voice';
+/** The fast engine's model when none was picked yet. */
+const FAST_DEFAULT = 'large-v3-turbo';
 
 function load(): Stored {
   try {
@@ -53,11 +60,13 @@ export function voiceSettings(): VoiceSettings {
     sttEngine: engine,
     whisperModel: s.whisperModel,
     builtinStt: whisperAvailable(),
+    fastStt: fastSttAvailable(),
+    fastWhisperModel: s.fastWhisperModel,
     sttUrl: s.sttUrl,
     sttModel: s.sttModel,
     sttLanguage: s.sttLanguage,
     hasSttKey: !!s.sttKey,
-    sttReady: engine === 'builtin' ? builtinSttReady(s) : !!s.sttUrl,
+    sttReady: engine === 'builtin' ? builtinSttReady(s) : engine === 'fast' ? fastWhisperReady(s.fastWhisperModel || FAST_DEFAULT) : !!s.sttUrl,
     ttsMode: s.ttsMode ?? 'browser',
     ttsUrl: s.ttsUrl,
     ttsModel: s.ttsModel,
@@ -97,8 +106,9 @@ export function saveVoiceSettings(patch: Partial<Omit<VoiceSettings, 'hasSttKey'
   const voices = patch.appVoices !== undefined ? cleanVoices(patch.appVoices) : undefined;
   const s = load();
   const next: Stored = {
-    sttEngine: patch.sttEngine === 'server' || patch.sttEngine === 'builtin' ? patch.sttEngine : s.sttEngine,
+    sttEngine: patch.sttEngine === 'server' || patch.sttEngine === 'builtin' || patch.sttEngine === 'fast' ? patch.sttEngine : s.sttEngine,
     whisperModel: text(patch.whisperModel, s.whisperModel),
+    fastWhisperModel: text(patch.fastWhisperModel, s.fastWhisperModel),
     sttUrl: patch.sttUrl !== undefined ? cleanUrl(patch.sttUrl) : s.sttUrl,
     sttKey: key(patch.sttKey, s.sttKey),
     sttModel: text(patch.sttModel, s.sttModel),
@@ -163,6 +173,19 @@ export async function transcribe(audio: Buffer, mime: string, userId: string): P
   if (audio.length < 100) throw new Error('The recording is empty');
   // Built-in whisper.cpp: the browser sends a 16 kHz mono WAV; run it locally with the chosen model.
   const engine = s.sttEngine ?? (whisperAvailable() ? 'builtin' : 'server');
+  if (engine === 'fast') {
+    const model = s.fastWhisperModel || FAST_DEFAULT;
+    try {
+      return await fastWhisperTranscribe(audio, model, s.sttLanguage);
+    } catch (err) {
+      // A recording that took too long is not tried again (it would take even longer); anything else falls back to
+      // whisper.cpp when it has a model, and the reason is logged so the fast engine's problem stays visible.
+      const cpp = s.whisperModel || 'base';
+      if (/took too long/.test((err as Error).message) || !builtinSttReady(s)) throw err;
+      logError({ source: 'voice', message: `Fast speech to text failed, used whisper.cpp (${cpp}) instead: ${(err as Error).message}` });
+      return whisperTranscribe(audio, cpp, s.sttLanguage);
+    }
+  }
   if (engine === 'builtin') {
     if (!whisperAvailable()) throw new Error('The built-in speech engine is not in this build — pick a server in Settings → Voice');
     const model = s.whisperModel || 'base';

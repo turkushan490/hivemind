@@ -526,13 +526,16 @@ export function VoicePanel(props: { isAdmin: boolean; active: boolean }) {
 
 interface WhisperStatus {
   available: boolean;
-  models: { id: string; name: string; sizeMb: number; note: string; downloaded: boolean; downloading?: { got: number; total: number }; selected: boolean }[];
+  models: { id: string; name: string; sizeMb: number; note: string; pick?: boolean; downloaded: boolean; downloading?: { got: number; total: number }; selected: boolean }[];
 }
 
-/** The built-in Whisper model library: download any, delete, and pick the one to use (one at a time). */
-function WhisperLibrary({ isAdmin, selected, onSelect }: { isAdmin: boolean; selected: string; onSelect: (id: string) => void }) {
+/**
+ * A built-in Whisper model library: download any, delete, and pick the one to use (one at a time).
+ * `api`: /api/voice/whisper (whisper.cpp) or /api/voice/fast-whisper (faster-whisper).
+ */
+function WhisperLibrary({ isAdmin, selected, onSelect, api: base = '/api/voice/whisper' }: { isAdmin: boolean; selected: string; onSelect: (id: string) => void; api?: string }) {
   const [st, setSt] = useState<WhisperStatus | null>(null);
-  const load = () => api<WhisperStatus>('/api/voice/whisper', { quiet: true }).then(setSt).catch(() => {});
+  const load = () => api<WhisperStatus>(base, { quiet: true }).then(setSt).catch((err) => toast(`Could not load the Whisper models: ${(err as Error).message}`));
   useEffect(() => {
     load();
   }, []);
@@ -558,6 +561,7 @@ function WhisperLibrary({ isAdmin, selected, onSelect }: { isAdmin: boolean; sel
             >
               <div className="text-sm font-medium">
                 {m.name} <span className="text-xs font-normal text-slate-500">· ~{m.sizeMb >= 1024 ? `${(m.sizeMb / 1024).toFixed(1)} GB` : `${m.sizeMb} MB`}</span>
+                {m.pick && <span className="ml-1 text-xs text-emerald-300">· recommended</span>}
                 {isSel && m.downloaded && <span className="ml-1 text-xs text-indigo-300">· in use</span>}
               </div>
               <div className="truncate text-xs text-slate-400">{m.note}</div>
@@ -575,7 +579,7 @@ function WhisperLibrary({ isAdmin, selected, onSelect }: { isAdmin: boolean; sel
                   className="btn-ghost shrink-0 px-2 py-0.5 text-xs text-red-300"
                   title="Delete this model"
                   onClick={async () => {
-                    await api(`/api/voice/whisper/${m.id}`, { method: 'DELETE' }).catch(() => {});
+                    await api(`${base}/${m.id}`, { method: 'DELETE' }).catch(() => {});
                     load();
                   }}
                 >
@@ -587,7 +591,7 @@ function WhisperLibrary({ isAdmin, selected, onSelect }: { isAdmin: boolean; sel
                 <button
                   className="btn shrink-0 px-2 py-0.5 text-xs"
                   onClick={async () => {
-                    await api(`/api/voice/whisper/${m.id}/download`, { method: 'POST' }).catch(() => {});
+                    await api(`${base}/${m.id}/download`, { method: 'POST' }).catch(() => {});
                     load();
                   }}
                 >
@@ -660,21 +664,36 @@ function VoiceSettingsPanel({ isAdmin, active }: { isAdmin: boolean; active: boo
 
       <section className="space-y-2 text-sm">
         <div className="text-xs font-semibold tracking-wider text-slate-500 uppercase">Speech to text</div>
-        {v.builtinStt && (
+        {(v.builtinStt || v.fastStt) && (
           <div className="flex gap-1">
-            {(['builtin', 'server'] as const).map((m) => (
+            {[...(v.fastStt ? (['fast'] as const) : []), ...(v.builtinStt ? (['builtin'] as const) : []), 'server' as const].map((m) => (
               <button
                 key={m}
                 disabled={!isAdmin}
                 className={`flex-1 rounded-md border px-2 py-1.5 text-sm ${(v.sttEngine ?? 'builtin') === m ? 'border-indigo-500 bg-indigo-500/15 text-indigo-100' : 'border-[#30363d] text-slate-400'}`}
                 onClick={() => set({ sttEngine: m })}
               >
-                {m === 'builtin' ? 'Built-in (local Whisper, inside HiveMind)' : 'Speech server (OpenAI-compatible)'}
+                {m === 'fast' ? 'Built-in, fast (faster-whisper, GPU)' : m === 'builtin' ? 'Built-in (local Whisper, inside HiveMind)' : 'Speech server (OpenAI-compatible)'}
               </button>
             ))}
           </div>
         )}
-        {v.builtinStt && (v.sttEngine ?? 'builtin') === 'builtin' ? (
+        {v.fastStt && v.sttEngine === 'fast' ? (
+          <>
+            <p className="text-xs text-slate-400">
+              faster-whisper runs in HiveMind’s voice engine and keeps the model loaded between recordings, so your microphone, the Voice trainer and
+              the check on cloned voices don’t wait for it to load each time. It uses the GPU when it has room (Voice engine → device), otherwise the
+              processor. If it fails, the local Whisper engine (with its chosen model, if one is downloaded) takes over and the reason goes to Problems.
+            </p>
+            <WhisperLibrary
+              api="/api/voice/fast-whisper"
+              isAdmin={isAdmin}
+              selected={v.fastWhisperModel ?? 'large-v3-turbo'}
+              onSelect={(id) => set({ sttEngine: 'fast', fastWhisperModel: id })}
+            />
+            {field('Language', 'sttLanguage', 'empty = detect; or en, nl, de…')}
+          </>
+        ) : v.builtinStt && (v.sttEngine ?? 'builtin') === 'builtin' ? (
           <>
             <p className="text-xs text-slate-400">
               Whisper runs inside HiveMind on the processor — no server to set up. Download a model, then pick it. Bigger models are more accurate but slower and larger.

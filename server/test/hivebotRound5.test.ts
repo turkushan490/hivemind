@@ -152,7 +152,7 @@ describe('H16 the tail after the Output', () => {
       modelInfo: async () => ({ providerId: 'p', model: 'm', name: 'm', free: true }),
       adapter: {
         listModels: async () => [],
-        async *stream(req) {
+        async *stream(req: { model: string }) {
           yield { type: 'token' as const, text: req.model };
           yield { type: 'done' as const };
         },

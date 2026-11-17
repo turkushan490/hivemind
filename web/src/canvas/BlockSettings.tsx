@@ -654,6 +654,40 @@ function KindSettings(p: Props) {
           </p>
         </div>
       );
+    case 'browser':
+      return (
+        <div className="space-y-2">
+          <label className="flex items-center gap-2 text-xs text-slate-300">
+            <input type="checkbox" checked={!!p.config.browserTest} onChange={(e) => p.onChange({ browserTest: e.target.checked || undefined })} />
+            Test the whole project: every page, every button, console errors, broken links, a screenshot per page
+          </label>
+          {!p.config.browserTest && (
+            <label className="block space-y-1">
+              <Label>Steps (one per line)</Label>
+              <textarea
+                className="input min-h-28 font-mono text-xs"
+                placeholder={'goto /index.html\nclick Shop\nscreenshot shop\nconsole\nlinks'}
+                value={p.config.commands ?? ''}
+                onChange={(e) => p.onChange({ commands: e.target.value || undefined })}
+              />
+              <span className="text-xs text-slate-500">
+                goto, click (text or #selector), type #field text, press Enter, wait 500, screenshot name, text, console, links. Empty: the list the block before wrote.
+              </span>
+            </label>
+          )}
+          <div className="space-y-1">
+            <Label>Project {p.config.browserTest ? '' : '(optional: /page.html opens its preview)'}</Label>
+            <ProjectPicker value={p.config.project} onChange={(project) => p.onChange({ project })} />
+          </div>
+          <label className="flex items-center gap-2 text-xs text-slate-300">
+            <input type="checkbox" checked={!!p.config.internet} onChange={(e) => p.onChange({ internet: e.target.checked || undefined })} />
+            May open sites on the internet (else only HiveMind, the project preview and localhost)
+          </label>
+          <p className="rounded-md bg-lime-950/30 p-2 text-xs text-lime-200/90">
+            Never clicks pay / order / buy / confirm unless a Pause right before this block was approved. Screenshots go to Files and can be read by a model that sees pictures.
+          </p>
+        </div>
+      );
     case 'pause':
       return <PauseSettings {...p} />;
     case 'foreach':

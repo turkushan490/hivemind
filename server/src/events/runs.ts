@@ -1,4 +1,5 @@
 import type { ActiveBlock, ActiveRun, CanvasGraph, PauseAction, PauseInfo, ResumeRequest, RunEvent, RunStatus } from '@hivemind/shared';
+import { config } from '../config.js';
 import { newId } from '../crypto.js';
 import { db } from '../db/index.js';
 import { cancelText, clampPriority, hostHolder, runGraph, type Checkpoint, type EngineDeps } from '../engine/run.js';
@@ -316,6 +317,12 @@ export function startRun(opts: {
                   const { runShell } = await import('../services/sandbox.js');
                   // Without a project each run gets its own folder.
                   return runShell({ ...o, key: o.project ? o.key : `${id}-${o.key}` });
+                },
+              },
+              browser: {
+                run: async (steps: { op: string; arg: string }[], o: Parameters<NonNullable<NodeServices['browser']>['run']>[1]) => {
+                  const { runBrowser } = await import('../services/browser.js');
+                  return runBrowser(steps, { ...o, base: `http://127.0.0.1:${config.port}/` });
                 },
               },
             }

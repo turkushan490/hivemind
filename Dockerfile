@@ -87,6 +87,9 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
  && mkdir -p /opt/microsoft/powershell/7 && tar -xzf /tmp/pwsh.tgz -C /opt/microsoft/powershell/7 && rm /tmp/pwsh.tgz \
  && chmod +x /opt/microsoft/powershell/7/pwsh && ln -sf /opt/microsoft/powershell/7/pwsh /usr/local/bin/pwsh \
  && go version && dotnet --version && pwsh -NoLogo -NoProfile -Command '$PSVersionTable.PSVersion.ToString()' && wine --version && command -v xvfb-run
+# The Browser block (HiveBot H19): headless Chromium for Playwright, with the system libraries it needs.
+ENV PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright
+RUN cd /app/server && npx --yes playwright-core@1.49.1 install --with-deps chromium && rm -rf /var/lib/apt/lists/* && ls /opt/ms-playwright
 # Skills that come with HiveMind (the workflow guide), installed and shared at start.
 COPY server/skills ./server/skills
 RUN (ldconfig -p | grep -q 'libgomp.so.1' || (apt-get update && apt-get install -y --no-install-recommends libgomp1 && rm -rf /var/lib/apt/lists/*))  && (cat /opt/colibri/build.json 2>/dev/null || echo 'colibri: not in this image')

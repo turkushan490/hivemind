@@ -5,7 +5,7 @@ import { DECIDE_NODE, DEFAULT_THRESHOLD, toView } from './decide.js';
 import { ACTION_NODES } from './actions.js';
 import { TRAINING_NODES } from './training.js';
 import { PROJECT_NODES, type PauseServices, type ProjectServices } from './projects.js';
-import { AGENT_NODES, type SandboxServices } from './agents.js';
+import { AGENT_NODES, type BrowserServices, type SandboxServices } from './agents.js';
 import { RESEARCH_NODES } from './research.js';
 import { VOICE_NODES } from './voice.js';
 
@@ -110,6 +110,8 @@ export interface NodeServices {
   };
   /** Shell block (H18): commands in /data/sandbox (admins and HiveBot workflows only). */
   sandbox?: SandboxServices;
+  /** Browser block (H19): headless Chromium (admins and HiveBot workflows only). */
+  browser?: BrowserServices;
   /** runWorkflow block (H12): start another canvas as a background job (shows in /api/robot/jobs). */
   runCanvas?(o: { canvas: string; question: string; priority?: number; title?: string; character?: string }): Promise<{ jobId: string; runId: string; title: string }>;
 }

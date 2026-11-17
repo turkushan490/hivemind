@@ -1,7 +1,7 @@
 // Types shared by the server, the web UI and (later) the Android app.
 // The canvas format and run events are the contract between them.
 
-export const NODE_TYPES = ['input', 'llm', 'review', 'judge', 'output', 'router', 'debate', 'vote', 'decide', 'template', 'file', 'search', 'memory', 'readMemory', 'writeMemory', 'save', 'image', 'homeassistant', 'webhook', 'discord', 'generate', 'dataset', 'train', 'evaluate', 'deploy', 'readProject', 'writeFiles', 'updateNotes', 'git', 'build', 'pause', 'foreach', 'collect', 'deepSearch', 'panel', 'audioPrep', 'voiceDataset', 'voiceClone', 'speak', 'runWorkflow', 'sayNow', 'condition', 'shell'] as const;
+export const NODE_TYPES = ['input', 'llm', 'review', 'judge', 'output', 'router', 'debate', 'vote', 'decide', 'template', 'file', 'search', 'memory', 'readMemory', 'writeMemory', 'save', 'image', 'homeassistant', 'webhook', 'discord', 'generate', 'dataset', 'train', 'evaluate', 'deploy', 'readProject', 'writeFiles', 'updateNotes', 'git', 'build', 'pause', 'foreach', 'collect', 'deepSearch', 'panel', 'audioPrep', 'voiceDataset', 'voiceClone', 'speak', 'runWorkflow', 'sayNow', 'condition', 'shell', 'browser'] as const;
 export type NodeType = (typeof NODE_TYPES)[number];
 
 /** Which model a node uses: a configured provider plus a model id on it. */
@@ -142,6 +142,10 @@ export interface NodeConfig {
   /** Shell (H18): bash or PowerShell, the commands ({{inputs}} filled; empty = what the block before wrote), the time
    * limit (5–3600 s, default 120), network (default on), keep the sandbox's files between runs, fail on a non-zero exit. */
   shellKind?: 'bash' | 'pwsh';
+  /** Browser (H19): test every page of the project (test mode), and may open sites on the internet (default: only
+   * HiveMind's own pages, the project preview and localhost). The steps go in `commands`. */
+  browserTest?: boolean;
+  internet?: boolean;
   commands?: string;
   timeoutSec?: number;
   network?: boolean;

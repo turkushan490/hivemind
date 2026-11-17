@@ -136,6 +136,15 @@ export const NODE_META: Record<NodeType, NodeMeta> = {
     hasInput: true,
     hasOutput: true,
   },
+  browser: {
+    title: 'Browser',
+    color: '#a3e635',
+    group: 'Project',
+    description: 'A headless browser: open pages, click, type, take screenshots, read console errors, check links — or test every page of a project.',
+    usesModel: false,
+    hasInput: true,
+    hasOutput: true,
+  },
   shell: {
     title: 'Shell',
     color: '#a3e635',
@@ -417,7 +426,7 @@ export const PALETTE: { group: NodeGroup; types: NodeType[] }[] = [
   { group: 'Data', types: ['template', 'file', 'search', 'deepSearch', 'memory'] },
   { group: 'Create', types: ['image', 'save'] },
   { group: 'Action', types: ['homeassistant', 'webhook', 'discord'] },
-  { group: 'Project', types: ['readProject', 'writeFiles', 'updateNotes', 'build', 'git', 'shell'] },
+  { group: 'Project', types: ['readProject', 'writeFiles', 'updateNotes', 'build', 'git', 'shell', 'browser'] },
   { group: 'Train', types: ['generate', 'dataset', 'train', 'evaluate', 'deploy'] },
   { group: 'Voice', types: ['audioPrep', 'voiceDataset', 'voiceClone', 'speak'] },
 ];

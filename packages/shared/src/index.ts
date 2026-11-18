@@ -157,6 +157,8 @@ export interface NodeConfig {
   maxMinutes?: number;
   agentAskCanvas?: string;
   agentLog?: boolean;
+  /** Agent: its browser tool may open the internet (default off), with the same pause rule for pay/order/buy. */
+  agentInternet?: boolean;
   workspace?: string;
   ttlDays?: number;
   internet?: boolean;

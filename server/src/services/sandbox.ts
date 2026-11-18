@@ -141,6 +141,9 @@ export async function runShell(o: {
     WINEPREFIX: join(home, '.wine'),
     WINEDEBUG: '-all',
     POWERSHELL_TELEMETRY_OPTOUT: '1',
+    // .NET's W^X double-mapping makes a huge sparse file at start, which the file-size ulimit kills (dotnet/pwsh exit
+    // 153/1). Turning off Write-Xor-Execute avoids that, so dotnet and PowerShell run under the sandbox (round 5 fix 1).
+    DOTNET_EnableWriteXorExecute: '0',
   };
   // Network off: the container can't take the network away from one process, so every proxy points nowhere (tools
   // that honour proxies, e.g. npm, pip, go, dotnet, curl, can't download); said in the output.

@@ -17,7 +17,7 @@ const TOOL_HELP: Record<AgentTool, string> = {
   readProject: '{"project": "name or id", "globs": "*.html, *.js"} — read a project\'s files',
   writeFiles: '{"project": "name or id", "files": [{"path": "index.html", "content": "..."}]} — write files into a project',
   shell: '{"commands": "...", "project": "name (optional)", "shell": "bash" | "pwsh"} — run commands in a sandbox (go, dotnet, node, python, wine)',
-  browser: '{"steps": "goto /index.html\\nclick Shop\\nscreenshot\\nconsole", "project": "name (optional)"} or {"test": true, "project": "name"} — use a headless browser',
+  browser: '{"steps": "goto /index.html\\nclick Shop\\neval document.querySelector(\'#score\').textContent\\ntext #score\\nscreenshot\\nconsole", "project": "name (optional)"} or {"test": true, "project": "name"} — a headless browser. "eval <js>" returns a value; "text <selector>" returns one element\'s text.',
   workflow: '{"op": "list" | "create" | "update" | "run" | "delete", "id": "hivebot-ws-<you>-1", "graph": {...}, "question": "..."} — your own workflows',
   runWorkflow: '{"canvas": "id or name", "question": "..."} — start another workflow as a background job',
   askCharacter: '{"character": "jarvis", "question": "..."} — ask a teammate one question and get the answer',
@@ -130,7 +130,7 @@ export const AGENT_NODE: NodeDefinition = {
             result = await asBlock(
               ctx,
               'browser',
-              { commands: str(i.steps), browserTest: !!i.test, ...(i.project !== undefined && { project: str(i.project) }) },
+              { commands: str(i.steps), browserTest: !!i.test, internet: !!c.agentInternet, ...(i.project !== undefined && { project: str(i.project) }) },
               '',
               n,
               approved ? 'pause' : 'llm',

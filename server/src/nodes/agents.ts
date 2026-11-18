@@ -89,32 +89,40 @@ export const AGENT_NODES: Record<'shell' | 'browser' | 'workflow', NodeDefinitio
       if (!svc) throw new Error('The Browser block is not available here (it is in the HiveMind Docker image)');
       const c = ctx.node.config;
       const input = inputOf(ctx);
-      const { parseSteps } = await import('../services/browser.js');
+      const { parseSteps, serveDir } = await import('../services/browser.js');
       // The steps: the block's own ({{inputs}} filled), else the list the block before wrote (a numbered list is fine).
       let steps = parseSteps(commandsFrom(c.commands?.trim() ? fill(c.commands, ctx, input) : input));
-      // Test mode on a project: open its preview and test every page.
-      if (c.browserTest) {
+      // A project is served to the headless browser from a throwaway localhost server (not the sandboxed preview), so its
+      // own JavaScript (localStorage, etc.) works in the test (round 5 fix 2). Closed in the finally below.
+      let served: { url: string; close: () => void } | undefined;
+      if (c.browserTest || c.project?.trim() || ctx.vars.project) {
         const project = projectOf(ctx);
-        steps = [{ op: 'test', arg: ctx.services.projects!.previewUrl(project.id) }];
-      } else if (c.project?.trim() || ctx.vars.project) {
-        // "goto /about.html" on a project goes to its preview.
-        const project = projectOf(ctx);
-        const base = ctx.services.projects!.previewUrl(project.id);
-        steps = steps.map((st) => (st.op === 'goto' && st.arg.startsWith('/') && !st.arg.startsWith('/api/') ? { ...st, arg: `${base}${st.arg.slice(1)}` } : st));
+        const { rootOf } = await import('../services/projects.js');
+        served = await serveDir(rootOf(project));
       }
-      if (!steps.length) throw new Error('Browser: no steps (goto, click, type, wait, screenshot, text, console, links — or switch on the test mode)');
-      // A Pause right before this block that the owner approved allows pay / order buttons in this run.
-      const allowRisky = ctx.inputs.some((i) => i.type === 'pause');
-      const r = await svc.run(steps, { allowRisky, internet: !!c.internet, timeoutMs: (c.timeoutSec ?? 120) * 1000, signal: ctx.signal, onStep: (n) => ctx.progress(n) });
-      const files: string[] = [];
-      for (const sh of r.screenshots) {
-        if (!ctx.services.saveFile) break;
-        const f = ctx.services.saveFile(`outputs/browser-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}-${sh.name.replace(/[^a-z0-9-]+/gi, '-').slice(0, 30)}.png`, sh.data);
-        ctx.attach(f);
-        files.push(`![${sh.name}](hm-file:${f.path})`);
+      try {
+        if (c.browserTest && served) {
+          steps = [{ op: 'test', arg: served.url }];
+        } else if (served) {
+          // "goto /about.html" on a project goes to its local static server.
+          steps = steps.map((st) => (st.op === 'goto' && st.arg.startsWith('/') && !st.arg.startsWith('/api/') ? { ...st, arg: `${served!.url}${st.arg.slice(1)}` } : st));
+        }
+        if (!steps.length) throw new Error('Browser: no steps (goto, click, type, wait, screenshot, text, eval, console, links — or switch on the test mode)');
+        // A Pause right before this block that the owner approved allows pay / order buttons in this run.
+        const allowRisky = ctx.inputs.some((i) => i.type === 'pause');
+        const r = await svc.run(steps, { allowRisky, internet: !!c.internet, timeoutMs: (c.timeoutSec ?? 120) * 1000, signal: ctx.signal, onStep: (n) => ctx.progress(n) });
+        const files: string[] = [];
+        for (const sh of r.screenshots) {
+          if (!ctx.services.saveFile) break;
+          const f = ctx.services.saveFile(`outputs/browser-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}-${sh.name.replace(/[^a-z0-9-]+/gi, '-').slice(0, 30)}.png`, sh.data);
+          ctx.attach(f);
+          files.push(`![${sh.name}](hm-file:${f.path})`);
+        }
+        ctx.progress(`${steps.length} step${steps.length === 1 ? '' : 's'} done${files.length ? ` · ${files.length} screenshot${files.length === 1 ? '' : 's'}` : ''}`);
+        return `${r.text}${files.length ? `\n\n${files.join('\n')}` : ''}`;
+      } finally {
+        served?.close();
       }
-      ctx.progress(`${steps.length} step${steps.length === 1 ? '' : 's'} done${files.length ? ` · ${files.length} screenshot${files.length === 1 ? '' : 's'}` : ''}`);
-      return `${r.text}${files.length ? `\n\n${files.join('\n')}` : ''}`;
     },
   },
   workflow: {

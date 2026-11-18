@@ -705,6 +705,12 @@ function KindSettings(p: Props) {
             <input type="checkbox" checked={!!p.config.agentLog} onChange={(e) => p.onChange({ agentLog: e.target.checked || undefined })} />
             Put the list of steps under the answer
           </label>
+          {tools.includes('browser') && (
+            <label className="flex items-center gap-2 text-xs text-slate-300">
+              <input type="checkbox" checked={!!p.config.agentInternet} onChange={(e) => p.onChange({ agentInternet: e.target.checked || undefined })} />
+              Let the browser tool open the internet (still pauses before pay/order/buy)
+            </label>
+          )}
           <p className="rounded-md bg-pink-950/30 p-2 text-xs text-pink-200/90">
             Every step shows on the block and in the run. It asks you (pause) before paying, ordering, sending or pushing to GitHub. Pick a model that follows JSON well (a 7B+ model or a cloud model).
           </p>

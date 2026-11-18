@@ -2,7 +2,72 @@
 // "screenshot", "text", "console", "links"; a test mode that opens every page of a project, clicks what can be
 // clicked and reports console errors and broken links. It never presses pay / order / buy buttons unless the run
 // passed a Pause the owner approved.
-import { existsSync } from 'node:fs';
+import { createReadStream, existsSync, statSync } from 'node:fs';
+import { createServer } from 'node:http';
+import { extname, join, normalize, sep } from 'node:path';
+
+const STATIC_MIME: Record<string, string> = {
+  '.html': 'text/html; charset=utf-8',
+  '.htm': 'text/html; charset=utf-8',
+  '.js': 'text/javascript; charset=utf-8',
+  '.mjs': 'text/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.json': 'application/json; charset=utf-8',
+  '.svg': 'image/svg+xml',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.webp': 'image/webp',
+  '.ico': 'image/x-icon',
+  '.wasm': 'application/wasm',
+  '.txt': 'text/plain; charset=utf-8',
+  '.map': 'application/json; charset=utf-8',
+};
+
+/**
+ * Serves a folder as a plain static site on 127.0.0.1 for the headless browser only (round 5 fix 2): a separate origin
+ * with no CSP sandbox and no HiveMind cookie, so the project's own JavaScript (localStorage etc.) works and it still
+ * can't reach HiveMind. The owner's preview link stays sandboxed. Closed when the block is done.
+ */
+export async function serveDir(dir: string): Promise<{ url: string; close: () => void }> {
+  const server = createServer((req, res) => {
+    try {
+      let rel = decodeURIComponent((req.url ?? '/').split('?')[0]).replace(/^\/+/, '');
+      if (!rel || rel.endsWith('/')) rel += 'index.html';
+      let full = join(dir, normalize(rel));
+      if (full !== dir && !full.startsWith(dir + sep)) {
+        res.writeHead(403);
+        return res.end();
+      }
+      let st;
+      try {
+        st = statSync(full);
+      } catch {
+        res.writeHead(404);
+        return res.end('not found');
+      }
+      if (st.isDirectory()) {
+        full = join(full, 'index.html');
+        try {
+          statSync(full);
+        } catch {
+          res.writeHead(404);
+          return res.end('not found');
+        }
+      }
+      res.writeHead(200, { 'content-type': STATIC_MIME[extname(full).toLowerCase()] ?? 'application/octet-stream', 'cache-control': 'no-store' });
+      createReadStream(full).pipe(res);
+    } catch {
+      res.writeHead(500);
+      res.end();
+    }
+  });
+  await new Promise<void>((r) => server.listen(0, '127.0.0.1', () => r()));
+  const addr = server.address();
+  const port = typeof addr === 'object' && addr ? addr.port : 0;
+  return { url: `http://127.0.0.1:${port}/`, close: () => server.close() };
+}
 
 export interface BrowserStepResult {
   text: string;
@@ -122,9 +187,24 @@ export async function runBrowser(
           screenshots.push({ name: s.arg || `page-${screenshots.length + 1}`, data: await page.screenshot({ fullPage: false }) });
           out.push(`Screenshot ${s.arg || screenshots.length}`);
           break;
-        case 'text':
-          out.push(`Text of ${page.url().replace(o.base, '/')}:\n${(await page.innerText('body').catch(() => '')).replace(/\n{3,}/g, '\n\n').slice(0, 6000)}`);
+        case 'text': {
+          // "text" = the whole page; "text #sel" = one element's text (round 5 fix 3a).
+          const sel = s.arg.trim();
+          const got = sel ? await page.locator(sel).first().innerText().catch(() => '(no element matches, or it has no text)') : await page.innerText('body').catch(() => '');
+          out.push(`Text of ${sel || page.url().replace(o.base, '/')}:\n${got.replace(/\n{3,}/g, '\n\n').slice(0, 6000)}`);
           break;
+        }
+        case 'eval': {
+          // Run JS in the page and return the value, so the agent can read state (round 5 fix 3a), e.g. "eval document.querySelector('#dp-display').textContent".
+          if (!s.arg) throw new Error('eval needs some JavaScript, e.g. eval document.title');
+          try {
+            const v = await page.evaluate(`(()=>{ try { return (${s.arg}); } catch(e){ return 'eval error: '+e.message; } })()`);
+            out.push(`eval → ${typeof v === 'string' ? v.slice(0, 2000) : JSON.stringify(v)?.slice(0, 2000) ?? String(v)}`);
+          } catch (e) {
+            out.push(`eval error: ${(e as Error).message.slice(0, 200)}`);
+          }
+          break;
+        }
         case 'console':
           out.push(consoleLines.length ? `Console:\n${consoleLines.join('\n')}` : 'Console: no errors');
           break;
@@ -135,7 +215,7 @@ export async function runBrowser(
           out.push(await testSite(page, o.base, url(s.arg || '/'), consoleLines, screenshots, o.onStep));
           break;
         default:
-          throw new Error(`Unknown browser step "${s.op}" (goto, click, type, press, wait, screenshot, text, console, links, test)`);
+          throw new Error(`Unknown browser step "${s.op}" (goto, click, type, press, wait, screenshot, text, eval, console, links, test)`);
       }
     }
     return { text: out.join('\n'), screenshots };

@@ -6,7 +6,7 @@ import type { ChatMessage } from '../providers/types.js';
 import type { NodeContext, NodeDefinition, NodeInput } from './index.js';
 import { fill, NODES } from './index.js';
 
-export const AGENT_TOOLS = ['readMemory', 'writeMemory', 'search', 'readProject', 'writeFiles', 'shell', 'browser', 'workflow', 'runWorkflow', 'askCharacter', 'sayNow', 'pause'] as const;
+export const AGENT_TOOLS = ['readMemory', 'writeMemory', 'search', 'createProject', 'readProject', 'writeFiles', 'shell', 'browser', 'workflow', 'runWorkflow', 'askCharacter', 'sayNow', 'pause'] as const;
 export type AgentTool = (typeof AGENT_TOOLS)[number];
 
 /** How each tool is called: what goes in "input", for the model. */
@@ -14,6 +14,7 @@ const TOOL_HELP: Record<AgentTool, string> = {
   readMemory: '{"paths": ["topics/food.md"], "index": true} — read memory files (index: also the list of all files)',
   writeMemory: '{"path": "topics/food.md", "text": "...", "mode": "replace" | "append"} — write a memory file',
   search: '{"query": "..."} — search the web',
+  createProject: '{"name": "JB Clicker"} — make a new project with that name (an existing one with the same name is returned); then write its files with writeFiles',
   readProject: '{"project": "name or id", "globs": "*.html, *.js"} — read a project\'s files',
   writeFiles: '{"project": "name or id", "files": [{"path": "index.html", "content": "..."}]} — write files into a project',
   shell: '{"commands": "...", "project": "name (optional)", "shell": "bash" | "pwsh"} — run commands in a sandbox (go, dotnet, node, python, wine)',
@@ -116,6 +117,18 @@ export const AGENT_NODE: NodeDefinition = {
           case 'search':
             result = await asBlock(ctx, 'search', {}, str(i.query), n);
             break;
+          case 'createProject': {
+            // H27 (owner, 2026-11-19: a project is made the moment he asks, no confirm)
+            const svc = ctx.services.projects;
+            if (!svc?.create) throw new Error('Making projects is not available here');
+            const name = str(i.name).trim();
+            if (!name) throw new Error('createProject needs "name"');
+            const p = svc.create(name);
+            result = p.existed
+              ? `A project "${p.name}" already exists (id ${p.id}): use it.`
+              : `Made the new project "${p.name}" (id ${p.id}). Write its files with writeFiles {"project": "${p.name}", ...}.`;
+            break;
+          }
           case 'readProject':
             result = await asBlock(ctx, 'readProject', { project: str(i.project), ...(i.globs !== undefined && { globs: str(i.globs) }) }, '', n);
             break;

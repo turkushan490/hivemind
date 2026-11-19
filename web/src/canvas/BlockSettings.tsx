@@ -661,7 +661,7 @@ function KindSettings(p: Props) {
         </div>
       );
     case 'agent': {
-      const ALL = ['readMemory', 'writeMemory', 'search', 'readProject', 'writeFiles', 'shell', 'browser', 'workflow', 'runWorkflow', 'askCharacter', 'sayNow', 'pause'];
+      const ALL = ['readMemory', 'writeMemory', 'search', 'createProject', 'readProject', 'writeFiles', 'shell', 'browser', 'workflow', 'runWorkflow', 'askCharacter', 'sayNow', 'pause'];
       const tools = p.config.agentTools ?? ['readMemory', 'search', 'sayNow'];
       return (
         <div className="space-y-2">

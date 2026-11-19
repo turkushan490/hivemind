@@ -5,7 +5,7 @@ import type { FileUser } from './files.js';
 import { connectProject, gitCommit, gitPull, gitPullRequest, gitPush } from './git.js';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { deleteProjectPath, findProject, getProject, previewUrl, rootOf, projectTree, readProjectText, recordChanges, writeProjectFile } from './projects.js';
+import { createProject, deleteProjectPath, findProject, getProject, previewUrl, rootOf, projectTree, readProjectText, recordChanges, writeProjectFile } from './projects.js';
 
 /** The project blocks' services for one run, as the person who runs it (their projects, their GitHub token). */
 export function projectServicesFor(user: FileUser, run: { id: string; source: string }): ProjectServices {
@@ -15,6 +15,15 @@ export function projectServicesFor(user: FileUser, run: { id: string; source: st
     find(idOrName) {
       const r = findProject(user, idOrName);
       return { id: r.id, name: r.name, ...(r.github_repo && { repo: r.github_repo, branch: r.github_branch ?? 'main' }) };
+    },
+    create(name) {
+      // H27 (owner, 2026-11-19: "made the moment I ask, no confirm"): an agent makes a new project itself.
+      try {
+        const r = findProject(user, name);
+        return { id: r.id, name: r.name, existed: true };
+      } catch {}
+      const p = createProject(user, name);
+      return { id: p.id, name: p.name, existed: false };
     },
     tree: (id) => projectTree(own(id)),
     read: (id, path) => readProjectText(own(id), path),

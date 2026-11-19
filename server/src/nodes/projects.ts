@@ -28,6 +28,8 @@ export interface ProjectServices {
   /** H23: makes a GitHub repo for the project (private unless asked), connects it, adds .gitignore + README. */
   createRepo?(id: string, o: { name: string; public: boolean; signal?: AbortSignal }): Promise<{ repo: string; url: string }>;
   build(id: string, opts: { script?: string; outDir?: string; signal?: AbortSignal; onLog?: (t: string) => void }): Promise<BuildResult>;
+  /** H27: a new project with this name (an existing one with the same name is returned instead, existed: true). */
+  create?(name: string): { id: string; name: string; existed: boolean };
 }
 
 export interface PauseServices {

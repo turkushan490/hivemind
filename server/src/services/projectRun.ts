@@ -5,7 +5,7 @@ import type { FileUser } from './files.js';
 import { connectProject, gitCommit, gitPull, gitPullRequest, gitPush } from './git.js';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { createProject, deleteProjectPath, findProject, getProject, previewUrl, rootOf, projectTree, readProjectText, recordChanges, writeProjectFile } from './projects.js';
+import { createProject, deleteProjectPath, findProject, getProject, listProjects, previewUrl, rootOf, projectTree, readProjectText, recordChanges, writeProjectFile } from './projects.js';
 
 /** The project blocks' services for one run, as the person who runs it (their projects, their GitHub token). */
 export function projectServicesFor(user: FileUser, run: { id: string; source: string }): ProjectServices {
@@ -25,6 +25,7 @@ export function projectServicesFor(user: FileUser, run: { id: string; source: st
       const p = createProject(user, name);
       return { id: p.id, name: p.name, existed: false };
     },
+    list: () => listProjects(user).map((p) => ({ id: p.id, name: p.name, updated: String((p as { updatedAt?: string }).updatedAt ?? '') })),
     tree: (id) => projectTree(own(id)),
     read: (id, path) => readProjectText(own(id), path),
     write: (id, path, content, mode) => writeProjectFile(own(id), path, content, { byBlock: true, mode }),

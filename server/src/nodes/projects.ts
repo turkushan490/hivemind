@@ -30,6 +30,8 @@ export interface ProjectServices {
   build(id: string, opts: { script?: string; outDir?: string; signal?: AbortSignal; onLog?: (t: string) => void }): Promise<BuildResult>;
   /** H27: a new project with this name (an existing one with the same name is returned instead, existed: true). */
   create?(name: string): { id: string; name: string; existed: boolean };
+  /** The projects this run may use, newest change first (so an agent can find "the dog counter" by what it is). */
+  list?(): { id: string; name: string; updated: string }[];
 }
 
 export interface PauseServices {

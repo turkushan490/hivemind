@@ -6,7 +6,7 @@ import type { ChatMessage } from '../providers/types.js';
 import type { NodeContext, NodeDefinition, NodeInput } from './index.js';
 import { fill, NODES } from './index.js';
 
-export const AGENT_TOOLS = ['readMemory', 'writeMemory', 'search', 'createProject', 'readProject', 'writeFiles', 'shell', 'browser', 'workflow', 'runWorkflow', 'askCharacter', 'sayNow', 'pause'] as const;
+export const AGENT_TOOLS = ['readMemory', 'writeMemory', 'search', 'listProjects', 'createProject', 'readProject', 'writeFiles', 'shell', 'browser', 'workflow', 'runWorkflow', 'askCharacter', 'sayNow', 'pause'] as const;
 export type AgentTool = (typeof AGENT_TOOLS)[number];
 
 /** How each tool is called: what goes in "input", for the model. */
@@ -14,6 +14,7 @@ const TOOL_HELP: Record<AgentTool, string> = {
   readMemory: '{"paths": ["topics/food.md"], "index": true} — read memory files (index: also the list of all files)',
   writeMemory: '{"path": "topics/food.md", "text": "...", "mode": "replace" | "append"} — write a memory file',
   search: '{"query": "..."} — search the web',
+  listProjects: '{} — the existing projects (name, last change), newest first: use it to find the one the owner means',
   createProject: '{"name": "JB Clicker"} — make a new project with that name (an existing one with the same name is returned); then write its files with writeFiles',
   readProject: '{"project": "name or id", "globs": "*.html, *.js"} — read a project\'s files',
   writeFiles: '{"project": "name or id", "files": [{"path": "index.html", "content": "..."}]} — write files into a project',
@@ -83,12 +84,33 @@ export const AGENT_NODE: NodeDefinition = {
     ];
     let approved = false;
     const log: string[] = [];
+    // Context: every step adds the model's reply (whole files for writeFiles) and the tool's result. On a big project that
+    // is more than the model's context, and the model then loses the start: the owner's task and these rules (HiveBot,
+    // 2026-11-19: "it fails to listen to me"). So when the conversation nears ~70% of the context, the older steps are
+    // replaced by one short line each (the log); the task, the rules and the last steps stay whole. Files and memory are
+    // saved, so the agent can read them again.
+    const budget = Math.floor((c.numCtx ?? 32_768) * 3 * 0.7); // ~3 characters per token
+    const size = () => messages.reduce((a, m) => a + String(m.content ?? '').length, 0);
+    const compact = () => {
+      if (size() <= budget || messages.length <= 6) return;
+      const head = messages.slice(0, 2);
+      const tail = messages.slice(-4);
+      const done = log.slice(0, Math.max(0, log.length - 2));
+      messages.splice(0, messages.length, ...head, {
+        role: 'user',
+        content: `Earlier steps, shortened to fit your memory (what you wrote is saved: read files or memory again when you need the details):\n${done.join('\n')}`,
+      }, ...tail);
+      // still too big (huge files in the last steps): cut the long ones
+      for (const m of messages.slice(3)) if (size() > budget && String(m.content).length > 6000) m.content = `${String(m.content).slice(0, 6000)}\n…(cut to fit)`;
+      ctx.progress(`memory compressed: ${done.length} earlier steps shortened`);
+    };
     for (let n = 1; n <= maxSteps; n++) {
       if (ctx.signal?.aborted) throw new Error('Cancelled');
       if (Date.now() > deadline) {
         log.push(`(stopped: the ${c.maxMinutes ?? 20} minutes were up)`);
         break;
       }
+      compact();
       const reply = await ctx.callModel(messages);
       const step = parseStep(reply);
       messages.push({ role: 'assistant', content: reply });
@@ -117,6 +139,13 @@ export const AGENT_NODE: NodeDefinition = {
           case 'search':
             result = await asBlock(ctx, 'search', {}, str(i.query), n);
             break;
+          case 'listProjects': {
+            const svc = ctx.services.projects;
+            if (!svc?.list) throw new Error('Listing projects is not available here');
+            const ps = svc.list();
+            result = ps.length ? ps.map((p) => `- ${p.name} (changed ${p.updated})`).join('\n') : '(no projects yet)';
+            break;
+          }
           case 'createProject': {
             // H27 (owner, 2026-11-19: a project is made the moment he asks, no confirm)
             const svc = ctx.services.projects;
@@ -186,6 +215,12 @@ export const AGENT_NODE: NodeDefinition = {
       } catch (e) {
         if ((e as Error).message === 'Cancelled' || (e as Error).message === 'Stopped') throw e;
         result = `ERROR: ${(e as Error).message}`;
+        // A project that isn't found: show the ones that exist, so "doc counter" (misheard) finds "Dog Clicker" instead of
+        // a new project being made (HiveBot, 2026-11-19).
+        if (/Project ".*" not found/.test(result) && ctx.services.projects?.list) {
+          const names = ctx.services.projects.list().slice(0, 15).map((p) => p.name);
+          if (names.length) result += `\nExisting projects (newest first): ${names.join(', ')}. If the owner means one of these (speech to text mishears names), use that one; only make a new project when he asked for a new one.`;
+        }
       }
       const short = result.length > 12_000 ? `${result.slice(0, 12_000)}\n…(cut)` : result;
       log.push(`${n}. ${tool} ${str(i).slice(0, 200)} → ${result.replace(/\s+/g, ' ').slice(0, 200)}`);

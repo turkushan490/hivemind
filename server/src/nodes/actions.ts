@@ -111,7 +111,8 @@ export const HA_DEVICE_DOMAINS = ['light', 'switch', 'lock', 'cover', 'climate',
 /** "lock.front_door (Front door): locked" per device of these domains, at most 400, sorted by kind then name. */
 export function haDeviceLines(states: HaState[], domains: string[]): string[] {
   return states
-    .filter((s) => domains.includes(s.entity_id.split('.')[0]) && s.state !== 'unavailable')
+    // Not HiveMind's own "run this workflow" buttons (the HiveMind integration in Home Assistant makes one per workflow).
+    .filter((s) => domains.includes(s.entity_id.split('.')[0]) && s.state !== 'unavailable' && !/_hivemind_run_/.test(s.entity_id))
     .sort((a, b) => a.entity_id.localeCompare(b.entity_id))
     .slice(0, 400)
     .map((s) => {

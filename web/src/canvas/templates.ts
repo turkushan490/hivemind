@@ -158,7 +158,10 @@ const SPOKEN =
 const HOME_COMMAND =
   'Turn this spoken smart-home request into one Home Assistant service call. Reply with only JSON like ' +
   '{"service": "light.turn_on", "data": {"entity_id": "light.living_room", "brightness_pct": 60}}. ' +
-  'Use only entity ids from the device list. Locks: lock.unlock / lock.lock; doors, gates and blinds (cover): cover.open_cover / cover.close_cover.\n\n' +
+  'The service is always <domain>.<action> of that device: light.turn_off for light.x, switch.turn_on for switch.x. ' +
+  'Use only entity ids from the device list, never make one up. The request may be misheard or translated from another language ' +
+  '("ocean camera lamp" can be "osan kamer lamp"): pick the device whose name sounds most like it. ' +
+  'Locks: lock.unlock / lock.lock; doors, gates and blinds (cover): cover.open_cover / cover.close_cover.\n\n' +
   'The devices in this house (from Home Assistant):\n{{inputs}}\n\n' +
   'Request: {{question}}';
 
@@ -186,12 +189,14 @@ const VOICE: Template[] = [
       'HiveMind reads your devices from Home Assistant, picks the right one and Home Assistant does it; other questions get a spoken answer.',
     build: (m) => {
       const q = node('input', 0, 200, 'Spoken request');
-      const route = node('router', 320, 200, 'Command or question?', m.text[0] ? { model: m.text[0] } : {});
+      // A mid-size model (the judge pick): the smallest one can't match a spoken name to a device.
+      const mid = m.judge ?? m.text[1] ?? m.text[0];
+      const route = node('router', 320, 200, 'Command or question?', mid ? { model: mid } : {});
       const devices = node('homeassistant', 640, -60, 'Smart home command (do something in the house)', { haOp: 'devices' });
-      const cmd = node('llm', 960, 60, 'Pick the device', { ...(m.text[0] && { model: m.text[0] }), prompt: HOME_COMMAND, json: true, jsonSchema: '{"service": "domain.service", "data": {"entity_id": "..."}}' });
+      const cmd = node('llm', 960, 60, 'Pick the device', { ...(mid && { model: mid }), think: false, prompt: HOME_COMMAND, json: true, jsonSchema: '{"service": "domain.service", "data": {"entity_id": "..."}}' });
       const ha = node('homeassistant', 1280, 60, 'Do it', { haOp: 'service' });
-      const done = llm(1600, 60, 'Confirm', m.text[0], 'Home Assistant did this:\n{{inputs}}\n\nThe user asked: {{question}}\n\nConfirm in one short sentence what was done.', SPOKEN);
-      const answer = llm(960, 340, 'Question or chat', m.text[0], 'Earlier in this conversation:\n{{history}}\n\nNow answer: {{question}}', SPOKEN);
+      const done = llm(1600, 60, 'Confirm', mid, 'Home Assistant did this:\n{{inputs}}\n\nThe user asked: {{question}}\n\nConfirm in one short sentence what was done.', SPOKEN);
+      const answer = llm(960, 340, 'Question or chat', mid, 'Earlier in this conversation:\n{{history}}\n\nNow answer: {{question}}', SPOKEN);
       const out = node('output', 1920, 200, 'Spoken answer');
       return {
         nodes: [q, route, devices, cmd, ha, done, answer, out],

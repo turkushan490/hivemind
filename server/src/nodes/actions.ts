@@ -121,6 +121,21 @@ export function haDeviceLines(states: HaState[], domains: string[]): string[] {
     });
 }
 
+/** A question in Dutch? (a few common words) */
+export const looksDutch = (t: string) => /\b(de|het|een|doe|zet|aan|uit|graag|alsjeblieft|verwarming|dicht|maak|mag|kun|wil)\b/i.test(t) && !/\b(the|turn|please|switch|set)\b/i.test(t);
+
+/** "Osan kamer lamp staat nu uit." / "Thermostat is set to 21°." */
+export function shortState(s: HaState, dutch: boolean): string {
+  const name = (typeof s.attributes?.friendly_name === 'string' && s.attributes.friendly_name) || s.entity_id.split('.')[1].replace(/_/g, ' ');
+  const domain = s.entity_id.split('.')[0];
+  const temp = s.attributes?.temperature;
+  if (domain === 'climate' && typeof temp === 'number') return dutch ? `${name} staat op ${temp}°.` : `${name} is set to ${temp}°.`;
+  const nl: Record<string, string> = { on: 'staat nu aan', off: 'staat nu uit', open: 'is open', closed: 'is dicht', opening: 'gaat open', closing: 'gaat dicht', locked: 'zit op slot', unlocked: 'is van het slot', playing: 'speelt', paused: 'is gepauzeerd', idle: 'is klaar', heat: 'verwarmt', cool: 'koelt', cleaning: 'is aan het schoonmaken', docked: 'staat in het station' };
+  const en: Record<string, string> = { on: 'is on now', off: 'is off now', open: 'is open', closed: 'is closed', opening: 'is opening', closing: 'is closing', locked: 'is locked', unlocked: 'is unlocked', playing: 'is playing', paused: 'is paused', idle: 'is idle', heat: 'is heating', cool: 'is cooling', cleaning: 'is cleaning', docked: 'is docked' };
+  const word = (dutch ? nl : en)[s.state] ?? (dutch ? `staat op ${s.state}` : `is ${s.state}`);
+  return `${name} ${word}.`;
+}
+
 /** Letter trigrams of a text, for "sounds like" matching ("osan kamer lamp" ~ "ocean camera lamp"). */
 const grams = (t: string) => {
   const w = ` ${t.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()} `;
@@ -226,6 +241,21 @@ export const ACTION_NODES: Record<'homeassistant' | 'webhook' | 'discord', NodeD
       await ensureOk(res, 'Home Assistant');
       const changed = ((await res.json().catch(() => [])) as HaState[]) ?? [];
       ctx.progress(`Called ${service}${changed.length ? ` · ${changed.length} changed` : ''}`);
+      // Short spoken feedback (voice): one sentence with the device's new state, no model needed.
+      if (c.haShort) {
+        const ids = ([] as unknown[]).concat((data as { entity_id?: unknown }).entity_id ?? []).filter((x): x is string => typeof x === 'string');
+        let states = changed.filter((s) => !ids.length || ids.includes(s.entity_id));
+        if (!states.length && ids.length) {
+          await new Promise((r) => setTimeout(r, 700));
+          states = [];
+          for (const id of ids.slice(0, 5)) {
+            const r = await send(`${ha.url}/api/states/${id}`, { headers }, ctx.signal, 'Home Assistant').catch(() => undefined);
+            if (r?.ok) states.push((await r.json()) as HaState);
+          }
+        }
+        const dutch = /^nl/i.test(c.haLanguage ?? '') || (!c.haLanguage && looksDutch(ctx.question));
+        return states.length ? states.map((s) => shortState(s, dutch)).join(' ') : dutch ? 'Oké, gedaan.' : 'Okay, done.';
+      }
       return changed.length ? `Called ${service}. Changed:\n${changed.map(describeState).join('\n')}` : `Called ${service}.`;
     },
   },

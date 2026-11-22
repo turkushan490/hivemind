@@ -199,17 +199,15 @@ const VOICE: Template[] = [
       });
       const devices = node('homeassistant', 640, -60, 'Smart home command (do something in the house)', { haOp: 'devices' });
       const cmd = node('llm', 960, 60, 'Pick the device', { ...(mid && { model: mid }), think: false, prompt: HOME_COMMAND, json: true, jsonSchema: '{"service": "domain.service", "data": {"entity_id": "..."}}' });
-      const ha = node('homeassistant', 1280, 60, 'Do it', { haOp: 'service' });
-      const done = llm(1600, 60, 'Confirm', mid, 'Home Assistant did this:\n{{inputs}}\n\nThe user asked: {{question}}\n\nConfirm in one short sentence what was done.', SPOKEN);
+      // "Do it" answers itself in one short sentence ("Osan kamer lamp staat nu uit."), no model needed.
+      const ha = node('homeassistant', 1280, 60, 'Do it', { haOp: 'service', haShort: true });
       const answer = llm(960, 340, 'Question or chat', mid, 'Earlier in this conversation:\n{{history}}\n\nNow answer: {{question}}', SPOKEN);
-      // Spoken answers: no thinking, so they come quickly.
-      for (const n of [cmd, done, answer]) n.config.keepAlive = '30m';
-      done.config.think = false;
+      for (const n of [cmd, answer]) n.config.keepAlive = '30m';
       answer.config.think = false;
-      const out = node('output', 1920, 200, 'Spoken answer');
+      const out = node('output', 1600, 200, 'Spoken answer');
       return {
-        nodes: [q, route, devices, cmd, ha, done, answer, out],
-        edges: [wire(q, route), wire(route, devices), wire(devices, cmd), wire(route, answer), wire(cmd, ha), wire(ha, done), wire(done, out), wire(answer, out)],
+        nodes: [q, route, devices, cmd, ha, answer, out],
+        edges: [wire(q, route), wire(route, devices), wire(devices, cmd), wire(route, answer), wire(cmd, ha), wire(ha, out), wire(answer, out)],
       };
     },
   },

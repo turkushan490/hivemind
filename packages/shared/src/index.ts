@@ -192,6 +192,8 @@ export interface NodeConfig {
   /** Home Assistant: read entity states, or call a service. */
   /** devices: list the house's devices (what can be switched, opened, locked …) with their names and states, for a model to pick from. */
   haOp?: 'state' | 'service' | 'assist' | 'devices';
+  /** Home Assistant service: answer with one short spoken sentence of the new state ("Kitchen lamp is off now."). */
+  haShort?: boolean;
   /** Home Assistant Assist: the language of the sentence (en, nl, …). */
   haLanguage?: string;
   /** Home Assistant: entity ids to read (comma or newline separated; templates allowed). */

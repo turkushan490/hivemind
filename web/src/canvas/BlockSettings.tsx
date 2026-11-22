@@ -1209,6 +1209,10 @@ function HomeAssistantSettings(p: Props) {
             />
             <JsonHint text={c.body} />
           </label>
+          <label className="flex items-center gap-2 text-xs text-slate-300">
+            <input type="checkbox" checked={!!c.haShort} onChange={(e) => p.onChange({ haShort: e.target.checked || undefined })} />
+            Answer with one short sentence of the new state (“Kitchen lamp is off now.”), for voice
+          </label>
           <TemplateHelp />
         </>
       )}

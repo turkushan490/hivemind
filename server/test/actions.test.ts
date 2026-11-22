@@ -98,6 +98,18 @@ describe('Home Assistant block', () => {
     expect(closestDevices(lines, 'open de garagedeur', 1)).toEqual(['cover.garage (Garagedeur): closed']);
   });
 
+  it('short spoken feedback after a service call, in the language of the question', async () => {
+    const { shortState, looksDutch } = await import('../src/nodes/actions.js');
+    expect(shortState({ entity_id: 'light.osan', state: 'off', attributes: { friendly_name: 'Osan kamer lamp' } }, true)).toBe('Osan kamer lamp staat nu uit.');
+    expect(shortState({ entity_id: 'climate.woon', state: 'heat', attributes: { friendly_name: 'Verwarming', temperature: 21 } }, true)).toBe('Verwarming staat op 21°.');
+    expect(shortState({ entity_id: 'cover.garage', state: 'open', attributes: {} }, false)).toBe('garage is open.');
+    expect(looksDutch('doe de osan kamer lamp uit')).toBe(true);
+    expect(looksDutch('turn off the kitchen light')).toBe(false);
+    mockFetch(json([{ entity_id: 'light.osan', state: 'off', attributes: { friendly_name: 'Osan kamer lamp' } }]));
+    const { c } = ctx('homeassistant', { haOp: 'service', haShort: true }, { input: '{"service": "light.turn_off", "data": {"entity_id": "light.osan"}}' });
+    expect(await NODES.homeassistant.execute(c)).toBe('Osan kamer lamp is off now.');
+  });
+
   it('calls a service with templated JSON data', async () => {
     const fetch = mockFetch(json([{ entity_id: 'notify.phone', state: 'ok' }]));
     const { c } = ctx('homeassistant', { haOp: 'service', service: 'notify.mobile_app', body: '{"message": "{{input}}"}' }, { input: 'Say "hi"\nnow' });

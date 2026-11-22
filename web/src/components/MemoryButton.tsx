@@ -1,9 +1,30 @@
-import type { ProviderMemory } from '@hivemind/shared';
+import type { LoadedModel, ProviderMemory } from '@hivemind/shared';
 import { useEffect, useRef, useState } from 'react';
 import { api } from '../api';
 import { toast } from '../notify';
 
 const gb = (b: number) => `${(b / 1024 ** 3).toFixed(1)} GB`;
+
+/** Where a loaded model is: "1.2 GB RAM", "4.6 GB GPU" or "6.9 GB: 0.6 GB GPU + 6.3 GB RAM". */
+function where(m: LoadedModel): string {
+  if (!m.vramBytes) return `${gb(m.sizeBytes)} RAM`;
+  if (m.vramBytes >= m.sizeBytes * 0.98) return `${gb(m.sizeBytes)} GPU`;
+  return `${gb(m.sizeBytes)}: ${gb(m.vramBytes)} GPU + ${gb(m.sizeBytes - m.vramBytes)} RAM`;
+}
+
+/** "unloads in 3 min", "kept warm" or nothing. */
+function until(m: LoadedModel): string {
+  if (m.keptWarm) {
+    const last = m.keptWarm.lastAt ? `, last ${new Date(m.keptWarm.lastAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : '';
+    return m.keptWarm.reloads ? `kept warm (reloaded ${m.keptWarm.reloads}× today${last})` : 'kept warm';
+  }
+  if (!m.expiresAt) return '';
+  const ms = Date.parse(m.expiresAt) - Date.now();
+  if (!Number.isFinite(ms) || ms < 0) return '';
+  if (ms > 7 * 86_400_000) return 'stays loaded';
+  if (ms > 2 * 3_600_000) return `unloads in ${Math.round(ms / 3_600_000)} h`;
+  return `unloads in ${Math.max(1, Math.round(ms / 60_000))} min`;
+}
 
 /** Header button: what Ollama holds in RAM/VRAM, and a way to clear it. */
 export function MemoryButton() {
@@ -29,6 +50,7 @@ export function MemoryButton() {
 
   const total = mem.reduce((s, p) => s + p.models.reduce((a, m) => a + m.sizeBytes, 0), 0);
   const count = mem.reduce((s, p) => s + p.models.length, 0);
+  const onGpu = mem.reduce((s, p) => s + p.models.reduce((a, m) => a + m.vramBytes, 0), 0);
 
   const inUse = mem.some((p) => p.models.some((m) => m.runs?.length));
 
@@ -54,7 +76,7 @@ export function MemoryButton() {
     <div className="relative" ref={box}>
       <button className="btn-ghost flex items-center gap-2" onClick={() => setOpen((o) => !o)} aria-expanded={open}>
         <span className={`h-2 w-2 rounded-full ${count ? 'bg-amber-400' : 'bg-slate-600'}`} />
-        {count ? `${count} loaded · ${gb(total)}` : 'Memory free'}
+        {count ? `${count} loaded · ${gb(total)}${onGpu ? ` · GPU ${gb(onGpu)}` : ''}` : 'Memory free'}
       </button>
       {open && (
         <div className="absolute right-0 z-40 mt-2 w-96 space-y-3 rounded-lg border border-[#30363d] bg-[#161b22] p-3 shadow-xl">
@@ -67,7 +89,10 @@ export function MemoryButton() {
           {mem.length === 0 && <p className="text-sm text-slate-400">No local providers.</p>}
           {mem.map((p) => (
             <div key={p.providerId} className="space-y-1 border-t border-[#30363d] pt-2 text-sm">
-              <div className="text-xs text-slate-400">{p.name}</div>
+              <div className="text-xs text-slate-400" title={p.usedBy?.join(', ')}>
+                {p.name}
+                {p.usedBy && <span className="text-slate-500"> — used by: {p.usedBy.join(', ')}</span>}
+              </div>
               {p.error && <p className="text-xs text-red-400">{p.error}</p>}
               {!p.error && p.models.length === 0 && <p className="text-xs text-slate-500">Nothing loaded — RAM and VRAM are free.</p>}
               {p.models.map((m) => (
@@ -76,15 +101,20 @@ export function MemoryButton() {
                     <span className="min-w-0 flex-1 truncate" title={m.model}>
                       {m.model}
                     </span>
-                    <span className="text-xs whitespace-nowrap text-slate-400">
-                      {gb(m.sizeBytes)}
-                      {m.vramBytes > 0 && m.vramBytes < m.sizeBytes ? ` (${gb(m.vramBytes)} GPU)` : m.vramBytes ? ' GPU' : ' RAM'}
-                    </span>
+                    {m.vramBytes > 0 && m.vramBytes < m.sizeBytes * 0.98 && (
+                      <span className="text-amber-400" title="Split between the GPU and RAM: slow, and it can fail when the GPU fills up">
+                        ⚠
+                      </span>
+                    )}
                     {p.canUnload && (
                       <button className="btn-ghost px-2 py-0.5 text-xs" disabled={busy} onClick={() => unload(p.providerId, m.model)}>
                         {m.runs?.length ? 'Stop & unload' : 'Unload'}
                       </button>
                     )}
+                  </div>
+                  <div className={`ml-3 text-xs ${m.keptWarm?.error ? 'text-red-400' : 'text-slate-400'}`} title={m.keptWarm?.error}>
+                    {where(m)}
+                    {until(m) && <span className="text-slate-500"> · {until(m)}</span>}
                   </div>
                   {m.runs?.map((r) => (
                     <div key={r.runId} className="ml-3 truncate text-xs text-slate-400" title={r.runId}>

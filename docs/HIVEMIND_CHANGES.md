@@ -1165,6 +1165,27 @@ which project it works on, and can make a new one.
 
 ---
 
+## Models in RAM, a full GPU, and the loaded-models list (H36)
+
+- **A full GPU answers from RAM.** When Ollama can't load a model on the GPU (`cudaMalloc failed`, `out of memory`,
+  `failed to allocate`, `llama-server process has terminated`; another app such as ComfyUI holds the VRAM), the
+  same call is sent once more with `num_gpu 0`. The block shows "The GPU was full (ComfyUI?) — answered from RAM"
+  and the run goes on. Problems gets one line per model per hour at most.
+- **Kept warm.** Every minute, each model that a canvas uses on a CPU-only Ollama provider with a keepAlive of 24 h
+  or more is loaded again when Ollama threw it out (Ollama evicts every loaded model when a GPU model doesn't fit,
+  also CPU-only ones). It uses the canvas's own context size, so it isn't loaded twice. The loaded-models list says
+  "kept warm (reloaded 3× today, last 18:59)".
+- **The loaded-models list: one server, each model once.** Providers pointing at the same server are one section
+  ("Ollama (host:port) — used by: Ollama, Ollama · CPU (RAM)"). Each model shows where it is ("1.2 GB RAM",
+  "4.6 GB GPU", "6.9 GB: 0.6 GB GPU + 6.3 GB RAM"), a ⚠ when it is split between GPU and RAM, and when it unloads.
+  The button adds each model once and shows the GPU part apart. Unload calls the server once.
+- **HiveBot page: tap to send.** While it hears you, a tap on the face (or Enter with an empty text box) sends at
+  once instead of waiting for the pause.
+- Not built yet: HiveMind's own CPU-only llama-server for the RAM models (H36.2b); keep-warm covers it until then.
+- Tests: `server/test/ramModels.test.ts`.
+
+---
+
 ## HiveBot round 5, part 2 — agents that can act (H18–H23)
 
 - **Shell** block (H18): bash or PowerShell in `/data/sandbox/<key>/`, as the build user (no rights on the rest of

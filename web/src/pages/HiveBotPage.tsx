@@ -432,6 +432,18 @@ export function HiveBotPage({ active }: { active: boolean }) {
     }
     startRecording();
   };
+  // H36.4: while it hears you, Enter (with an empty text box) sends at once instead of waiting for the pause.
+  useEffect(() => {
+    if (!active) return;
+    const enter = (e: KeyboardEvent) => {
+      if (e.key !== 'Enter' || modeRef.current !== 'hearing') return;
+      if (e.target instanceof HTMLInputElement && e.target.value.trim()) return;
+      e.preventDefault();
+      void finishRecording();
+    };
+    window.addEventListener('keydown', enter);
+    return () => window.removeEventListener('keydown', enter);
+  }, [active, finishRecording]);
   useEffect(() => {
     if (!active || open) return;
     const down = (e: KeyboardEvent) => e.code === 'Space' && !e.repeat && !(e.target instanceof HTMLInputElement) && (e.preventDefault(), void holdStart());
@@ -452,7 +464,11 @@ export function HiveBotPage({ active }: { active: boolean }) {
   const shownMode: Mode = guest && mode === 'idle' ? 'locked' : mode;
   return (
     <div className="mx-auto flex max-w-3xl flex-col items-center gap-4 py-4">
-      <div className="relative flex h-64 w-64 items-center justify-center">
+      <div
+        className={`relative flex h-64 w-64 items-center justify-center ${mode === 'hearing' ? 'cursor-pointer' : ''}`}
+        title={mode === 'hearing' ? 'Tap to send now' : undefined}
+        onClick={() => mode === 'hearing' && void finishRecording()}
+      >
         <div
           className="absolute inset-0 rounded-full transition-transform duration-75"
           style={{ background: `radial-gradient(circle, ${look.color}55 0%, ${look.color}11 60%, transparent 70%)`, transform: `scale(${1 + Math.min(0.35, level * 0.5)})` }}
@@ -473,6 +489,7 @@ export function HiveBotPage({ active }: { active: boolean }) {
           {look.title}
         </div>
         <div className="mt-1 text-xs tracking-widest text-slate-400">{MODE_TEXT[shownMode]}</div>
+        {mode === 'hearing' && <div className="mt-1 text-xs text-slate-500">tap the face to send</div>}
       </div>
 
       {shownJobs.length > 0 && (

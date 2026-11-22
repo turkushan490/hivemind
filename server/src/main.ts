@@ -105,4 +105,6 @@ startScheduler(runScheduled);
 const { nightTick } = await import('./services/nightWork.js');
 // HiveBot workspace workflows (H20): unused ones are deleted after their ttlDays, checked every hour.
 (await import('./services/workspaces.js')).startWorkspaceSweeper();
+// Models kept in RAM for good (H36.2a): loaded again within a minute when Ollama throws them out.
+(await import('./services/keepWarm.js')).startKeepWarm();
 setInterval(() => void nightTick(), 15 * 60_000).unref();

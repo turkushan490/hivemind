@@ -501,6 +501,8 @@ export async function runGraph(
               deps.emit({ ...base, type: 'model_loading', model: ref.model, sizeBytes, expectedMs: expect?.ms, estimated: expect?.estimated });
             } else if (chunk.type === 'warm') {
               sizeBytes ??= (await p.modelInfo(ref.model).catch(() => undefined))?.sizeBytes;
+            } else if (chunk.type === 'note') {
+              deps.emit({ ...base, type: 'node_progress', note: chunk.text });
             } else if (chunk.type === 'thinking') {
               thought = true;
               markReady();

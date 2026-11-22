@@ -105,6 +105,8 @@ export function ollamaAdapter(cfg: ProviderConfig): ProviderAdapter {
         }
       } catch {}
 
+      // H36.1: a GPU too full to load the model (ComfyUI holds it) → the same call once more on the CPU.
+      let cpu = !!cfg.cpuOnly;
       const chat = (messages: ChatRequest['messages']) =>
         fetch(`${base}/api/chat`, {
           method: 'POST',
@@ -125,11 +127,20 @@ export function ollamaAdapter(cfg: ProviderConfig): ProviderAdapter {
               ...(req.topP !== undefined && { top_p: req.topP }),
               ...(req.stop !== undefined && { stop: Array.isArray(req.stop) ? req.stop : [req.stop] }),
               // CPU only: no layers on the GPU.
-              ...(cfg.cpuOnly && { num_gpu: 0 }),
+              ...(cpu && { num_gpu: 0 }),
             },
           }),
         });
       let res = await chat(req.messages);
+      if (!res.ok && !cpu) {
+        const detail = await res.clone().text().catch(() => '');
+        if (gpuFull(detail)) {
+          cpu = true;
+          gpuFullNote(model, cfg.id);
+          yield { type: 'note', text: 'The GPU was full (ComfyUI?) — answered from RAM' };
+          res = await chat(req.messages);
+        }
+      }
       if (!res.ok && req.messages.some((m) => m.role === 'system')) {
         // Some GGUF chat templates choke on system messages ("System message must be at the beginning").
         const detail = await res.clone().text().catch(() => '');
@@ -193,4 +204,22 @@ export function ollamaAdapter(cfg: ProviderConfig): ProviderAdapter {
 export function keepAlive(v: string | undefined): string | undefined {
   const t = v?.trim();
   return t && /^(-1|0|\d{1,5}(s|m|h))$/.test(t) ? t : undefined;
+}
+
+/** Ollama's errors for a GPU too full to load a model (llama-server dies while it allocates). */
+export const gpuFull = (text: string) => /cudaMalloc failed|out of memory|failed to allocate|llama-server process has terminated|unable to allocate CUDA/i.test(text);
+
+/** H36.1: at most one line per model per hour on Problems ("…: GPU full, ran on the CPU 4×"). */
+const gpuFullSeen = new Map<string, { n: number; at: number }>();
+function gpuFullNote(model: string, provider: string) {
+  const now = Date.now();
+  const s = gpuFullSeen.get(model) ?? { n: 0, at: 0 };
+  s.n++;
+  if (now - s.at > 3_600_000) {
+    // Loaded late: the adapter must not pull in the database when it is imported.
+    void import('../errors.js').then(({ logError }) => logError({ source: 'provider', message: `${model} (${provider}): GPU full, ran on the CPU${s.n > 1 ? ` ${s.n}×` : ''}`, detail: 'Another app (ComfyUI?) held the GPU memory. HiveMind asked again with num_gpu 0.' }));
+    s.at = now;
+    s.n = 0;
+  }
+  gpuFullSeen.set(model, s);
 }

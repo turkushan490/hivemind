@@ -516,12 +516,16 @@ export interface LoadedModel {
   expiresAt?: string;
   /** Live runs using or waiting for this model. */
   runs?: { runId: string; canvasName?: string; state: 'waiting' | 'running' }[];
+  /** Kept in RAM by HiveMind (H36.2a): loaded again when Ollama throws it out; reloads today and the last one (ms). */
+  keptWarm?: { reloads: number; lastAt?: number; error?: string };
 }
 
 /** GET /api/memory: one entry per local provider. */
 export interface ProviderMemory {
   providerId: string;
   name: string;
+  /** H36.3: all providers that point at this one server (one section per server, each model once). */
+  usedBy?: string[];
   canUnload: boolean;
   models: LoadedModel[];
   error?: string;

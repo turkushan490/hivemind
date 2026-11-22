@@ -114,6 +114,8 @@ export type StreamChunk =
   | { type: 'loading' }
   /** The model is already in memory. */
   | { type: 'warm' }
+  /** Something worth showing on the block (e.g. "the GPU was full — answered from RAM"). */
+  | { type: 'note'; text: string }
   | { type: 'token'; text: string }
   | { type: 'thinking'; text: string }
   /** A tool call, whole or in pieces: the first piece of a call has its id and name, later ones add to its arguments. */

@@ -32,7 +32,7 @@ export function colibriGpuHost(): string {
 /** The GPU queue a local provider belongs to. */
 const gpuHostOf = (row: { preset: string; base_url: string }) => (isColibri(row.preset) ? colibriGpuHost() : hostOf(row.base_url));
 
-interface ProviderRow {
+export interface ProviderRow {
   id: string;
   preset: string;
   kind: ProviderKind;
@@ -247,7 +247,7 @@ const hostOf = (url: string) => {
     return url;
   }
 };
-const originOf = (url: string) => {
+export const originOf = (url: string) => {
   try {
     return new URL(url).host;
   } catch {

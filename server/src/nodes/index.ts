@@ -118,7 +118,7 @@ export interface NodeServices {
   /** Agent askCharacter (H21): runs a canvas (id or name) with these vars and waits for its answer. */
   askCanvas?(o: { canvas: string; question: string; vars: Record<string, string>; signal?: AbortSignal }): Promise<string>;
   /** runWorkflow block (H12): start another canvas as a background job (shows in /api/robot/jobs). */
-  runCanvas?(o: { canvas: string; question: string; priority?: number; title?: string; character?: string }): Promise<{ jobId: string; runId: string; title: string }>;
+  runCanvas?(o: { canvas: string; question: string; priority?: number; title?: string; character?: string; vars?: Record<string, string> }): Promise<{ jobId: string; runId: string; title: string }>;
 }
 
 /** A chat sent through /v1: its system messages and the turns before the last question. */

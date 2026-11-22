@@ -13,7 +13,7 @@ export type AgentTool = (typeof AGENT_TOOLS)[number];
 const TOOL_HELP: Record<AgentTool, string> = {
   readMemory: '{"paths": ["topics/food.md"], "index": true} — read memory files (index: also the list of all files)',
   writeMemory: '{"path": "topics/food.md", "text": "...", "mode": "replace" | "append"} — write a memory file',
-  search: '{"query": "..."} — search the web',
+  search: '{"query": "...", "read": 2} — search the web (DuckDuckGo); read = also read the best 1-3 pages',
   listProjects: '{} — the existing projects (name, last change), newest first: use it to find the one the owner means',
   createProject: '{"name": "JB Clicker"} — make a new project with that name (an existing one with the same name is returned); then write its files with writeFiles',
   readProject: '{"project": "name or id", "globs": "*.html, *.js"} — read a project\'s files',
@@ -104,6 +104,8 @@ export const AGENT_NODE: NodeDefinition = {
       for (const m of messages.slice(3)) if (size() > budget && String(m.content).length > 6000) m.content = `${String(m.content).slice(0, 6000)}\n…(cut to fit)`;
       ctx.progress(`memory compressed: ${done.length} earlier steps shortened`);
     };
+    let lastKey = '';
+    let repeats = 0;
     for (let n = 1; n <= maxSteps; n++) {
       if (ctx.signal?.aborted) throw new Error('Cancelled');
       if (Date.now() > deadline) {
@@ -126,6 +128,15 @@ export const AGENT_NODE: NodeDefinition = {
       const tool = step.tool as AgentTool;
       const i = step.input;
       let result: string;
+      // The same call three times in a row: tell the model to use what it has (H29).
+      const key = `${tool} ${JSON.stringify(i)}`;
+      repeats = key === lastKey ? repeats + 1 : 1;
+      lastKey = key;
+      if (repeats >= 3) {
+        messages.push({ role: 'user', content: `You already did exactly this (${tool}) ${repeats - 1} times and got the same result. Do not repeat it: use what you have, try something different, or answer.` });
+        ctx.progress(`step ${n}: same ${tool} again, told to move on`);
+        continue;
+      }
       ctx.progress(`step ${n}: ${tool} ${str(i).slice(0, 120)}`);
       try {
         if (!allowed.includes(tool)) throw new Error(`"${tool}" is not one of your tools (${allowed.join(', ')})`);
@@ -137,7 +148,8 @@ export const AGENT_NODE: NodeDefinition = {
             result = await asBlock(ctx, 'writeMemory', { memoryPath: str(i.path), memoryMode: i.mode === 'append' ? 'append' : 'replace', memoryBy: ctx.vars.character || 'agent' }, str(i.text), n);
             break;
           case 'search':
-            result = await asBlock(ctx, 'search', {}, str(i.query), n);
+            // The web, not Wikipedia (H29): DuckDuckGo unless the model names a source; optionally read the best pages.
+            result = await asBlock(ctx, 'search', { source: typeof i.source === 'string' && i.source ? i.source : 'duckduckgo', ...(i.read !== undefined && { readPages: Math.max(0, Math.min(3, Number(i.read) || 0)) }) }, str(i.query), n);
             break;
           case 'listProjects': {
             const svc = ctx.services.projects;

@@ -37,6 +37,8 @@ describe('Browser block (H19)', () => {
       { op: 'click', arg: 'Add' },
       { op: 'type', arg: '#name Jarvis' },
     ]);
+    // H26: a line that is not a step ("(+44 −93)" from Write files) is skipped, never a crash.
+    expect(parseSteps('(+44 −93)\ngoto /index.html')).toEqual([{ op: 'goto', arg: '/index.html' }]);
     expect(RISKY.test('Place order')).toBe(true);
     expect(RISKY.test('Add to list')).toBe(false);
   });

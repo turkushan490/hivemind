@@ -348,7 +348,40 @@ function Editor({ active, onProblem, followRequest }: { active: boolean; onProbl
     setSaved(JSON.stringify({ name: c.name, graph: { nodes: c.nodes, edges: c.edges } }));
   };
 
+  /**
+   * H28: the saved workflow may have changed since this screen opened it (an app like HiveBot updated it). Without own
+   * changes the saved one is loaded and used; with own changes the person decides. Returns the graph to use, or
+   * undefined to stop.
+   */
+  const freshGraph = async (purpose: 'run' | 'save'): Promise<CanvasGraph | undefined> => {
+    if (!doc.id || !saved) return graph;
+    const list = await api<Canvas[]>('/api/canvases', { quiet: true }).catch(() => undefined);
+    const c = list?.find((x) => x.id === doc.id);
+    if (!c) return graph;
+    const server = { nodes: c.nodes, edges: c.edges };
+    const loaded = (JSON.parse(saved) as { graph: CanvasGraph }).graph;
+    if (JSON.stringify(server) === JSON.stringify(loaded)) return graph;
+    const who = c.managedBy ? appName(c.managedBy) : 'someone else';
+    setCanvases(list!);
+    if (!dirty) {
+      show(server);
+      setSaved(JSON.stringify({ name: c.name, graph: server }));
+      toast(`This workflow was changed by ${who}: loaded the saved one`, 'info');
+      return purpose === 'save' ? undefined : server;
+    }
+    if (purpose === 'run') {
+      return confirm(`This workflow was changed by ${who} after you opened it.
+
+OK = run the saved one (your changes stay on the screen)
+Cancel = run your copy on the screen`) ? server : graph;
+    }
+    return confirm(`This workflow was changed by ${who} after you opened it.
+
+Save your copy over it? (Cancel keeps the saved one)`) ? graph : undefined;
+  };
+
   const save = async (shared?: boolean) => {
+    if (!(await freshGraph('save'))) return;
     const name = doc.name.trim() || 'My canvas';
     // An app keeps this workflow up to date: saving your own changes stops that (the app then leaves it alone).
     const app = canvases.find((x) => x.id === doc.id)?.managedBy;
@@ -479,7 +512,9 @@ function Editor({ active, onProblem, followRequest }: { active: boolean; onProbl
     }
     setNodes((ns) => ns.map((n) => ({ ...n, selected: false })));
     try {
-      await run.start({ question: q.trim(), graph, canvasId: doc.id, priority });
+      const use = await freshGraph('run');
+      if (!use) return;
+      await run.start({ question: q.trim(), graph: use, canvasId: doc.id, priority });
     } catch {}
   };
 

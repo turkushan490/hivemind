@@ -91,7 +91,8 @@ export const AGENT_NODES: Record<'shell' | 'browser' | 'workflow', NodeDefinitio
       const input = inputOf(ctx);
       const { parseSteps, serveDir } = await import('../services/browser.js');
       // The steps: the block's own ({{inputs}} filled), else the list the block before wrote (a numbered list is fine).
-      let steps = parseSteps(commandsFrom(c.commands?.trim() ? fill(c.commands, ctx, input) : input));
+      // In test mode the steps are fixed: the text wired in is not read as steps at all (H26).
+      let steps = c.browserTest ? [] : parseSteps(commandsFrom(c.commands?.trim() ? fill(c.commands, ctx, input) : input));
       // A project is served to the headless browser from a throwaway localhost server (not the sandboxed preview), so its
       // own JavaScript (localStorage, etc.) works in the test (round 5 fix 2). Closed in the finally below.
       let served: { url: string; close: () => void } | undefined;

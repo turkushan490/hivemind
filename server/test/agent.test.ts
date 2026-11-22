@@ -77,6 +77,13 @@ describe('Agent block (H21)', () => {
     expect(notes.some((n) => n.startsWith('step 2: writeMemory'))).toBe(true);
   });
 
+  it('the same tool call three times in a row is stopped (H29)', async () => {
+    const same = '{"tool": "readMemory", "input": {"paths": ["x.md"]}}';
+    const { c, sent } = ctx({ agentTools: ['readMemory'] }, [same, same, same, '{"answer": "ok"}']);
+    expect(await agent.AGENT_NODE.execute(c)).toBe('ok');
+    expect(sent[3].at(-1)).toMatch(/Do not repeat it/);
+  });
+
   it('a tool that is not allowed comes back as an error the model can read', async () => {
     const { c, sent } = ctx({ agentTools: ['readMemory'] }, ['{"tool": "shell", "input": {"commands": "ls"}}', '{"answer": "I may not run commands."}']);
     expect(await agent.AGENT_NODE.execute(c)).toBe('I may not run commands.');

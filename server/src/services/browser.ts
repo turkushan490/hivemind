@@ -109,9 +109,10 @@ export function parseSteps(text: string): Step[] {
     .split('\n')
     .map((l) => l.replace(/^\s*(?:\d+[.)]|[-*])\s*/, '').trim())
     .filter((l) => l && !l.startsWith('#'))
-    .map((l) => {
-      const m = /^(\w+)\s*(.*)$/.exec(l)!;
-      return { op: m[1].toLowerCase(), arg: m[2].trim() };
+    // A line that isn't "<word> …" (e.g. "(+44 −93)" from a Write files block) is not a step: skipped (H26).
+    .flatMap((l) => {
+      const m = /^(\w+)\s*(.*)$/.exec(l);
+      return m ? [{ op: m[1].toLowerCase(), arg: m[2].trim() }] : [];
     });
 }
 

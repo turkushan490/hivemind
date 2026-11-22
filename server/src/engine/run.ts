@@ -439,7 +439,7 @@ export async function runGraph(
         deps.emit({ ...base, type: 'model_ready', warm: !loading });
       };
 
-      const call = async (messages: ChatMessage[], ref: ModelRef, think?: boolean, json?: boolean, noImages = false): Promise<string> => {
+      const call = async (messages: ChatMessage[], ref: ModelRef, think?: boolean, json?: boolean, noImages = false, retried = false): Promise<string> => {
         const p = await deps.resolve(ref.providerId);
         const asked = messages;
         // A model that can't see gets the picture reader's description of each picture in place of the picture.
@@ -551,6 +551,15 @@ export async function runGraph(
         } catch (err) {
           if (timer.timedOut()) throw new TimeLimitError(`${ref.model} was stopped after ${limitSecs} seconds`);
           if (signal.aborted) throw new Error(cancelText(signal));
+          // H28: a local model whose load broke off (another load at the same time, a dropped connection) gets one
+          // more try a little later, instead of failing the whole job.
+          if (p.local && !out && !retried && /fetch failed|ECONNRESET|ECONNREFUSED|socket|terminated|other side closed|load/i.test((err as Error).message)) {
+            timer.clear();
+            deps.emit({ ...base, type: 'node_progress', note: `Loading ${ref.model} failed (${(err as Error).message.slice(0, 80)}): waiting for the GPU, then trying once more` });
+            await new Promise((r) => setTimeout(r, 8000));
+            if (signal.aborted) throw new Error(cancelText(signal));
+            return call(asked, ref, think, json, noImages, true);
+          }
           // A model that can't see refuses the pictures: ask once more with the text alone.
           if (pictures && !out) {
             timer.clear();

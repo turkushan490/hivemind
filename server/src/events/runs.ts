@@ -412,7 +412,7 @@ export function startRun(opts: {
             remove: (path: string, guest?: boolean) => memFiles.remove(opts.ownerId, path, guest),
           },
           // runWorkflow (H12): start another canvas as a background job, for the owner / robot.
-          runCanvas: async (o: { canvas: string; question: string; priority?: number; title?: string; character?: string }) => {
+          runCanvas: async (o: { canvas: string; question: string; priority?: number; title?: string; character?: string; vars?: Record<string, string> }) => {
             const runsApi = await import('../api/runs.js');
             const providers = await import('../api/providers.js');
             const jobs = await import('../services/robotJobs.js');
@@ -425,7 +425,8 @@ export function startRun(opts: {
               canvasId: row.id,
               graph: JSON.parse(row.graph) as CanvasGraph,
               question: o.question || 'Go',
-              vars: o.character ? { character: o.character } : undefined,
+              // H27: the job knows who started it and for which project (the parent run's vars, the character on top).
+              vars: { ...(opts.vars?.project && { project: opts.vars.project }), ...(opts.vars?.character && { character: opts.vars.character }), ...(o.character && { character: o.character }), ...(o.vars ?? {}) },
               resolve: providers.resolverFor(u),
               freeGpu: providers.gpuFreerFor(u),
               training: providers.trainingFor(u),

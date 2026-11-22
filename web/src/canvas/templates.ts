@@ -165,6 +165,9 @@ const HOME_COMMAND =
   'The devices in this house (from Home Assistant):\n{{inputs}}\n\n' +
   'Request: {{question}}';
 
+/** Words that make a sentence a smart-home command (Dutch and English), for the Condition block. */
+const COMMAND_WORDS = '/\\b(aan|uit|on|off|open|dicht|close|zet|doe|turn|switch|set|start|stop|dim|dimmen|maak|activeer|sluit|omhoog|omlaag)\\b/';
+
 const VOICE: Template[] = [
   {
     id: 'voice-assistant',
@@ -189,25 +192,22 @@ const VOICE: Template[] = [
       'HiveMind reads your devices from Home Assistant, picks the right one and Home Assistant does it; other questions get a spoken answer.',
     build: (m) => {
       const q = node('input', 0, 200, 'Spoken request');
-      // A mid-size model (the judge pick): the smallest one can't match a spoken name to a device.
+      // A mid-size model (the judge pick) for what isn't a plain command; the smallest can't match a spoken name.
       const mid = m.judge ?? m.text[1] ?? m.text[0];
-      // With a decision model (Jev, clef-flash) the route is picked in ~0.1 s instead of a model call; never thinking.
-      const route = node('router', 320, 200, 'Command or question?', {
-        ...(mid && { model: mid }),
-        think: false,
-        ...(m.decision && { decideWith: 'jev' as const, decider: m.decision }),
-      });
-      const devices = node('homeassistant', 640, -60, 'Smart home command (do something in the house)', { haOp: 'devices' });
-      const cmd = node('llm', 960, 60, 'Pick the device', { ...(mid && { model: mid }), think: false, prompt: HOME_COMMAND, json: true, jsonSchema: '{"service": "domain.service", "data": {"entity_id": "..."}}' });
+      // Command or question: action words decide, no model (instant).
+      const route = node('condition', 320, 200, 'Command or question?', { conditionText: COMMAND_WORDS });
+      // "yes": the devices; a plain "<device> on/off/open/close" goes straight to "Do it" (no model at all).
+      const devices = node('homeassistant', 640, 60, 'yes: my devices', { haOp: 'devices', haDirect: true });
+      const cmd = node('llm', 960, -60, 'Pick the device', { ...(mid && { model: mid }), think: false, keepAlive: '30m', prompt: HOME_COMMAND, json: true, jsonSchema: '{"service": "domain.service", "data": {"entity_id": "..."}}' });
       // "Do it" answers itself in one short sentence ("Osan kamer lamp staat nu uit."), no model needed.
       const ha = node('homeassistant', 1280, 60, 'Do it', { haOp: 'service', haShort: true });
-      const answer = llm(960, 340, 'Question or chat', mid, 'Earlier in this conversation:\n{{history}}\n\nNow answer: {{question}}', SPOKEN);
-      for (const n of [cmd, answer]) n.config.keepAlive = '30m';
+      const answer = llm(640, 340, 'no: question or chat', mid, 'Earlier in this conversation:\n{{history}}\n\nNow answer: {{question}}', SPOKEN);
       answer.config.think = false;
+      answer.config.keepAlive = '30m';
       const out = node('output', 1600, 200, 'Spoken answer');
       return {
         nodes: [q, route, devices, cmd, ha, answer, out],
-        edges: [wire(q, route), wire(route, devices), wire(devices, cmd), wire(route, answer), wire(cmd, ha), wire(ha, out), wire(answer, out)],
+        edges: [wire(q, route), wire(route, devices), wire(route, answer), wire(devices, ha), wire(devices, cmd), wire(cmd, ha), wire(ha, out), wire(answer, out)],
       };
     },
   },

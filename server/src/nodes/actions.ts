@@ -121,6 +121,55 @@ export function haDeviceLines(states: HaState[], domains: string[]): string[] {
     });
 }
 
+/** What a plain command asks: on / off / open / close (Dutch and English), or undefined. */
+export function actionOf(request: string): 'on' | 'off' | 'open' | 'close' | undefined {
+  const t = ` ${request.toLowerCase().replace(/[^a-z0-9\u00c0-\u024f]+/g, ' ')} `;
+  if (/ (uit|off|uitzetten|uitdoen|stop) /.test(t)) return 'off';
+  if (/ (dicht|close|sluit|sluiten|omlaag|down) /.test(t)) return 'close';
+  if (/ (open|openen|omhoog|up) /.test(t)) return 'open';
+  if (/ (aan|on|aanzetten|aandoen|start) /.test(t)) return 'on';
+  return undefined;
+}
+
+/**
+ * A command simple enough to do without a model: an on/off/open/close word and one device whose name is clearly the
+ * closest (most of its name is in the request, well ahead of the next one). Undefined when unsure: a model decides.
+ */
+export function directCommand(states: HaState[], request: string): { service: string; data: { entity_id: string } } | undefined {
+  const act = actionOf(request);
+  if (!act) return undefined;
+  // Numbers ("op 21 graden", "50 procent") need a model.
+  if (/\d/.test(request)) return undefined;
+  const q = grams(request);
+  const scored = states
+    .map((s) => {
+      const name = typeof s.attributes?.friendly_name === 'string' && s.attributes.friendly_name ? s.attributes.friendly_name : s.entity_id.split('.')[1].replace(/_/g, ' ');
+      const g = grams(name);
+      let hit = 0;
+      for (const x of g) if (q.has(x)) hit++;
+      return { s, cover: hit / (g.size || 1) };
+    })
+    .sort((a, b) => b.cover - a.cover);
+  const [best, next] = scored;
+  if (!best || best.cover < 0.4 || (next && best.cover - next.cover < 0.2)) return undefined;
+  const domain = best.s.entity_id.split('.')[0];
+  const services: Record<string, Partial<Record<'on' | 'off' | 'open' | 'close', string>>> = {
+    light: { on: 'turn_on', off: 'turn_off' },
+    switch: { on: 'turn_on', off: 'turn_off' },
+    fan: { on: 'turn_on', off: 'turn_off' },
+    input_boolean: { on: 'turn_on', off: 'turn_off' },
+    media_player: { on: 'turn_on', off: 'turn_off' },
+    siren: { on: 'turn_on', off: 'turn_off' },
+    cover: { open: 'open_cover', close: 'close_cover', on: 'open_cover', off: 'close_cover' },
+    valve: { open: 'open_valve', close: 'close_valve' },
+    scene: { on: 'turn_on' },
+    script: { on: 'turn_on' },
+  };
+  // Lights and switches also take "open"/"close" as on/off? No: only what fits the device.
+  const svc = services[domain]?.[act];
+  return svc ? { service: `${domain}.${svc}`, data: { entity_id: best.s.entity_id } } : undefined;
+}
+
 /** A question in Dutch? (a few common words) */
 export const looksDutch = (t: string) => /\b(de|het|een|doe|zet|aan|uit|graag|alsjeblieft|verwarming|dicht|maak|mag|kun|wil)\b/i.test(t) && !/\b(the|turn|please|switch|set)\b/i.test(t);
 
@@ -199,7 +248,20 @@ export const ACTION_NODES: Record<'homeassistant' | 'webhook' | 'discord', NodeD
         const res = await send(`${ha.url}/api/states`, { headers }, ctx.signal, 'Home Assistant');
         await ensureOk(res, 'Home Assistant');
         const only = (c.entities ?? '').split(/[\s,]+/).map((d) => d.trim().replace(/\.$/, '')).filter(Boolean);
-        const all = haDeviceLines((await res.json()) as HaState[], only.length ? only : HA_DEVICE_DOMAINS);
+        const states = (await res.json()) as HaState[];
+        const all = haDeviceLines(states, only.length ? only : HA_DEVICE_DOMAINS);
+        // Direct: a plain "<device> on/off/open/close" needs no model — straight to the Home Assistant block after this one.
+        if (c.haDirect) {
+          const d = directCommand(states.filter((s) => (only.length ? only : HA_DEVICE_DOMAINS).includes(s.entity_id.split('.')[0]) && s.state !== 'unavailable'), ctx.question);
+          const toHa = ctx.outgoing.filter((o) => o.type === 'homeassistant').map((o) => o.id);
+          const toModel = ctx.outgoing.filter((o) => o.type !== 'homeassistant').map((o) => o.id);
+          if (d && toHa.length) {
+            ctx.choose(toHa);
+            ctx.progress(`Direct: ${d.service} ${d.data.entity_id} (no model needed)`);
+            return JSON.stringify({ service: d.service, data: d.data });
+          }
+          if (toModel.length) ctx.choose(toModel);
+        }
         // A long list makes the model slow to read it: only the devices whose names sound most like the request.
         const keep = c.limit && c.limit > 0 ? c.limit : 25;
         const lines = all.length > keep ? closestDevices(all, ctx.question, keep) : all;

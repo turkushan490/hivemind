@@ -194,6 +194,9 @@ export interface NodeConfig {
   haOp?: 'state' | 'service' | 'assist' | 'devices';
   /** Home Assistant service: answer with one short spoken sentence of the new state ("Kitchen lamp is off now."). */
   haShort?: boolean;
+  /** Home Assistant "My devices": a plain on/off/open/close command for a clearly named device goes straight to the
+   * Home Assistant block after it (no model); otherwise to the model branch. */
+  haDirect?: boolean;
   /** Home Assistant Assist: the language of the sentence (en, nl, …). */
   haLanguage?: string;
   /** Home Assistant: entity ids to read (comma or newline separated; templates allowed). */

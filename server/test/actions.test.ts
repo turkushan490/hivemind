@@ -110,6 +110,18 @@ describe('Home Assistant block', () => {
     expect(await NODES.homeassistant.execute(c)).toBe('Osan kamer lamp is off now.');
   });
 
+  it('does a plain on/off/open/close command without a model, and leaves unclear ones to the model', async () => {
+    const { directCommand } = await import('../src/nodes/actions.js');
+    const st = (id: string, name: string) => ({ entity_id: id, state: 'on', attributes: { friendly_name: name } });
+    const house = [st('light.osan_kamer_lamp', 'osan kamer lamp'), st('light.printer', '3d printer room lamp'), st('cover.garage', 'Garagedeur'), st('switch.aquarium', 'power aquarium'), st('climate.woon', 'Verwarming')];
+    expect(directCommand(house, 'doe de osan kamer lamp uit')).toEqual({ service: 'light.turn_off', data: { entity_id: 'light.osan_kamer_lamp' } });
+    expect(directCommand(house, 'turn off Ocean camera lamp')).toEqual({ service: 'light.turn_off', data: { entity_id: 'light.osan_kamer_lamp' } });
+    expect(directCommand(house, 'open de garagedeur')).toEqual({ service: 'cover.open_cover', data: { entity_id: 'cover.garage' } });
+    expect(directCommand(house, 'zet de verwarming op 21 graden')).toBeUndefined(); // a number: the model
+    expect(directCommand(house, 'het is hier zo donker')).toBeUndefined(); // no action word
+    expect(directCommand(house, 'doe de lamp uit')).toBeUndefined(); // which lamp? the model
+  });
+
   it('calls a service with templated JSON data', async () => {
     const fetch = mockFetch(json([{ entity_id: 'notify.phone', state: 'ok' }]));
     const { c } = ctx('homeassistant', { haOp: 'service', service: 'notify.mobile_app', body: '{"message": "{{input}}"}' }, { input: 'Say "hi"\nnow' });

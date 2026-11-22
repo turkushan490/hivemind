@@ -5,6 +5,7 @@ import { Toasts } from './components/Toasts';
 import { CanvasPage, type FollowRequest } from './canvas/CanvasPage';
 import { ActivityPage } from './pages/ActivityPage';
 import { ActiveWorkflowsPage } from './pages/ActiveWorkflows';
+import { HiveBotPage } from './pages/HiveBotPage';
 import { FilesPage } from './pages/FilesPage';
 import { Login } from './pages/Login';
 import { Problems } from './pages/Problems';
@@ -25,12 +26,12 @@ interface Me {
   role: 'admin' | 'user' | 'viewer';
 }
 
-const TABS = { use: 'Use', canvas: 'Workflow', active: 'Active workflows', projects: 'Projects', files: 'Files', memory: 'Memory', run: 'Quick council', stats: 'Stats', lab: 'Lab', activity: 'Activity', settings: 'Settings', problems: 'Problems' } as const;
+const TABS = { use: 'Use', canvas: 'Workflow', active: 'Active workflows', hivebot: 'HiveBot', projects: 'Projects', files: 'Files', memory: 'Memory', run: 'Quick council', stats: 'Stats', lab: 'Lab', activity: 'Activity', settings: 'Settings', problems: 'Problems' } as const;
 type Tab = keyof typeof TABS;
 /** Viewers only use canvases. */
 const VIEWER_TABS: Tab[] = ['use', 'activity', 'settings', 'problems'];
 /** Phone: these four sit in the bottom bar; the rest are under "More". */
-const PHONE_TABS: Tab[] = ['use', 'canvas', 'activity', 'settings'];
+const PHONE_TABS: Tab[] = ['use', 'hivebot', 'canvas', 'activity', 'settings'];
 
 export function App() {
   const [me, setMe] = useState<Me | null | undefined>(undefined);
@@ -204,6 +205,11 @@ export function App() {
         {opened.has('lab') && (
           <div hidden={tab !== 'lab'}>
             <LabPage active={tab === 'lab'} />
+          </div>
+        )}
+        {opened.has('hivebot') && (
+          <div hidden={tab !== 'hivebot'}>
+            <HiveBotPage active={tab === 'hivebot'} />
           </div>
         )}
         {opened.has('active') && (

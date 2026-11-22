@@ -97,6 +97,7 @@ export function RobotsPanel({ active }: { active: boolean }) {
   const fw = apps.find((a) => a.app === firmwareApp);
   return (
     <div className="max-w-3xl space-y-4">
+      <LiveSessions active={active} />
       <div className="card space-y-3">
         <h2 className="font-semibold">Robots</h2>
         <p className="text-sm text-slate-400">
@@ -521,5 +522,37 @@ function RobotSettingsEditor({ robot, onSaved }: { robot: Robot; onSaved: () => 
         </label>
       </div>
     </details>
+  );
+}
+
+/** H30: every place talking to HiveBot right now (robots, browser tabs, phones), with a stop button each. */
+function LiveSessions({ active }: { active: boolean }) {
+  const [list, setList] = useState<{ id: string; kind: string; who: string; character?: string; lastQuestion?: string; lastUsed: number; locked: boolean }[]>([]);
+  const load = () => api<{ sessions: typeof list }>('/api/robot/sessions', { quiet: true }).then((r) => setList(r.sessions)).catch(() => {});
+  useEffect(() => {
+    if (!active) return;
+    void load();
+    const t = setInterval(load, 10_000);
+    return () => clearInterval(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [active]);
+  if (!list.length) return null;
+  return (
+    <div className="card space-y-2">
+      <h2 className="font-semibold">Live sessions</h2>
+      {list.map((s) => (
+        <div key={s.id} className="flex flex-wrap items-center gap-2 text-sm">
+          <span className="rounded bg-[#21262d] px-1.5 text-xs">{s.kind}</span>
+          <span>{s.who}</span>
+          {s.character && <span className="text-slate-300">· {s.character}</span>}
+          {s.locked && <span className="text-xs text-amber-300">locked</span>}
+          <span className="truncate text-xs text-slate-500">{s.lastQuestion ? `"${s.lastQuestion.slice(0, 50)}"` : ''}</span>
+          <span className="ml-auto text-xs text-slate-500">{new Date(s.lastUsed).toLocaleTimeString()}</span>
+          <button className="btn-ghost px-2 py-0.5 text-xs" onClick={async () => { await api(`/api/robot/sessions/${encodeURIComponent(s.id)}`, { method: 'DELETE' }).catch(() => {}); void load(); }}>
+            Stop
+          </button>
+        </div>
+      ))}
+    </div>
   );
 }

@@ -125,6 +125,7 @@ export function MemoryPage({ active }: { active: boolean }) {
                   <button className="btn-ghost text-red-300" onClick={del}>{sel?.startsWith('archive/deleted/') ? 'Delete forever' : 'Delete'}</button>
                 </span>
               </div>
+              {sel.startsWith('hivebot/rules/') && <RulesHelp file={sel} />}
               <textarea
                 className="input min-h-[55vh] w-full font-mono text-sm"
                 value={text}
@@ -237,4 +238,33 @@ function countFiles(n: TreeNode): number {
   let c = n.file ? 1 : 0;
   for (const d of n.dirs.values()) c += countFiles(d);
   return c;
+}
+
+/** HiveBot's rule files (H31/H32): what each line means, and "try a sentence" to see who would answer. */
+function RulesHelp({ file }: { file: string }) {
+  const [text, setText] = useState('');
+  const [out, setOut] = useState<string>('');
+  const help = file.endsWith('names.md')
+    ? 'One name per line: "- heard → character" under ## <Character>. "Word starts": "- ultr*, altr* (5-9 letters) → ultron". The robot and every HiveBot page get a change within a minute.'
+    : 'Settings: "- name: value (comment)". Lists: ## Noise, ## One word that counts, ## Additions, ## Kind of question (### weather, ### web). A broken line never breaks HiveBot: the last good version is used and Problems says which line.';
+  const tryIt = async () => {
+    try {
+      const r = await fetch('/api/robot/rules/try', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text }) }).then((x) => x.json());
+      setOut(r.skip ? `Skipped: ${r.skip}` : `${r.character}${r.named ? '' : ' (no name: follow-up or default)'} → "${r.question}"${r.need ? ` · ${r.need}` : ''}${r.answer ? ` · answers: ${r.answer}` : ''}${r.problems?.length ? ` · problems: ${r.problems.join('; ')}` : ''}`);
+    } catch {
+      setOut('Could not check');
+    }
+  };
+  return (
+    <div className="space-y-1.5 rounded-md bg-sky-950/30 p-2 text-xs text-sky-100/90">
+      <p>{help}</p>
+      <div className="flex gap-2">
+        <input className="input py-1 text-xs" placeholder='Try a sentence, e.g. "hey jak, lights on"' value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && void tryIt()} />
+        <button className="btn-ghost text-xs" disabled={!text.trim()} onClick={() => void tryIt()}>
+          Try
+        </button>
+      </div>
+      {out && <p className="font-mono">{out}</p>}
+    </div>
+  );
 }

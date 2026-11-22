@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto';
+import { rulesFor, type HiveBotRules } from './hivebotRules.js';
 import { decrypt, encrypt, newId } from '../crypto.js';
-import { db, getSetting } from '../db/index.js';
+import { db, getSetting, setSetting } from '../db/index.js';
 import type { TokenScope } from '../api/auth.js';
 
 /**
@@ -254,7 +255,24 @@ const num = (v: unknown, min: number, max: number) => (typeof v === 'number' && 
 const str = (v: unknown, max: number) => (typeof v === 'string' && v.trim() ? v.trim().slice(0, max) : null);
 
 /** The robot's config: Wi-Fi networks (with passwords), HiveMind addresses, room, characters, firmware to run. */
+/**
+ * H31: the owner's HiveBot rules (names.md, listening.md). When they changed since this robot last got them, its
+ * configVersion goes up, so the robot reloads its config at its next heartbeat (a new name within a minute).
+ */
+export function rulesForRobot(r: RobotRow): { rules: HiveBotRules; row: RobotRow } {
+  const { problems: _p, ...rules } = rulesFor(r.owner_id);
+  const key = `hivebot.rules.sent.${r.id}`;
+  if (getSetting(key) !== rules.version) {
+    setSetting(key, rules.version);
+    db.prepare('UPDATE robots SET config_version = config_version + 1 WHERE id = ?').run(r.id);
+    r = robotById(r.id) ?? r;
+  }
+  return { rules, row: r };
+}
+
 export function robotConfig(r: RobotRow, firmwareFor?: (board: string | null, target: string | null) => { version: string; url: string; sha256?: string } | undefined) {
+  const withRules = rulesForRobot(r);
+  r = withRules.row;
   const urls = (() => {
     try {
       return JSON.parse(getSetting('robot.urls') ?? '{}') as { home?: string; public?: string };
@@ -287,6 +305,9 @@ export function robotConfig(r: RobotRow, firmwareFor?: (board: string | null, ta
     ],
     standby: { askAfterS: 240, sleepAfterS: 600 },
     settings: settingsOf(r),
+    // H31/H32: the rules as JSON, and HiveMind can pick the character itself (send character "auto" with a session).
+    rules: withRules.rules,
+    features: { hivebotRules: true, hivebotAuto: true, sessions: true },
     ...(r.pin_change && { pinChange: JSON.parse(r.pin_change) as { salt: string; hash: string; id: number } }),
     ...(fw && { firmware: fw }),
   };

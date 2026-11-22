@@ -1,4 +1,6 @@
 import type { CanvasGraph, RunEvent } from '@hivemind/shared';
+import { rulesFor } from '../services/hivebotRules.js';
+import { pickCharacter, recordTurn, sessionFor, type Pick, type Session } from '../services/hivebotSessions.js';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { validateGraph } from '../engine/graph.js';
 import { checkVars } from '../engine/vars.js';
@@ -108,6 +110,28 @@ export function v1Routes(app: FastifyInstance) {
       chat = { system: c.system, history: c.history };
     } catch (err) {
       return reply.code(400).send(apiError((err as Error).message));
+    }
+    // H30/H32: a HiveBot session (the robot, a browser tab, a phone): its own conversation; with character "auto"
+    // HiveMind picks who answers from the rules (names.md, listening.md), the same for every place.
+    let session: Session | undefined;
+    let picked: Pick | undefined;
+    if (vars.session) {
+      const robot = !!req.user!.scope?.robot;
+      session = sessionFor(req.user!.id, vars.session.slice(0, 80), { kind: robot ? 'robot' : 'browser', who: robot ? `robot ${req.user!.scope!.robot}` : req.user!.username, ...(vars.locked !== undefined && { locked: vars.locked === 'true' }) });
+      if (!vars.character || vars.character === 'auto') {
+        picked = pickCharacter(session, question, rulesFor(req.user!.id), { robot });
+        // Noise or the TV: nothing runs; the client stays quiet.
+        if (picked.skip) return quick(reply, body, { content: '', hivemind: { skip: picked.skip, question: picked.question } });
+        vars.character = picked.character!;
+        if (picked.need && !vars.need) vars.need = picked.need;
+        question = picked.question;
+        if (picked.answer) {
+          recordTurn(session, picked.character, question, picked.answer);
+          return quick(reply, body, { content: picked.answer, hivemind: { character: picked.character, question } });
+        }
+      }
+      // The session's conversation when the client sends none (old robots send their own history: that one wins).
+      if (!chat.history.length && session.history.length && (!picked || !picked.named || picked.character === session.character)) chat = { ...chat, history: [...session.history] };
     }
     // Model "auto": the canvas router (Settings → Voice) picks the canvas, so one Home Assistant agent reaches all of them.
     const all = canvasesFor(req.user!);
@@ -223,10 +247,11 @@ export function v1Routes(app: FastifyInstance) {
       const stats = statsOf(events);
       const answering = live ? stats.find((s) => s.node === labelOf(live)) : stats.at(-1);
       const reply1 = completion(runId, model, done.final, usageOf(events));
+      if (session) recordTurn(session, vars.character, question, done.final);
       return {
         ...reply1,
         usage: { ...reply1.usage, ...(answering?.tokensPerSecond && { tokensPerSecond: answering.tokensPerSecond }) },
-        hivemind: { ...info, stats },
+        hivemind: { ...info, stats, ...(picked && { character: vars.character, question }) },
       };
     }
 
@@ -236,6 +261,8 @@ export function v1Routes(app: FastifyInstance) {
     res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive', 'x-accel-buffering': 'no' });
     const send = (data: unknown) => res.write(`data: ${JSON.stringify(data)}\n\n`);
     send(chunk(runId, model, { role: 'assistant', content: '' }));
+    // H32: who answers, right away, so the robot shows the right face before the answer is done.
+    if (picked) send({ type: 'route', character: vars.character, question, ...(progress ? {} : {}) });
     const ping = setInterval(() => res.write(': working\n\n'), 10_000);
     const liveText = new LiveText();
     let lastLive = 0;
@@ -247,6 +274,7 @@ export function v1Routes(app: FastifyInstance) {
       finished = true; // the run (and its tail) keeps going server-side — don't cancel it when the stream closes.
       const rest = liveText.finish(final);
       if (rest) send(chunk(runId, model, { content: rest }));
+      if (session) recordTurn(session, vars.character, question, final);
       const st = statsOf(events);
       const ans = live ? st.find((s) => s.node === labelOf(live)) : st.at(-1);
       send({ ...chunk(runId, model, {}, 'stop'), usage: { ...usageOf(events), ...(ans?.tokensPerSecond && { tokensPerSecond: ans.tokensPerSecond }) } });
@@ -293,7 +321,7 @@ export function v1Routes(app: FastifyInstance) {
     clearInterval(ping);
     // Which model answered (Auto model), in one extra chunk OpenAI clients skip.
     const info = routeInfo(events);
-    if (info) send({ ...chunk(runId, model, {}), choices: [], hivemind: info });
+    if (info || picked) send({ ...chunk(runId, model, {}), choices: [], hivemind: { ...info, ...(picked && { character: vars.character, question }) } });
     res.write('data: [DONE]\n\n');
     res.end();
   });
@@ -309,4 +337,30 @@ export function routeInfo(events: RunEvent[]): { route: string; decider_ms?: num
   if (!last?.route) return;
   const decider = routes.find((e) => (e.decision?.ms ?? 0) > 0)?.decision;
   return { route: last.route, ...(decider && { decider_ms: decider.ms }) };
+}
+
+/** A reply without running a canvas (noise, the TV, "Friday only works on the robot"), streamed or not. */
+function quick(reply: FastifyReply, body: { model?: string; stream?: boolean }, o: { content: string; hivemind: Record<string, unknown> }) {
+  const id = `chatcmpl-${Date.now().toString(36)}`;
+  const model = body.model ?? 'hivebot';
+  if (!body.stream) {
+    return reply.send({
+      id,
+      object: 'chat.completion',
+      created: Math.floor(Date.now() / 1000),
+      model,
+      choices: [{ index: 0, message: { role: 'assistant', content: o.content }, finish_reason: 'stop' }],
+      usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+      hivemind: o.hivemind,
+    });
+  }
+  reply.hijack();
+  const res = reply.raw;
+  res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive' });
+  const base = { id, object: 'chat.completion.chunk', created: Math.floor(Date.now() / 1000), model };
+  res.write(`data: ${JSON.stringify({ ...base, choices: [{ index: 0, delta: { role: 'assistant', content: o.content }, finish_reason: null }] })}\n\n`);
+  res.write(`data: ${JSON.stringify({ ...base, choices: [{ index: 0, delta: {}, finish_reason: 'stop' }], hivemind: o.hivemind })}\n\n`);
+  res.write('data: [DONE]\n\n');
+  res.end();
+  return reply;
 }

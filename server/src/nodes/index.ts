@@ -197,8 +197,11 @@ export const historyText = (history: ChatMessage[]) =>
  * is never filled in again. An unknown var becomes empty.
  */
 export const fill = (tpl: string, ctx: Pick<NodeContext, 'question' | 'vars'> & { chat?: ChatContext }, inputs = '') =>
-  tpl.replace(/\{\{\s*(question|inputs|system|history|vars\.([a-zA-Z0-9_]{1,40}))\s*\}\}/g, (_, k: string, name?: string) => {
+  tpl.replace(/\{\{\s*(question|inputs|system|history|session\.history|session\.character|vars\.([a-zA-Z0-9_]{1,40}))\s*\}\}/g, (_, k: string, name?: string) => {
     if (name !== undefined) return ctx.vars?.[name] ?? '';
+    // H30: the session's conversation (it comes in as the chat history) and its character.
+    if (k === 'session.history') return historyText(ctx.chat?.history ?? []);
+    if (k === 'session.character') return ctx.vars?.character ?? '';
     if (k === 'question') return ctx.question;
     if (k === 'system') return ctx.chat?.system ?? '';
     if (k === 'history') return historyText(ctx.chat?.history ?? []);
@@ -697,7 +700,7 @@ export const NODES: Record<NodeType, NodeDefinition> = {
       const allowed = `${letters.slice(0, -1).join(', ')} or ${letters.at(-1)}`;
       // The vote: one of the allowed letters, or nothing (anything else is not a vote).
       const read = (reply: string) => {
-        const pick = reply.trim().toUpperCase().match(/([A-Z])/)?.[1] ?? reply.trim().toUpperCase()[0];
+        const pick = reply.trim().toUpperCase().match(/\b([A-Z])\b/)?.[1] ?? reply.trim().toUpperCase()[0];
         const idx = pick ? pick.charCodeAt(0) - 65 : -1;
         return idx >= 0 && idx < candidates.length ? idx : -1;
       };

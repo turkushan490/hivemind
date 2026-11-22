@@ -101,8 +101,9 @@ export function robotRoutes(app: FastifyInstance) {
     const r = robotOf(req, reply);
     if (!r) return;
     heartbeat(r, (req.body ?? {}) as Record<string, unknown>, req.ip);
+    const config = robotConfig(robotById(r.id)!, firmwareFor);
     const now = robotById(r.id)!;
-    return { configVersion: now.config_version, config: robotConfig(now, firmwareFor), jobsDone: jobsDone(r.owner_id, r.id), jobsRunning: jobsRunning(r.owner_id, r.id) };
+    return { configVersion: now.config_version, config, jobsDone: jobsDone(r.owner_id, r.id), jobsRunning: jobsRunning(r.owner_id, r.id) };
   });
 
   /** A new unlock PIN over the air: { pin } (4-8 digits); the robot gets only a salt and a hash. */
@@ -174,6 +175,31 @@ export function robotRoutes(app: FastifyInstance) {
       return { jobId: j.id, runId, status: 'queued' };
     }),
   );
+  // H30: the live HiveBot sessions (robots, browser tabs, phones) and stopping one.
+  app.get('/api/robot/sessions', { preHandler: requireUser }, async (req) => {
+    const { listSessions } = await import('../services/hivebotSessions.js');
+    return { sessions: listSessions(req.user!.id) };
+  });
+  app.delete('/api/robot/sessions/:id', { preHandler: requireUser }, async (req) => {
+    const { stopSession } = await import('../services/hivebotSessions.js');
+    return { ok: stopSession(req.user!.id, (req.params as { id: string }).id) };
+  });
+  // H32: "try a sentence" — what HiveMind would pick for it (character, the question, or skip and why).
+  app.post('/api/robot/rules/try', { preHandler: requireUser }, async (req, reply) => {
+    const text = String(((req.body ?? {}) as { text?: unknown }).text ?? '').slice(0, 2000);
+    if (!text.trim()) return reply.code(400).send({ error: 'Send { text }' });
+    const { rulesFor } = await import('../services/hivebotRules.js');
+    const { pickCharacter } = await import('../services/hivebotSessions.js');
+    const rules = rulesFor(req.user!.id);
+    const trial = { id: 'try', ownerId: req.user!.id, kind: 'browser' as const, who: 'try', lastAnswerAt: 0, followUps: 0, history: [], locked: false, lastUsed: Date.now() };
+    return { ...pickCharacter(trial, text, rules, { robot: false }), problems: rules.problems };
+  });
+  // H31: the HiveBot rules as JSON, for the robot (its token) and the HiveBot page (a login): the owner's rules.
+  app.get('/api/robot/rules', { preHandler: requireUser }, async (req) => {
+    const { rulesFor } = await import('../services/hivebotRules.js');
+    const ownerId = req.user!.scope?.robot ? (robotById(req.user!.scope.robot)?.owner_id ?? req.user!.id) : req.user!.id;
+    return rulesFor(ownerId);
+  });
   app.get('/api/robot/config', { preHandler: requireUser }, async (req, reply) => {
     const r = robotOf(req, reply);
     if (!r) return;

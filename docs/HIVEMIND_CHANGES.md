@@ -1182,6 +1182,8 @@ which project it works on, and can make a new one.
 - **HiveBot page: tap to send.** While it hears you, a tap on the face (or Enter with an empty text box) sends at
   once instead of waiting for the pause.
 - Not built yet: HiveMind's own CPU-only llama-server for the RAM models (H36.2b); keep-warm covers it until then.
+- Colibri library: two uncensored Qwen3.6-35B-A3B models (Heretic, and the Claude-4.7-Opus distill abliterated by
+  huihui-ai), with a new "uncensored" tag. Both import as GGUF on the qwen36 engine.
 - Tests: `server/test/ramModels.test.ts`.
 
 ---

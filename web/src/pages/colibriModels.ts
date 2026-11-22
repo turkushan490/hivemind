@@ -5,7 +5,7 @@
  * - convert: only runs after a conversion with PyTorch, which HiveMind can't do (yet).
  * Speeds are colibri's own measurements, on its test machines.
  */
-export type LibTag = 'chat' | 'vision' | 'tools' | 'thinking' | 'code' | 'decision' | 'image';
+export type LibTag = 'chat' | 'vision' | 'tools' | 'thinking' | 'code' | 'decision' | 'image' | 'uncensored';
 
 export interface LibModel {
   id: string;
@@ -47,6 +47,33 @@ export const LIBRARY: LibModel[] = [
     catalog: 'qwen36-35b',
     gguf: 'Qwen3.6-35B-A3B GGUF',
     speed: '30 tok/s (colibri version, CUDA); GGUF UD-Q4_K_M: 105 tok/s, prompts at 3,491 tok/s (CUDA, colibri test card)',
+  },
+  {
+    id: 'qwen36-heretic',
+    name: 'Qwen3.6-35B-A3B uncensored (heretic)',
+    params: '35B · 3B active',
+    about: 'Qwen3.6-35B-A3B with the refusals taken out (Heretic, KL 0.0015: barely changed otherwise). Good for free writing, e.g. detailed prompts for video models.',
+    tags: ['chat', 'thinking', 'tools', 'uncensored'],
+    size: '17–69 GB (Q4_K_M 21 GB)',
+    minGb: 17,
+    ramGb: 10,
+    engine: 'qwen36',
+    hf: 'llmfan46/Qwen3.6-35B-A3B-uncensored-heretic',
+    gguf: 'Qwen3.6-35B-A3B-uncensored-heretic GGUF',
+    license: 'Apache-2.0',
+  },
+  {
+    id: 'qwen36-opus-abliterated',
+    name: 'Qwen3.6-35B-A3B Claude-4.7-Opus distill, uncensored',
+    params: '35B · 3B active',
+    about: 'Qwen3.6-35B-A3B trained on Claude Opus 4.7 style reasoning, then abliterated (huihui-ai): like OmniCoder, but the 35B MoE. Coding and planning without refusals.',
+    tags: ['chat', 'thinking', 'tools', 'code', 'uncensored'],
+    size: '13–71 GB (Q4_K 22 GB)',
+    minGb: 13,
+    ramGb: 10,
+    engine: 'qwen36',
+    hf: 'huihui-ai/Huihui-Qwen3.6-35B-A3B-Claude-4.7-Opus-abliterated-MTP-GGUF',
+    gguf: 'Qwen3.6-35B-A3B-Claude-4.7-Opus-abliterated GGUF',
   },
   {
     id: 'qwen3-coder',
@@ -394,6 +421,7 @@ export const TAG_STYLE: Record<LibTag, string> = {
   code: 'bg-emerald-900/50 text-emerald-300',
   decision: 'bg-amber-900/50 text-amber-300',
   image: 'bg-fuchsia-900/50 text-fuchsia-300',
+  uncensored: 'bg-rose-900/50 text-rose-300',
 };
 
 export const hfLink = (repo: string) => `https://huggingface.co/${repo}`;

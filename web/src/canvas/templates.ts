@@ -191,12 +191,20 @@ const VOICE: Template[] = [
       const q = node('input', 0, 200, 'Spoken request');
       // A mid-size model (the judge pick): the smallest one can't match a spoken name to a device.
       const mid = m.judge ?? m.text[1] ?? m.text[0];
-      const route = node('router', 320, 200, 'Command or question?', mid ? { model: mid } : {});
+      // With a decision model (Jev, clef-flash) the route is picked in ~0.1 s instead of a model call; never thinking.
+      const route = node('router', 320, 200, 'Command or question?', {
+        ...(mid && { model: mid }),
+        think: false,
+        ...(m.decision && { decideWith: 'jev' as const, decider: m.decision }),
+      });
       const devices = node('homeassistant', 640, -60, 'Smart home command (do something in the house)', { haOp: 'devices' });
       const cmd = node('llm', 960, 60, 'Pick the device', { ...(mid && { model: mid }), think: false, prompt: HOME_COMMAND, json: true, jsonSchema: '{"service": "domain.service", "data": {"entity_id": "..."}}' });
       const ha = node('homeassistant', 1280, 60, 'Do it', { haOp: 'service' });
       const done = llm(1600, 60, 'Confirm', mid, 'Home Assistant did this:\n{{inputs}}\n\nThe user asked: {{question}}\n\nConfirm in one short sentence what was done.', SPOKEN);
       const answer = llm(960, 340, 'Question or chat', mid, 'Earlier in this conversation:\n{{history}}\n\nNow answer: {{question}}', SPOKEN);
+      // Spoken answers: no thinking, so they come quickly.
+      done.config.think = false;
+      answer.config.think = false;
       const out = node('output', 1920, 200, 'Spoken answer');
       return {
         nodes: [q, route, devices, cmd, ha, done, answer, out],

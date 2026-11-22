@@ -54,6 +54,18 @@ describe('Agent block (H21)', () => {
     expect(agent.parseStep('{"tool": "search", "input": {"query": "x"}}')).toEqual({ tool: 'search', input: { query: 'x' } });
     expect(agent.parseStep('Sure!\n```json\n{"answer": "done"}\n```')).toEqual({ answer: 'done' });
     expect(agent.parseStep('no json here')).toBeUndefined();
+    // A file as a code block after the JSON; CSS braces in it don't confuse the JSON.
+    const html = '<style>body { color: red; }</style><h1>Cats</h1>';
+    expect(agent.parseStep('{"tool": "writeFiles", "input": {"project": "cats", "path": "index.html"}}\n```html\n' + html + '\n```')).toEqual({
+      tool: 'writeFiles',
+      input: { project: 'cats', path: 'index.html', files: [{ path: 'index.html', content: html }] },
+    });
+    // The last "}" forgotten, then the next step: repaired; "content" + "path" is one file.
+    expect(agent.parseStep('{"tool": "writeFiles", "input": {"project": "p", "path": "a.html", "content": "<b>{x}</b>"}{"tool": "sayNow", "input": {}}')).toEqual({
+      tool: 'writeFiles',
+      input: { project: 'p', path: 'a.html', content: '<b>{x}</b>', files: [{ path: 'a.html', content: '<b>{x}</b>' }] },
+    });
+    expect(agent.parseStep('Doing it: {"tool": "sayNow", "input": {"text": "a {b} c"}} and then {more}')).toEqual({ tool: 'sayNow', input: { text: 'a {b} c' } });
   });
 
   it('uses tools in turns, sees each result, and answers; every step shows on the block', async () => {

@@ -17,7 +17,7 @@ const TOOL_HELP: Record<AgentTool, string> = {
   listProjects: '{} — the existing projects (name, last change), newest first: use it to find the one the owner means',
   createProject: '{"name": "JB Clicker"} — make a new project with that name (an existing one with the same name is returned); then write its files with writeFiles',
   readProject: '{"project": "name or id", "globs": "*.html, *.js"} — read a project\'s files',
-  writeFiles: '{"project": "name or id", "files": [{"path": "index.html", "content": "..."}]} — write files into a project',
+  writeFiles: '{"project": "name or id", "path": "index.html"} followed by the whole file in a ``` code block after the JSON (one file per step) — or {"project", "files": [{"path", "content"}]} for small files',
   shell: '{"commands": "...", "project": "name (optional)", "shell": "bash" | "pwsh"} — run commands in a sandbox (go, dotnet, node, python, wine)',
   browser: '{"steps": "goto /index.html\\nclick Shop\\neval document.querySelector(\'#score\').textContent\\ntext #score\\nscreenshot\\nconsole", "project": "name (optional)"} or {"test": true, "project": "name"} — a headless browser. "eval <js>" returns a value; "text <selector>" returns one element\'s text.',
   workflow: '{"op": "list" | "create" | "update" | "run" | "delete", "id": "hivebot-ws-<you>-1", "graph": {...}, "question": "..."} — your own workflows',
@@ -28,15 +28,72 @@ const TOOL_HELP: Record<AgentTool, string> = {
 };
 
 /** The model's step: a tool call or the answer. */
+/** The first complete JSON object in a text (strings and escapes respected), or undefined. */
+export function firstJsonObject(t: string): { json: string; end: number } | undefined {
+  for (let start = t.indexOf('{'); start >= 0; start = t.indexOf('{', start + 1)) {
+    let depth = 0;
+    let inStr = false;
+    for (let i = start; i < t.length; i++) {
+      const c = t[i];
+      if (inStr) {
+        if (c === '\\') i++;
+        else if (c === '"') inStr = false;
+      } else if (c === '"') inStr = true;
+      else if (c === '{') {
+        // A model that forgot the last "}" of a step: a new step starts at depth 1 ("}{\"tool\"").
+        if (depth === 1 && i > start && /^\{\s*"(tool|answer)"/.test(t.slice(i, i + 12))) {
+          const json = `${t.slice(start, i)}}`;
+          try {
+            JSON.parse(json);
+            return { json, end: i };
+          } catch {
+            break;
+          }
+        }
+        depth++;
+      } else if (c === '}' && --depth === 0) {
+        const json = t.slice(start, i + 1);
+        try {
+          JSON.parse(json);
+          return { json, end: i + 1 };
+        } catch {
+          break;
+        }
+      }
+    }
+  }
+  return undefined;
+}
+
+/**
+ * The model's step: a tool call or the answer. A file may come as a code block after the JSON (big HTML with CSS
+ * braces breaks inside JSON): {"tool": "writeFiles", "input": {"project": "x", "path": "index.html"}} then ```html…```.
+ */
 export function parseStep(reply: string): { tool: string; input: Record<string, unknown> } | { answer: string } | undefined {
   const t = reply.trim();
-  const body = /```(?:json)?[^\n]*\n([\s\S]*?)```/.exec(t)?.[1] ?? t.slice(t.indexOf('{'), t.lastIndexOf('}') + 1);
+  const fencedJson = /```json[^\n]*\n([\s\S]*?)```/.exec(t)?.[1];
+  const found = fencedJson ? { json: fencedJson, end: t.indexOf(fencedJson) + fencedJson.length } : firstJsonObject(t);
+  if (!found) return undefined;
+  let j: { tool?: unknown; input?: unknown; answer?: unknown };
   try {
-    const j = JSON.parse(body) as { tool?: unknown; input?: unknown; answer?: unknown };
-    if (typeof j.answer === 'string') return { answer: j.answer };
-    if (typeof j.tool === 'string') return { tool: j.tool, input: j.input && typeof j.input === 'object' ? (j.input as Record<string, unknown>) : {} };
-  } catch {}
-  return undefined;
+    j = JSON.parse(found.json);
+  } catch {
+    return undefined;
+  }
+  if (typeof j.answer === 'string') return { answer: j.answer };
+  if (typeof j.tool !== 'string') return undefined;
+  const input = j.input && typeof j.input === 'object' ? { ...(j.input as Record<string, unknown>) } : {};
+  // A code block after the JSON is the file's content (writeFiles with "path" and no "files").
+  const after = t.slice(found.end);
+  const block = /```[\w+#.-]*[^\n]*\n([\s\S]*?)\n```/.exec(after)?.[1];
+  if (block !== undefined && j.tool === 'writeFiles' && !Array.isArray(input.files)) {
+    input.files = [{ path: typeof input.path === 'string' && input.path ? input.path : 'index.html', content: block }];
+  }
+  // {"path", "content"} without "files": one file.
+  if (j.tool === 'writeFiles' && !Array.isArray(input.files) && typeof input.content === 'string') {
+    input.files = [{ path: typeof input.path === 'string' && input.path ? input.path : 'index.html', content: input.content }];
+  }
+  return { tool: j.tool, input };
 }
 
 const str = (v: unknown) => (typeof v === 'string' ? v : v === undefined || v === null ? '' : JSON.stringify(v));
@@ -70,12 +127,13 @@ export const AGENT_NODE: NodeDefinition = {
     const who = ctx.vars.character ? `You are ${ctx.vars.character}. ` : '';
     const system = [
       `${who}${c.system?.trim() ? fill(c.system, ctx, input) : 'You get a task and do it yourself with tools, one step at a time.'}`,
-      'Each reply is ONLY one JSON object, nothing else:',
+      'Each reply is ONLY one JSON object, nothing else (only writeFiles may add the file in one ``` code block after its JSON):',
       '  {"tool": "<name>", "input": {...}}  to use a tool (you get its result back), or',
       '  {"answer": "<text>"}  when the task is done (or cannot be done: say why).',
       'Tools:',
       ...allowed.map((t) => `- ${t}: ${TOOL_HELP[t]}`),
       `You have at most ${maxSteps} steps. Check your work (run it, open it, read it back) before you answer.`,
+      'Never say something is done unless a tool result said so: a failed or missing writeFiles means the site is NOT ready.',
       'Never pay, order, send messages or push to GitHub without a pause step the owner approved, unless the task says so.',
     ].join('\n');
     const messages: ChatMessage[] = [

@@ -1,5 +1,6 @@
 import { accessSync, chownSync, constants, copyFileSync, existsSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { getSetting } from '../db/index.js';
 import { API_NUM_CTX } from './v1Models.js';
 
 /**
@@ -27,7 +28,22 @@ export interface T3Settings {
   owner?: string;
   /** The API token made for T3 (so New token can revoke it). */
   tokenId?: string;
+  /** How long a local model stays loaded after a /v1 call (T3, OpenCode): "0" = unload right away; default 30m. */
+  keepAlive?: string;
   models: Record<string, T3Choice>;
+}
+
+/** The choices for keepAlive (Settings → T3 Code). */
+export const T3_KEEP_ALIVE = ['0', '2m', '5m', '10m', '30m', '1h'] as const;
+
+/** How long /v1 calls of this user keep a local model loaded (their T3 setting, else 30 minutes). */
+export function apiKeepAlive(userId: string): string {
+  try {
+    const k = (JSON.parse(getSetting(`user:${userId}:t3`) ?? '{}') as { keepAlive?: string }).keepAlive;
+    return k && (T3_KEEP_ALIVE as readonly string[]).includes(k) ? k : '30m';
+  } catch {
+    return '30m';
+  }
 }
 
 /** A /v1/models entry as the page and the writer see it. */

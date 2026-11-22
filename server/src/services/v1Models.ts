@@ -1,3 +1,4 @@
+import { apiKeepAlive } from './t3sync.js';
 import type { ModelInfo } from '@hivemind/shared';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { db } from '../db/index.js';
@@ -169,7 +170,8 @@ export async function callApiModel(
     ...((typeof body.stop === 'string' || Array.isArray(body.stop)) && { stop: body.stop as string | string[] }),
     ...(tools?.length && { tools, ...(body.tool_choice !== undefined && { toolChoice: body.tool_choice }) }),
     ...(numCtx && { numCtx }),
-    ...(p.local && { keepAlive: '30m' }),
+    // How long it stays loaded afterwards: Settings → T3 Code (default 30 minutes; "0" unloads right away).
+    ...(p.local && { keepAlive: apiKeepAlive(user.id) }),
   };
   const limits = runLimits();
   const seconds = Math.max(limits.maxSeconds, p.callSeconds ?? 0);

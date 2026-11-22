@@ -381,7 +381,8 @@ export function keepAliveMs(keep?: string): number | undefined {
   if (/^-1$/.test(keep.trim())) return 0;
   const m = keep.trim().match(/^(\d+(?:\.\d+)?)\s*(ms|s|m|h)?$/);
   if (!m) return undefined;
-  return Number(m[1]) * { ms: 1, s: 1000, m: 60_000, h: 3_600_000 }[(m[2] ?? 's') as 'ms' | 's' | 'm' | 'h'];
+  // "0" = unload right after the answer (as in Ollama), not "forever" (that is -1).
+  return Math.max(1, Number(m[1]) * { ms: 1, s: 1000, m: 60_000, h: 3_600_000 }[(m[2] ?? 's') as 'ms' | 's' | 'm' | 'h']);
 }
 
 async function kill(p: ChildProcess) {

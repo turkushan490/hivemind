@@ -18,6 +18,7 @@ import {
   writeToken,
   type T3Choice,
   type T3Settings,
+  T3_KEEP_ALIVE,
 } from '../services/t3sync.js';
 import { requireUser, type User } from './auth.js';
 import { v1ModelData } from './v1.js';
@@ -46,6 +47,11 @@ function cleanSettings(body: unknown, prev: T3Settings): T3Settings {
     const owner = String(b.owner).trim();
     if (owner && !parseOwner(owner)) throw new Error('The file owner must look like 99:100 (user id:group id)');
     next.owner = owner || undefined;
+  }
+  if (b.keepAlive !== undefined) {
+    const k = String(b.keepAlive ?? '').trim();
+    if (k && !(T3_KEEP_ALIVE as readonly string[]).includes(k)) throw new Error(`keepAlive must be one of ${T3_KEEP_ALIVE.join(', ')}`);
+    next.keepAlive = k || undefined;
   }
   if (b.models !== undefined) {
     if (!b.models || typeof b.models !== 'object' || Array.isArray(b.models)) throw new Error('models must be an object of model id → choice');

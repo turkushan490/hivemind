@@ -1165,6 +1165,15 @@ which project it works on, and can make a new one.
 
 ---
 
+## T3 / OpenCode: how long a model stays loaded
+
+- Settings → T3 Code: "After a T3 / OpenCode answer, keep the model loaded": unload right away, 2, 5, 10, 30 minutes
+  (default, as before) or 1 hour. It is how HiveMind answers /v1 calls for Ollama and Colibri models, so it works at
+  once, without Update T3. Each answer starts the time again.
+- Colibri: a keepAlive of "0" now unloads right after the answer (as in Ollama); it meant "forever" before (that is -1).
+
+---
+
 ## Unlock mode: hidden memory and hidden workflows
 
 - **🔒** next to Problems (a small icon, so the menu never moves). It asks a **PIN** (the first time: set one;

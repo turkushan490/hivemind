@@ -42,7 +42,7 @@ interface Folder {
 }
 interface T3Data {
   folder: Folder;
-  settings: { baseUrl: string; owner: string; models: Record<string, Choice> };
+  settings: { baseUrl: string; owner: string; keepAlive?: string; models: Record<string, Choice> };
   models: Model[];
 }
 
@@ -65,6 +65,7 @@ export function T3CodePanel({ active }: { active: boolean }) {
   const [chosen, setChosen] = useState<Record<string, Choice>>({});
   const [baseUrl, setBaseUrl] = useState('');
   const [owner, setOwner] = useState('');
+  const [keepAlive, setKeepAlive] = useState('30m');
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState<Filter>('all');
   const [busy, setBusy] = useState(false);
@@ -76,6 +77,7 @@ export function T3CodePanel({ active }: { active: boolean }) {
     setChosen(d.settings.models);
     setBaseUrl(d.settings.baseUrl);
     setOwner(d.settings.owner);
+    setKeepAlive(d.settings.keepAlive ?? '30m');
     setDirty(false);
   };
   useEffect(() => {
@@ -178,6 +180,30 @@ export function T3CodePanel({ active }: { active: boolean }) {
           </label>
         </div>
         <p className="text-xs text-slate-500">Use an address T3’s container can reach directly (not one behind a login page). Unraid containers like T3 run as 99:100.</p>
+        <label className="flex flex-wrap items-center gap-2 text-sm text-slate-300">
+          <span>After a T3 / OpenCode answer, keep the model loaded</span>
+          <select
+            className="input w-auto py-1"
+            value={keepAlive}
+            onChange={async (e) => {
+              const v = e.target.value;
+              setKeepAlive(v);
+              // Works at once (no Update T3 needed): it is how HiveMind answers T3's calls.
+              await api('/api/t3', { method: 'PUT', body: { keepAlive: v } }).then(() => toast('Saved', 'ok'), () => {});
+            }}
+          >
+            <option value="0">unload right away</option>
+            <option value="2m">2 minutes</option>
+            <option value="5m">5 minutes</option>
+            <option value="10m">10 minutes</option>
+            <option value="30m">30 minutes (default)</option>
+            <option value="1h">1 hour</option>
+          </select>
+        </label>
+        <p className="text-xs text-slate-500">
+          For Ollama and Colibri models. Each answer starts the time again, so while OpenCode works the model stays loaded; shorter frees the GPU sooner, but the next question
+          has to load it again (seconds for Ollama, longer for a big Colibri model).
+        </p>
         <div className="flex flex-wrap items-center gap-2">
           <button className="btn" disabled={busy || !f.mapped} onClick={update} title={f.mapped ? 'Write the chosen models into T3' : 'Map the folder first'}>
             Update T3 ({count})

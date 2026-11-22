@@ -266,6 +266,7 @@ describe('colibri engine', () => {
     expect(engine.keepAliveMs('90s')).toBe(90_000);
     expect(engine.keepAliveMs('2h')).toBe(7_200_000);
     expect(engine.keepAliveMs('-1')).toBe(0);
+    expect(engine.keepAliveMs('0')).toBe(1); // unload right after the answer, not forever
     expect(engine.keepAliveMs('soon')).toBeUndefined();
   });
 });

@@ -121,6 +121,32 @@ export function haDeviceLines(states: HaState[], domains: string[]): string[] {
     });
 }
 
+/** Letter trigrams of a text, for "sounds like" matching ("osan kamer lamp" ~ "ocean camera lamp"). */
+const grams = (t: string) => {
+  const w = ` ${t.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()} `;
+  const g = new Set<string>();
+  for (let i = 0; i < w.length - 2; i++) g.add(w.slice(i, i + 3));
+  return g;
+};
+
+/** The device lines whose id or name looks most like the request (letter trigrams, so misheard names still match). */
+export function closestDevices(lines: string[], request: string, keep: number): string[] {
+  const q = grams(request);
+  if (!q.size) return lines.slice(0, keep);
+  const score = (line: string) => {
+    const label = line.replace(/:[^:]*$/, '').replace(/[._]/g, ' ');
+    const g = grams(label);
+    let hit = 0;
+    for (const x of g) if (q.has(x)) hit++;
+    return hit / Math.sqrt(g.size || 1);
+  };
+  return lines
+    .map((l, i) => ({ l, i, s: score(l) }))
+    .sort((a, b) => b.s - a.s || a.i - b.i)
+    .slice(0, keep)
+    .map((x) => x.l);
+}
+
 export const ACTION_NODES: Record<'homeassistant' | 'webhook' | 'discord', NodeDefinition> = {
   homeassistant: {
     usesModel: false,
@@ -158,8 +184,11 @@ export const ACTION_NODES: Record<'homeassistant' | 'webhook' | 'discord', NodeD
         const res = await send(`${ha.url}/api/states`, { headers }, ctx.signal, 'Home Assistant');
         await ensureOk(res, 'Home Assistant');
         const only = (c.entities ?? '').split(/[\s,]+/).map((d) => d.trim().replace(/\.$/, '')).filter(Boolean);
-        const lines = haDeviceLines((await res.json()) as HaState[], only.length ? only : HA_DEVICE_DOMAINS);
-        ctx.progress(`${lines.length} devices`);
+        const all = haDeviceLines((await res.json()) as HaState[], only.length ? only : HA_DEVICE_DOMAINS);
+        // A long list makes the model slow to read it: only the devices whose names sound most like the request.
+        const keep = c.limit && c.limit > 0 ? c.limit : 25;
+        const lines = all.length > keep ? closestDevices(all, ctx.question, keep) : all;
+        ctx.progress(lines.length < all.length ? `${lines.length} of ${all.length} devices (closest to the request)` : `${lines.length} devices`);
         return lines.length ? lines.join('\n') : 'Home Assistant has no devices of these kinds.';
       }
 

@@ -85,6 +85,19 @@ describe('Home Assistant block', () => {
     expect(await NODES.homeassistant.execute(ctx('homeassistant', { haOp: 'devices', entities: 'lock' }).c)).toBe('lock.front_door: locked');
   });
 
+  it('keeps only the devices that sound like the request when the list is long', async () => {
+    const { closestDevices } = await import('../src/nodes/actions.js');
+    const lines = [
+      'light.osan_kamer_lamp (osan kamer lamp): on',
+      'light.keuken (Keuken): off',
+      'switch.koffie (Koffiezetapparaat): off',
+      'cover.garage (Garagedeur): closed',
+      'light.woonkamer_spot (Woonkamer spot): on',
+    ];
+    expect(closestDevices(lines, 'turn off Ocean camera lamp', 2)[0]).toBe('light.osan_kamer_lamp (osan kamer lamp): on');
+    expect(closestDevices(lines, 'open de garagedeur', 1)).toEqual(['cover.garage (Garagedeur): closed']);
+  });
+
   it('calls a service with templated JSON data', async () => {
     const fetch = mockFetch(json([{ entity_id: 'notify.phone', state: 'ok' }]));
     const { c } = ctx('homeassistant', { haOp: 'service', service: 'notify.mobile_app', body: '{"message": "{{input}}"}' }, { input: 'Say "hi"\nnow' });

@@ -203,6 +203,7 @@ const VOICE: Template[] = [
       const done = llm(1600, 60, 'Confirm', mid, 'Home Assistant did this:\n{{inputs}}\n\nThe user asked: {{question}}\n\nConfirm in one short sentence what was done.', SPOKEN);
       const answer = llm(960, 340, 'Question or chat', mid, 'Earlier in this conversation:\n{{history}}\n\nNow answer: {{question}}', SPOKEN);
       // Spoken answers: no thinking, so they come quickly.
+      for (const n of [cmd, done, answer]) n.config.keepAlive = '30m';
       done.config.think = false;
       answer.config.think = false;
       const out = node('output', 1920, 200, 'Spoken answer');

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { api } from '../api';
 import { toast } from '../notify';
+import { useUnlock } from '../unlock';
 
 interface MemFile {
   path: string;
@@ -19,9 +20,22 @@ interface Version {
  * Settings → Memory (H11): the robot's / owner's memory as a tree of Markdown files — view, edit, search, restore a
  * version. A "Guest" switch shows the separate guest memory (used when the robot is locked).
  */
-export function MemoryPage({ active, hidden = false }: { active: boolean; hidden?: boolean }) {
+export function MemoryPage({ active }: { active: boolean }) {
   const [files, setFiles] = useState<MemFile[]>([]);
   const [guestOn, setGuest] = useState(false);
+  // Unlock mode on: a switch shows the hidden memory instead; locked, it is gone.
+  const unlock = useUnlock();
+  const [hiddenOn, setHiddenOn] = useState(false);
+  const hidden = unlock.unlocked && hiddenOn;
+  useEffect(() => {
+    if (!unlock.unlocked) {
+      setHiddenOn(false);
+      setSel(undefined);
+      setText('');
+      setDirty(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [unlock.unlocked]);
   // Unlock mode: the hidden memory (its own folder on the server); the guest switch doesn't apply there.
   const guest = !hidden && guestOn;
   const sp = hidden ? { hidden: true } : { guest };
@@ -92,7 +106,12 @@ export function MemoryPage({ active, hidden = false }: { active: boolean; hidden
             ? 'Only here while unlock mode is on: hidden workflows read and write this, the normal memory never sees it.'
             : 'The characters’ memory as Markdown files. Edit anything; every save keeps versions.'}
         </span>
-        <label className={`ml-auto flex items-center gap-1.5 text-sm text-slate-300 ${hidden ? 'invisible' : ''}`}>
+        {unlock.unlocked && (
+          <label className={`ml-auto flex items-center gap-1.5 rounded px-2 py-0.5 text-sm ${hidden ? 'bg-rose-500/20 text-rose-200' : 'text-slate-300'}`}>
+            <input type="checkbox" checked={hiddenOn} onChange={(e) => { setHiddenOn(e.target.checked); setSel(undefined); setText(''); setDirty(false); }} /> 🔓 Hidden memory
+          </label>
+        )}
+        <label className={`flex items-center gap-1.5 text-sm text-slate-300 ${unlock.unlocked ? '' : 'ml-auto'} ${hidden ? 'hidden' : ''}`}>
           <input type="checkbox" checked={guest} onChange={(e) => { setGuest(e.target.checked); setSel(undefined); setText(''); setDirty(false); }} /> Guest memory
         </label>
         <button className="btn-ghost text-sm" onClick={newFile}>New file</button>

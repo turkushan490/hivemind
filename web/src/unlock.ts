@@ -5,6 +5,10 @@ import { api } from './api';
 export interface UnlockState {
   allowed: boolean;
   unlocked: boolean;
+  /** A PIN is set (unlocking asks for it). */
+  hasPin?: boolean;
+  /** When it locks by itself (ms). */
+  until?: number;
 }
 
 let current: UnlockState = { allowed: false, unlocked: false };
@@ -16,10 +20,17 @@ export async function loadUnlock(): Promise<UnlockState> {
   return current;
 }
 
-export async function setUnlock(on: boolean): Promise<UnlockState> {
-  current = await api<UnlockState>('/api/unlock', { body: { on } });
+export async function setUnlock(on: boolean, pin?: string): Promise<UnlockState> {
+  current = await api<UnlockState>('/api/unlock', { body: { on, pin } });
   window.dispatchEvent(new Event(EVENT));
   return current;
+}
+
+/** Sets the PIN (the old one is needed to change it). */
+export async function setUnlockPin(pin: string, old?: string): Promise<void> {
+  await api('/api/unlock/pin', { body: { pin, old } });
+  current = { ...current, hasPin: true };
+  window.dispatchEvent(new Event(EVENT));
 }
 
 /** The state right now (for event handlers). */

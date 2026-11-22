@@ -136,6 +136,8 @@ export function QuestionBox(p: {
     const el = box.current;
     if (!el) return;
     el.style.height = 'auto';
+    // Empty: one line. A long placeholder in a narrow box would otherwise make it many lines tall.
+    if (!p.value) return;
     el.style.height = `${Math.min(el.scrollHeight, 240)}px`;
   }, [p.value]);
 

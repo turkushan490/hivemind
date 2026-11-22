@@ -21,7 +21,9 @@ export function WorkflowList({ canvases, onOpen, appName, currentId, autoFocus }
   const groups = useMemo(() => {
     const words = q.trim().toLowerCase().split(/\s+/).filter(Boolean);
     const hits = canvases.filter((c) => words.every((w) => `${c.name} ${c.folder ?? ''} ${c.description ?? ''}`.toLowerCase().includes(w)));
-    return groupByFolder(hits);
+    // Hidden (unlock mode) workflows on top.
+    const all = groupByFolder(hits);
+    return [...all.filter((g) => g.items.some((c) => c.hidden)), ...all.filter((g) => !g.items.some((c) => c.hidden))];
   }, [canvases, q]);
 
   return (
@@ -38,7 +40,10 @@ export function WorkflowList({ canvases, onOpen, appName, currentId, autoFocus }
                 onClick={() => setClosed(shut ? closed.filter((f) => f !== g.folder) : [...closed, g.folder])}
               >
                 <span className="w-3">{shut ? '▸' : '▾'}</span>
-                <span className="min-w-0 flex-1 truncate">{g.folder}</span>
+                <span className={`min-w-0 flex-1 truncate ${g.items.some((c) => c.hidden) ? 'text-rose-300' : ''}`}>
+                  {g.items.some((c) => c.hidden) && '🔓 '}
+                  {g.folder}
+                </span>
                 <span className="font-normal text-slate-600">{g.items.length}</span>
               </button>
               {!shut &&

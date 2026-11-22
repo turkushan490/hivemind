@@ -23,12 +23,41 @@ afterAll(() => app.close());
 describe('unlock mode', () => {
   it('an API token can never unlock', async () => {
     expect((await send('POST', '/api/unlock', { on: true }, { headers: bearer() })).statusCode).toBe(403);
-    expect((await get('/api/unlock', { headers: bearer() })).json()).toEqual({ allowed: false, unlocked: false });
+    expect((await get('/api/unlock', { headers: bearer() })).json()).toMatchObject({ allowed: false, unlocked: false });
+  });
+
+  it('needs a PIN: set it first, a wrong one is refused, changing it needs the old one, 5 wrong tries block', async () => {
+    expect((await send('POST', '/api/unlock', { on: true })).statusCode).toBe(409);
+    expect((await send('POST', '/api/unlock/pin', { pin: '12' })).statusCode).toBe(400);
+    expect((await send('POST', '/api/unlock/pin', { pin: '1234' })).statusCode).toBe(200);
+    expect((await send('POST', '/api/unlock/pin', { pin: '9999' })).statusCode).toBe(403); // no old PIN
+    expect((await send('POST', '/api/unlock/pin', { pin: '4321', old: '1234' })).statusCode).toBe(200);
+    expect((await send('POST', '/api/unlock', { on: true, pin: '1234' })).statusCode).toBe(403);
+    for (let i = 0; i < 4; i++) await send('POST', '/api/unlock', { on: true, pin: 'nope' });
+    expect((await send('POST', '/api/unlock', { on: true, pin: '4321' })).statusCode).toBe(429);
+    const { setUnlocked } = await import('../src/services/unlock.js');
+    void setUnlocked;
+  });
+
+  it('locks by itself after 12 hours, and on log out', async () => {
+    const unlock = await import('../src/services/unlock.js');
+    const { setSetting } = await import('../src/db/index.js');
+    setSetting('user:u1:unlocked', String(Date.now() - unlock.UNLOCK_MS - 1000));
+    expect((await get('/api/unlock')).json()).toMatchObject({ unlocked: false });
+    unlock.setUnlocked({ id: 'u1' }, true);
+    const { sha256 } = await import('../src/crypto.js');
+    db.prepare('INSERT INTO sessions (token_hash, user_id, expires_at) VALUES (?, ?, ?)').run(sha256('other'), 'u1', Date.now() + 3_600_000);
+    await app.inject({ method: 'POST', url: '/api/auth/logout', cookies: { hm_session: 'other' } });
+    expect((await get('/api/unlock')).json()).toMatchObject({ unlocked: false });
   });
 
   it('turning it on makes the hidden Prompt maker and hidden memory, outside the normal memory', async () => {
     mem.write('u1', 'notes/normal.md', 'normal note');
-    expect((await send('POST', '/api/unlock', { on: true })).json()).toEqual({ allowed: true, unlocked: true });
+    // (the block from the test above is in memory: start fresh)
+    const unlock = await import('../src/services/unlock.js');
+    unlock.setUnlocked({ id: 'u1' }, true);
+    expect((await get('/api/unlock')).json()).toMatchObject({ allowed: true, unlocked: true, hasPin: true });
+    (await import('../src/api/unlock.js')).ensureUnlockedStart({ id: 'u1', username: 'user_u1', role: 'admin' } as never);
     const list = (await get('/api/canvases')).json() as Canvas[];
     const pm = list.find((c) => c.name === 'Prompt maker')!;
     expect(pm).toMatchObject({ hidden: true, folder: 'Unlocked' });
@@ -59,7 +88,7 @@ describe('unlock mode', () => {
   });
 
   it('a hidden workflow writes the hidden memory, never the normal one; its runs only show while unlocked', async () => {
-    await send('POST', '/api/unlock', { on: true });
+    (await import('../src/services/unlock.js')).setUnlocked({ id: 'u1' }, true);
     const g = chain(node('i', 'input'), node('w', 'writeMemory', { memoryPath: 'secret/a.md', memoryMode: 'replace' }), node('o', 'output'));
     const c = (await send('PUT', '/api/canvases', { name: 'Secret', ...g, hidden: true })).json() as Canvas;
     expect(c.hidden).toBe(true);

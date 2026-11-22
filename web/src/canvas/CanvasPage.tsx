@@ -590,12 +590,14 @@ Save your copy over it? (Cancel keeps the saved one)`) ? graph : undefined;
           aria-label="Folder"
         />
         {unlock.unlocked && (
-          <label
-            className={`flex items-center gap-1 rounded px-1.5 py-0.5 text-xs ${doc.hidden ? 'bg-rose-500/20 text-rose-200' : 'text-slate-400'}`}
-            title="Hidden: only shows while unlock mode is on, and uses the hidden memory (saved with Save)"
+          <button
+            className={`w-8 shrink-0 rounded py-1 text-center text-sm ${doc.hidden ? 'bg-rose-500/20' : 'opacity-40 hover:opacity-100'}`}
+            title={doc.hidden ? 'Hidden workflow: only shows while unlocked, uses the hidden memory. Click to make it normal (then Save).' : 'Make this a hidden workflow (then Save)'}
+            aria-pressed={!!doc.hidden}
+            onClick={() => setDoc((d) => ({ ...d, hidden: !d.hidden }))}
           >
-            <input type="checkbox" checked={!!doc.hidden} onChange={(e) => setDoc((d) => ({ ...d, hidden: e.target.checked }))} /> 🔓 hidden
-          </label>
+            {doc.hidden ? '🔓' : '🔒'}
+          </button>
         )}
         <datalist id="hm-folders">
           {[...new Set(mine.map((c) => folderOf(c)))].sort().map((f) => (

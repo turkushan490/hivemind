@@ -1,3 +1,4 @@
+import { setUnlocked } from '../services/unlock.js';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { config } from '../config.js';
 import { hashPassword, newId, randomToken, sha256, verifyPassword } from '../crypto.js';
@@ -188,7 +189,12 @@ export function authRoutes(app: FastifyInstance) {
 
   app.post('/api/auth/logout', async (req, reply) => {
     const cookie = req.cookies[COOKIE];
-    if (cookie) db.prepare('DELETE FROM sessions WHERE token_hash = ?').run(sha256(cookie));
+    if (cookie) {
+      // Unlock mode locks on log out.
+      const row = db.prepare('SELECT user_id FROM sessions WHERE token_hash = ?').get(sha256(cookie)) as { user_id: string } | undefined;
+      if (row) setUnlocked({ id: row.user_id }, false);
+      db.prepare('DELETE FROM sessions WHERE token_hash = ?').run(sha256(cookie));
+    }
     reply.clearCookie(COOKIE, { path: '/' });
     return { ok: true };
   });

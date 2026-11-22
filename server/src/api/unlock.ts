@@ -2,7 +2,7 @@ import type { CanvasGraph } from '@hivemind/shared';
 import type { FastifyInstance } from 'fastify';
 import { newId } from '../crypto.js';
 import { db } from '../db/index.js';
-import { canUnlock, isUnlocked, setUnlocked } from '../services/unlock.js';
+import { canUnlock, checkPin, goodPin, hasPin, isUnlocked, setPin, setUnlocked, unlockedUntil } from '../services/unlock.js';
 import * as memFiles from '../services/memoryFiles.js';
 import { requireUser, type User } from './auth.js';
 
@@ -96,15 +96,44 @@ export function ensureUnlockedStart(user: User) {
 }
 
 export function unlockRoutes(app: FastifyInstance) {
-  app.get('/api/unlock', { preHandler: requireUser }, async (req) => ({ allowed: canUnlock(req.user!), unlocked: isUnlocked(req.user!) }));
+  app.get('/api/unlock', { preHandler: requireUser }, async (req) => {
+    const u = req.user!;
+    return { allowed: canUnlock(u), unlocked: isUnlocked(u), hasPin: canUnlock(u) && hasPin(u), until: unlockedUntil(u) };
+  });
 
-  /** Body: { on }. Only a screen login (not a viewer, not an API token) can turn it on. */
+  /** Body: { on, pin }. Turning it on needs the PIN (set one first); turning it off never does. Screen logins only. */
   app.post('/api/unlock', { preHandler: requireUser }, async (req, reply) => {
     const u = req.user!;
     if (!canUnlock(u)) return reply.code(403).send({ error: 'Unlock mode is only for a login on the screen' });
-    const on = (req.body as { on?: boolean } | undefined)?.on === true;
+    const b = (req.body ?? {}) as { on?: boolean; pin?: unknown };
+    const on = b.on === true;
+    if (on) {
+      if (!hasPin(u)) return reply.code(409).send({ error: 'Set a PIN for unlock mode first' });
+      try {
+        await checkPin(u, b.pin);
+      } catch (err) {
+        return reply.code((err as { statusCode?: number }).statusCode ?? 403).send({ error: (err as Error).message });
+      }
+    }
     setUnlocked(u, on);
     if (on) ensureUnlockedStart(u);
-    return { allowed: true, unlocked: on };
+    return { allowed: true, unlocked: on, hasPin: true, until: unlockedUntil(u) };
+  });
+
+  /** Body: { pin, old? }. The first PIN is set freely; changing it needs the old one. */
+  app.post('/api/unlock/pin', { preHandler: requireUser }, async (req, reply) => {
+    const u = req.user!;
+    if (!canUnlock(u)) return reply.code(403).send({ error: 'Unlock mode is only for a login on the screen' });
+    const b = (req.body ?? {}) as { pin?: unknown; old?: unknown };
+    if (!goodPin(b.pin)) return reply.code(400).send({ error: 'The PIN must be 4 to 32 characters' });
+    if (hasPin(u)) {
+      try {
+        await checkPin(u, b.old);
+      } catch (err) {
+        return reply.code((err as { statusCode?: number }).statusCode ?? 403).send({ error: (err as Error).message === 'Wrong PIN' ? 'The old PIN is wrong' : (err as Error).message });
+      }
+    }
+    await setPin(u, b.pin);
+    return { ok: true, hasPin: true };
   });
 }

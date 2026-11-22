@@ -8,6 +8,7 @@ import { Models } from './Models';
 import { Providers } from './Providers';
 import { BuilderSettings, HomeAssistantPanel, HuggingFacePanel, VoicePanel, MemorySettings, OpenAIApiSettings, SearchSettingsPanel, TrainingPanel, RunLimitsPanel, NightWorkPanel } from './SettingsExtra';
 import { Tokens } from './Tokens';
+import { UnlockPinPanel } from '../components/PinDialog';
 import { T3CodePanel } from './T3Code';
 import { Users } from './Users';
 import { Access } from './Access';
@@ -37,6 +38,7 @@ const SECTIONS = {
   tokens: 'API tokens',
   api: 'OpenAI API',
   t3: 'T3 Code',
+  unlock: 'Unlock PIN',
 } as const;
 type Section = keyof typeof SECTIONS;
 
@@ -77,6 +79,7 @@ export function Settings({ role, meId, active, onWizard }: { role: Role; meId: s
       <div className={`min-w-0 flex-1 ${phone && list ? 'hidden' : ''}`}>
         {/* All sections stay mounted, so switching never loses a search or a half-typed key. */}
         {panel('providers', <Providers isAdmin={isAdmin} />)}
+        {panel('unlock', <UnlockPinPanel />)}
         {panel('models', <Models active={active && section === 'models'} />)}
         {panel('colibri', <ColibriPanel active={active && section === 'colibri'} />)}
         {panel('robots', <RobotsPanel active={active && section === 'robots'} />)}

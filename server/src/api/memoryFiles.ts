@@ -3,7 +3,19 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { requireUser } from './auth.js';
 import { isFullAdmin } from '../events/runs.js';
-import { move, read, remove, restore, search, tree, versions, write } from '../services/memoryFiles.js';
+import { move, read, remove, restore, search, tree, versions, write, type Space } from '../services/memoryFiles.js';
+import { isUnlocked } from '../services/unlock.js';
+
+/** The memory a request means: hidden (unlock mode on, else refused), guest, or the normal one. */
+function spaceOf(req: FastifyRequest, guest: unknown): Space {
+  const q = req.query as { hidden?: string } | undefined;
+  const b = req.body as { hidden?: boolean } | undefined;
+  if (q?.hidden === '1' || b?.hidden === true) {
+    if (!isUnlocked(req.user!)) throw Object.assign(new Error('Turn on unlock mode first'), { statusCode: 403 });
+    return 'hidden';
+  }
+  return !!guest;
+}
 
 /** The owner whose memory this is, and whether the caller may touch it at all (owner admin, or a robot token). */
 function who(req: FastifyRequest, reply: FastifyReply): { userId: string } | undefined {
@@ -27,7 +39,7 @@ export function memoryFilesRoutes(app: FastifyInstance) {
     const w = who(req, reply);
     if (!w) return;
     const guest = String((req.query as { guest?: string }).guest ?? '') === '1';
-    return { files: tree(w.userId, guest) };
+    return safe(reply, () => ({ files: tree(w.userId, spaceOf(req, guest)) }));
   });
 
   /** Body: { paths: string[], guest? } → each file's content (missing = undefined). */
@@ -36,7 +48,7 @@ export function memoryFilesRoutes(app: FastifyInstance) {
     if (!w) return;
     const b = (req.body ?? {}) as { paths?: unknown; guest?: boolean };
     const paths = Array.isArray(b.paths) ? b.paths.map(String).slice(0, 20) : [];
-    return safe(reply, () => ({ files: read(w.userId, paths, !!b.guest) }));
+    return safe(reply, () => ({ files: read(w.userId, paths, spaceOf(req, b.guest)) }));
   });
 
   /** Body: { path, text, mode?: replace|append, by?, guest? }. */
@@ -45,7 +57,7 @@ export function memoryFilesRoutes(app: FastifyInstance) {
     if (!w) return;
     const b = (req.body ?? {}) as { path?: string; text?: string; mode?: 'replace' | 'append'; by?: string; guest?: boolean };
     if (!b.path || typeof b.text !== 'string') return reply.code(400).send({ error: 'Send { path, text }' });
-    return safe(reply, () => write(w.userId, b.path!, b.text!, { mode: b.mode, by: b.by, guest: b.guest }));
+    return safe(reply, () => write(w.userId, b.path!, b.text!, { mode: b.mode, by: b.by, guest: spaceOf(req, b.guest) }));
   });
 
   /** Body: { from, to, by?, guest? }. */
@@ -54,7 +66,7 @@ export function memoryFilesRoutes(app: FastifyInstance) {
     if (!w) return;
     const b = (req.body ?? {}) as { from?: string; to?: string; by?: string; guest?: boolean };
     if (!b.from || !b.to) return reply.code(400).send({ error: 'Send { from, to }' });
-    return safe(reply, () => (move(w.userId, b.from!, b.to!, b.by, b.guest), { ok: true }));
+    return safe(reply, () => (move(w.userId, b.from!, b.to!, b.by, spaceOf(req, b.guest)), { ok: true }));
   });
 
   /** Body: { path, guest? } → moves it to archive/deleted. */
@@ -63,7 +75,7 @@ export function memoryFilesRoutes(app: FastifyInstance) {
     if (!w) return;
     const b = (req.body ?? {}) as { path?: string; guest?: boolean };
     if (!b.path) return reply.code(400).send({ error: 'Send { path }' });
-    return safe(reply, () => (remove(w.userId, b.path!, b.guest), { ok: true }));
+    return safe(reply, () => (remove(w.userId, b.path!, spaceOf(req, b.guest)), { ok: true }));
   });
 
   /** ?q=&guest= → matches with a snippet. */
@@ -71,7 +83,7 @@ export function memoryFilesRoutes(app: FastifyInstance) {
     const w = who(req, reply);
     if (!w) return;
     const q = req.query as { q?: string; guest?: string };
-    return { results: search(w.userId, q.q ?? '', q.guest === '1') };
+    return safe(reply, () => ({ results: search(w.userId, q.q ?? '', spaceOf(req, q.guest === '1')) }));
   });
 
   /** ?path=&guest= → the saved versions (newest first). */
@@ -80,7 +92,7 @@ export function memoryFilesRoutes(app: FastifyInstance) {
     if (!w) return;
     const q = req.query as { path?: string; guest?: string };
     if (!q.path) return reply.code(400).send({ error: 'Send ?path=' });
-    return safe(reply, () => ({ versions: versions(w.userId, q.path!, q.guest === '1') }));
+    return safe(reply, () => ({ versions: versions(w.userId, q.path!, spaceOf(req, q.guest === '1')) }));
   });
 
   /** Body: { path, id, by?, guest? } → restores that version. */
@@ -89,6 +101,6 @@ export function memoryFilesRoutes(app: FastifyInstance) {
     if (!w) return;
     const b = (req.body ?? {}) as { path?: string; id?: string; by?: string; guest?: boolean };
     if (!b.path || !b.id) return reply.code(400).send({ error: 'Send { path, id }' });
-    return safe(reply, () => restore(w.userId, b.path!, b.id!, b.by, b.guest));
+    return safe(reply, () => restore(w.userId, b.path!, b.id!, b.by, spaceOf(req, b.guest)));
   });
 }

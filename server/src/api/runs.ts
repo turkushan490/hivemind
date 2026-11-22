@@ -15,6 +15,7 @@ import { gpuFreerFor, resolverFor, trainingFor } from './providers.js';
 import { batchStatus, startBatch, stopBatch } from '../services/batch.js';
 import { allowedFor, checkGraph } from '../services/access.js';
 import { priorityFor } from '../services/priority.js';
+import { canvasHidden, isUnlocked, seesCanvas } from '../services/unlock.js';
 
 export interface CanvasRow {
   id: string;
@@ -27,6 +28,7 @@ export interface CanvasRow {
   managed_by?: string | null;
   folder?: string | null;
   owner_name?: string;
+  hidden?: number;
 }
 
 const toCanvas = (r: CanvasRow, user: User) => ({
@@ -38,6 +40,7 @@ const toCanvas = (r: CanvasRow, user: User) => ({
   shared: !!r.shared,
   ...(r.managed_by && { managedBy: r.managed_by }),
   ...(r.folder && { folder: r.folder }),
+  ...(r.hidden ? { hidden: true } : {}),
   mine: r.owner_id === user.id,
   ...(r.owner_id !== user.id && r.owner_name && { ownerName: r.owner_name }),
 });
@@ -48,14 +51,15 @@ export const canvasesFor = (user: User) =>
     db
       .prepare('SELECT c.*, u.username AS owner_name FROM canvases c JOIN users u ON u.id = c.owner_id WHERE c.owner_id = ? OR c.shared = 1 ORDER BY c.updated_at DESC')
       .all(user.id) as unknown as CanvasRow[]
-  ).filter((r) => canvasAllowed(user, r.id));
+  ).filter((r) => canvasAllowed(user, r.id) && seesCanvas(user, r));
 
-export const canvasFor = (user: User, id: string) =>
-  canvasAllowed(user, id)
-    ? (db.prepare('SELECT c.*, u.username AS owner_name FROM canvases c JOIN users u ON u.id = c.owner_id WHERE c.id = ? AND (c.owner_id = ? OR c.shared = 1)').get(id, user.id) as
-        | CanvasRow
-        | undefined)
-    : undefined;
+export const canvasFor = (user: User, id: string) => {
+  if (!canvasAllowed(user, id)) return undefined;
+  const row = db.prepare('SELECT c.*, u.username AS owner_name FROM canvases c JOIN users u ON u.id = c.owner_id WHERE c.id = ? AND (c.owner_id = ? OR c.shared = 1)').get(id, user.id) as
+    | CanvasRow
+    | undefined;
+  return row && seesCanvas(user, row) ? row : undefined;
+};
 
 const userById = (id: string) => db.prepare('SELECT id, username, role FROM users WHERE id = ?').get(id) as User | undefined;
 
@@ -192,28 +196,37 @@ export function runRoutes(app: FastifyInstance) {
   });
 
   app.put('/api/canvases/:id?', { preHandler: requireUser }, async (req, reply) => {
-    const body = (req.body ?? {}) as { name?: string; description?: string; shared?: boolean; managedBy?: string | null; folder?: string | null } & Partial<CanvasGraph>;
+    const body = (req.body ?? {}) as { name?: string; description?: string; shared?: boolean; managedBy?: string | null; folder?: string | null; hidden?: boolean } & Partial<CanvasGraph>;
     const graph = { nodes: body.nodes ?? [], edges: body.edges ?? [] };
     if (!body.name?.trim()) return reply.code(400).send({ error: 'Canvas needs a name' });
     if (body.managedBy !== undefined && body.managedBy !== null && !/^[a-z0-9_-]{1,40}$/i.test(String(body.managedBy))) return reply.code(400).send({ error: 'managedBy must be an app name (letters, digits, - and _)' });
     if (body.folder !== undefined && body.folder !== null && (typeof body.folder !== 'string' || body.folder.trim().length > 40)) return reply.code(400).send({ error: 'folder must be a name of at most 40 characters' });
     const id = (req.params as { id?: string }).id ?? newId();
-    const owned = db.prepare('SELECT owner_id, shared, managed_by, folder FROM canvases WHERE id = ?').get(id) as { owner_id: string; shared: number; managed_by: string | null; folder: string | null } | undefined;
+    const owned = db.prepare('SELECT owner_id, shared, managed_by, folder, hidden FROM canvases WHERE id = ?').get(id) as
+      | { owner_id: string; shared: number; managed_by: string | null; folder: string | null; hidden: number }
+      | undefined;
     if (owned && owned.owner_id !== req.user!.id) return reply.code(404).send({ error: 'Not found' });
-    const shared = body.shared === undefined ? (owned?.shared ?? 0) : body.shared ? 1 : 0;
+    // Unlock mode: a hidden workflow can only be made, seen or changed while it is on.
+    const unlocked = isUnlocked(req.user!);
+    if (owned?.hidden && !unlocked) return reply.code(404).send({ error: 'Not found' });
+    if (body.hidden && !unlocked) return reply.code(403).send({ error: 'Turn on unlock mode first' });
+    const hidden = body.hidden === undefined ? (owned?.hidden ?? 0) : body.hidden ? 1 : 0;
+    // A hidden workflow is never shared.
+    const shared = hidden ? 0 : body.shared === undefined ? (owned?.shared ?? 0) : body.shared ? 1 : 0;
     // Which app keeps it up to date: as sent (null: nobody any more), else as it was.
     const managedBy = body.managedBy === undefined ? (owned?.managed_by ?? null) : body.managedBy ? String(body.managedBy).toLowerCase() : null;
     // Folder (Open… groups by it): as sent ("" or null: none, sorted by name again), else as it was.
     const folder = body.folder === undefined ? (owned?.folder ?? null) : body.folder?.trim() || null;
     db.prepare(
-      `INSERT INTO canvases (id, owner_id, name, description, graph, shared, managed_by, folder, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
-       ON CONFLICT(id) DO UPDATE SET name = excluded.name, description = excluded.description, graph = excluded.graph, shared = excluded.shared, managed_by = excluded.managed_by, folder = excluded.folder, updated_at = excluded.updated_at`,
-    ).run(id, req.user!.id, body.name.trim(), body.description ?? null, JSON.stringify(graph), shared, managedBy, folder);
+      `INSERT INTO canvases (id, owner_id, name, description, graph, shared, managed_by, folder, hidden, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+       ON CONFLICT(id) DO UPDATE SET name = excluded.name, description = excluded.description, graph = excluded.graph, shared = excluded.shared, managed_by = excluded.managed_by, folder = excluded.folder, hidden = excluded.hidden, updated_at = excluded.updated_at`,
+    ).run(id, req.user!.id, body.name.trim(), body.description ?? null, JSON.stringify(graph), shared, managedBy, folder, hidden);
     return toCanvas(canvasFor(req.user!, id)!, req.user!);
   });
 
   app.delete('/api/canvases/:id', { preHandler: requireUser }, async (req) => {
-    db.prepare('DELETE FROM canvases WHERE id = ? AND owner_id = ?').run((req.params as { id: string }).id, req.user!.id);
+    // A hidden workflow can only be deleted while unlocked.
+    db.prepare(`DELETE FROM canvases WHERE id = ? AND owner_id = ?${isUnlocked(req.user!) ? '' : ' AND hidden = 0'}`).run((req.params as { id: string }).id, req.user!.id);
     return { ok: true };
   });
 
@@ -283,7 +296,7 @@ export function runRoutes(app: FastifyInstance) {
         .prepare(
           `SELECT r.id, r.canvas_id, r.question, r.status, r.started_at, r.finished_at, r.final, r.cost, r.source, r.priority, c.name AS canvas_name
            FROM runs r LEFT JOIN canvases c ON c.id = r.canvas_id
-           WHERE r.owner_id = ? ORDER BY r.started_at DESC LIMIT 200`,
+           WHERE r.owner_id = ?${isUnlocked(req.user!) ? '' : ' AND coalesce(c.hidden, 0) = 0'} ORDER BY r.started_at DESC LIMIT 200`,
         )
         .all(req.user!.id) as Record<string, any>[]
     ).map((r) => ({
@@ -305,9 +318,9 @@ export function runRoutes(app: FastifyInstance) {
   app.get('/api/runs/:id', { preHandler: requireUser }, async (req, reply) => {
     const inputs = ['1', 'true'].includes(String((req.query as { inputs?: string }).inputs ?? ''));
     const row = db
-      .prepare('SELECT id, question, status, started_at, finished_at, final, cost, events FROM runs WHERE id = ? AND owner_id = ?')
+      .prepare('SELECT id, canvas_id, question, status, started_at, finished_at, final, cost, events FROM runs WHERE id = ? AND owner_id = ?')
       .get((req.params as { id: string }).id, req.user!.id) as Record<string, any> | undefined;
-    if (!row) return reply.code(404).send({ error: 'Run not found' });
+    if (!row || (canvasHidden(row.canvas_id) && !isUnlocked(req.user!))) return reply.code(404).send({ error: 'Run not found' });
     if (row.status === 'running' || row.status === 'paused') return reply.code(409).send({ error: 'This run is still going' });
     const events = JSON.parse(row.events ?? '[]') as RunEvent[];
     return { id: row.id, question: row.question, status: row.status, final: row.final ?? undefined, cost: row.cost ?? undefined, outputs: nodeOutputs(events, { inputs }), events: publicEvents(events) };

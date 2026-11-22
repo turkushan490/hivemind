@@ -9,6 +9,7 @@ import { HiveBotPage } from './pages/HiveBotPage';
 import { FilesPage } from './pages/FilesPage';
 import { Login } from './pages/Login';
 import { Problems } from './pages/Problems';
+import { loadUnlock, setUnlock, useUnlock } from './unlock';
 import { ProjectsPage } from './pages/ProjectsPage';
 import { MemoryPage } from './pages/MemoryPage';
 import { RunPage } from './pages/Run';
@@ -26,7 +27,7 @@ interface Me {
   role: 'admin' | 'user' | 'viewer';
 }
 
-const TABS = { use: 'Use', canvas: 'Workflow', active: 'Active workflows', hivebot: 'HiveBot', projects: 'Projects', files: 'Files', memory: 'Memory', run: 'Quick council', stats: 'Stats', lab: 'Lab', activity: 'Activity', settings: 'Settings', problems: 'Problems' } as const;
+const TABS = { use: 'Use', canvas: 'Workflow', active: 'Active workflows', hivebot: 'HiveBot', projects: 'Projects', files: 'Files', memory: 'Memory', run: 'Quick council', stats: 'Stats', lab: 'Lab', activity: 'Activity', settings: 'Settings', problems: 'Problems', hiddenmem: '🔓 Hidden memory' } as const;
 type Tab = keyof typeof TABS;
 /** Viewers only use canvases. */
 const VIEWER_TABS: Tab[] = ['use', 'activity', 'settings', 'problems'];
@@ -51,7 +52,10 @@ export function App() {
     if (urlTab && urlTab in TABS) setStoredTab(urlTab);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-  const allowed = (t: Tab) => t in TABS && (me?.role !== 'viewer' || VIEWER_TABS.includes(t));
+  const unlock = useUnlock();
+  useEffect(() => void loadUnlock(), []);
+  // The hidden memory tab only exists while unlock mode is on (and only for an admin, like Memory).
+  const allowed = (t: Tab) => t in TABS && (me?.role !== 'viewer' || VIEWER_TABS.includes(t)) && (t !== 'hiddenmem' || (unlock.unlocked && me?.role === 'admin'));
   const tab: Tab = allowed(storedTab) ? storedTab : me?.role === 'viewer' ? 'use' : 'canvas';
   // Tabs stay mounted once opened, so switching never loses what you picked or a running council.
   const [opened, setOpened] = useState<Set<Tab>>(() => new Set([tab]));
@@ -173,6 +177,18 @@ export function App() {
               ))}
             </nav>
           )}
+          {!phone && unlock.allowed && (
+            <button
+              className={`shrink-0 rounded-md px-2 py-1.5 text-sm ${unlock.unlocked ? 'bg-rose-500/20 text-rose-200' : 'text-slate-500 hover:text-white'}`}
+              title={unlock.unlocked ? 'Unlock mode is on: hidden memory and hidden workflows show. Click to lock.' : 'Unlock mode: show hidden memory and hidden workflows'}
+              onClick={async () => {
+                const s = await setUnlock(!unlock.unlocked).catch(() => undefined);
+                if (s && !s.unlocked && tab === 'hiddenmem') setTab('canvas');
+              }}
+            >
+              {unlock.unlocked ? '🔓 Unlocked' : '🔒 Unlock'}
+            </button>
+          )}
           <span className="ml-auto" />
           {me.role !== 'viewer' && <MemoryButton />}
           {!phone && (
@@ -210,6 +226,11 @@ export function App() {
         {opened.has('memory') && (
           <div hidden={tab !== 'memory'}>
             <MemoryPage active={tab === 'memory'} />
+          </div>
+        )}
+        {opened.has('hiddenmem') && unlock.unlocked && (
+          <div hidden={tab !== 'hiddenmem'}>
+            <MemoryPage active={tab === 'hiddenmem'} hidden />
           </div>
         )}
         {opened.has('run') && (

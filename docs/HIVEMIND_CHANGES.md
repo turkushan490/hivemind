@@ -1165,6 +1165,24 @@ which project it works on, and can make a new one.
 
 ---
 
+## Unlock mode: hidden memory and hidden workflows
+
+- **🔒 Unlock** next to Problems. When it is on, a **🔓 Hidden memory** tab shows, and hidden workflows show in
+  Open… and Use. Locked again, they are gone from every list (also a hidden workflow open on screen closes).
+- **Hidden memory** lives in its own folder (`<data>/memory-hidden/<user>`), outside the normal memory: normal
+  workflows, HiveBot and memory search can never reach it. A hidden workflow's Read/Write memory blocks use only
+  the hidden memory.
+- **Hidden workflows:** tick "🔓 hidden" next to the folder and save. Only the owner sees them, only while unlocked;
+  they are never shared, and their runs only show in Runs and Active workflows while unlocked (an admin doesn't see
+  other people's hidden runs).
+- **API tokens never see any of it** (T3 Code, robots, apps), also while unlocked. Only a screen login can unlock.
+- The first unlock adds the hidden **Prompt maker** (folder Unlocked): prompts for ComfyUI images and videos on the
+  uncensored Opus 4.7 Colibri model. It follows `prompts/good.md` and keeps every prompt in `prompts/history.md`.
+- Not hidden: the older keyed memory block ("Memory", by key) and lines on Problems when a hidden run fails.
+- Tests: `server/test/unlock.test.ts`.
+
+---
+
 ## Models in RAM, a full GPU, and the loaded-models list (H36)
 
 - **A full GPU answers from RAM.** When Ollama can't load a model on the GPU (`cudaMalloc failed`, `out of memory`,

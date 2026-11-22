@@ -346,6 +346,8 @@ export interface Canvas extends CanvasGraph {
   ownerName?: string;
   /** The folder it is filed in (Open… groups by it); left out: sorted by its name, see folderOf(). */
   folder?: string;
+  /** Unlock mode: only shown to its owner while unlock mode is on; uses the hidden memory. */
+  hidden?: boolean;
 }
 
 /** App ids as people write them. */

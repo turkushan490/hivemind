@@ -11,6 +11,7 @@ import { useIsPhone } from '../phone';
 import { IDLE, STATE_LABEL, STATE_TEXT, useRun } from '../run/state';
 import { PausePanel } from '../components/PausePanel';
 import { useStored } from '../stored';
+import { useOnUnlockChange } from '../unlock';
 import { MicButton, speak, SpeakButton, useVoice } from '../voice';
 import { QuestionBox, useAttachments } from '../components/QuestionBox';
 
@@ -31,6 +32,8 @@ export function UsePage({ active, viewer, onProblem, onBuild }: { active: boolea
     if (!active) return;
     api<Canvas[]>('/api/canvases', { quiet: true }).then(setCanvases).catch(() => setCanvases([]));
   }, [active]);
+  // Unlock mode switched: hidden workflows come or go.
+  useOnUnlockChange(() => void api<Canvas[]>('/api/canvases', { quiet: true }).then(setCanvases).catch(() => {}));
 
   const canvas = canvases?.find((c) => c.id === canvasId) ?? canvases?.[0];
 

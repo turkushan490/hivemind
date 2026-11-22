@@ -24,15 +24,21 @@ export interface MemFile {
 
 const err = (statusCode: number, message: string) => Object.assign(new Error(message), { statusCode });
 
-/** The memory root for a user, or the guest sub-tree. Created on first use. */
-function root(userId: string, guest = false): string {
-  const base = join(config.dataDir, 'memory', userId, guest ? 'guest' : '');
+/**
+ * Which memory: the owner's (false), the guest sub-tree (true), or the unlock-mode memory ("hidden"), which lives in
+ * its own folder outside the normal memory, so nothing that reads the normal memory can ever reach it.
+ */
+export type Space = boolean | 'hidden';
+
+/** The memory root for a user, the guest sub-tree, or the hidden memory. Created on first use. */
+function root(userId: string, guest: Space = false): string {
+  const base = guest === 'hidden' ? join(config.dataDir, 'memory-hidden', userId) : join(config.dataDir, 'memory', userId, guest ? 'guest' : '');
   mkdirSync(base, { recursive: true });
   return base;
 }
 
 /** A safe absolute path for a relative memory path (no escaping the root, .md only for files). */
-function at(userId: string, rel: string, guest = false): { full: string; rel: string; base: string } {
+function at(userId: string, rel: string, guest: Space = false): { full: string; rel: string; base: string } {
   const base = root(userId, guest);
   const clean = posix.normalize(rel.replace(/\\/g, '/')).replace(/^\/+/, '');
   if (!clean || clean === '.' || clean.startsWith('..') || clean.includes('/../') || clean.endsWith('/..')) throw err(400, 'Bad memory path');
@@ -65,7 +71,7 @@ function titleOf(full: string): string | undefined {
 }
 
 /** Every .md file in the tree (not the hidden folders), with its size, last change and preview. */
-export function tree(userId: string, guest = false): MemFile[] {
+export function tree(userId: string, guest: Space = false): MemFile[] {
   const base = root(userId, guest);
   const out: MemFile[] = [];
   const walk = (dir: string) => {
@@ -86,7 +92,7 @@ export function tree(userId: string, guest = false): MemFile[] {
 }
 
 /** Read one or several files; missing ones come back with content undefined. */
-export function read(userId: string, paths: string[], guest = false): { path: string; content?: string }[] {
+export function read(userId: string, paths: string[], guest: Space = false): { path: string; content?: string }[] {
   return paths.map((p) => {
     const { full, rel } = at(userId, p, guest);
     try {
@@ -119,7 +125,7 @@ function snapshot(base: string, rel: string) {
 }
 
 /** Write (replace) or append to a file, keeping a version and recording who changed it. */
-export function write(userId: string, path: string, text: string, opts: { mode?: 'replace' | 'append'; by?: string; guest?: boolean } = {}): MemFile {
+export function write(userId: string, path: string, text: string, opts: { mode?: 'replace' | 'append'; by?: string; guest?: Space } = {}): MemFile {
   const { full, rel, base } = at(userId, path, opts.guest);
   if (!rel.endsWith('.md')) throw err(400, 'Memory files end in .md');
   mkdirSync(dirname(full), { recursive: true });
@@ -143,7 +149,7 @@ export function write(userId: string, path: string, text: string, opts: { mode?:
 }
 
 /** Move/rename a file (and its versions + meta), recording who did it. */
-export function move(userId: string, from: string, to: string, by?: string, guest = false): void {
+export function move(userId: string, from: string, to: string, by?: string, guest: Space = false): void {
   const a = at(userId, from, guest);
   const b = at(userId, to, guest);
   if (!existsSync(a.full)) throw err(404, `No memory file "${a.rel}"`);
@@ -163,7 +169,7 @@ export function move(userId: string, from: string, to: string, by?: string, gues
 }
 
 /** Delete a file by moving it under archive/deleted; a file already in archive/deleted is deleted for real (H14.2). */
-export function remove(userId: string, path: string, guest = false): void {
+export function remove(userId: string, path: string, guest: Space = false): void {
   const { full, rel, base } = at(userId, path, guest);
   if (!existsSync(full)) return;
   if (rel.startsWith('archive/deleted/')) {
@@ -184,7 +190,7 @@ export function remove(userId: string, path: string, guest = false): void {
 }
 
 /** Search file names and contents; returns each match with a short snippet. */
-export function search(userId: string, query: string, guest = false, limit = 20): { path: string; title?: string; snippet: string }[] {
+export function search(userId: string, query: string, guest: Space = false, limit = 20): { path: string; title?: string; snippet: string }[] {
   const q = query.trim().toLowerCase();
   if (!q) return [];
   const base = root(userId, guest);
@@ -207,7 +213,7 @@ export function search(userId: string, query: string, guest = false, limit = 20)
 }
 
 /** The saved versions of a file, newest first (name = timestamp + who). */
-export function versions(userId: string, path: string, guest = false): { id: string; at: string; by?: string }[] {
+export function versions(userId: string, path: string, guest: Space = false): { id: string; at: string; by?: string }[] {
   const { rel, base } = at(userId, path, guest);
   const vdir = versionDir(base, rel);
   if (!existsSync(vdir)) return [];
@@ -222,7 +228,7 @@ export function versions(userId: string, path: string, guest = false): { id: str
 }
 
 /** Restore a version back into the file (the current content is snapshotted first). */
-export function restore(userId: string, path: string, versionId: string, by?: string, guest = false): MemFile {
+export function restore(userId: string, path: string, versionId: string, by?: string, guest: Space = false): MemFile {
   const { rel, base } = at(userId, path, guest);
   if (/[\\/]/.test(versionId)) throw err(400, 'Bad version id');
   const vfile = join(versionDir(base, rel), versionId);

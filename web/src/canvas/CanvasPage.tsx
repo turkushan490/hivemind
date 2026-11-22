@@ -25,6 +25,7 @@ import { Clock, useRun } from '../run/state';
 import { PausePanel } from '../components/PausePanel';
 import { History, ReplayBar } from './Replay';
 import { useStored } from '../stored';
+import { currentUnlock as unlockNow, useOnUnlockChange, useUnlock } from '../unlock';
 import { useIsPhone } from '../phone';
 import { OpenPicker, WorkflowSidebar } from './OpenPicker';
 import { HiveEdge } from './HiveEdge';
@@ -123,7 +124,7 @@ function Editor({ active, onProblem, followRequest }: { active: boolean; onProbl
   const initial = useRef(loadDraft());
   const [nodes, setNodes, onNodesChange] = useNodesState<HiveFlowNode>(initial.current ? toFlow(initial.current.graph).nodes : []);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>(initial.current ? toFlow(initial.current.graph).edges : []);
-  const [doc, setDoc] = useState<{ id?: string; name: string; folder?: string }>({ id: initial.current?.id, name: initial.current?.name ?? 'My canvas' });
+  const [doc, setDoc] = useState<{ id?: string; name: string; folder?: string; hidden?: boolean }>({ id: initial.current?.id, name: initial.current?.name ?? 'My canvas' });
   // The graph as last saved, to know if there are unsaved changes.
   const [saved, setSaved] = useState<string | undefined>(initial.current?.saved);
   const [canvases, setCanvases] = useState<Canvas[]>([]);
@@ -340,11 +341,21 @@ function Editor({ active, onProblem, followRequest }: { active: boolean; onProbl
 
   // Workflows saved elsewhere (another tab, the API, DungeonMind) show without reloading the page.
   const refreshCanvases = () => void api<Canvas[]>('/api/canvases', { quiet: true }).then(setCanvases, () => {});
+  // Unlock mode switched: the hidden workflows come or go; a hidden one on screen is closed when it locks.
+  const unlock = useUnlock();
+  useOnUnlockChange(() => {
+    refreshCanvases();
+    if (doc.hidden && !unlockNow().unlocked) {
+      show({ nodes: [], edges: [] });
+      setDoc({ name: 'My canvas' });
+      setSaved(JSON.stringify({ name: 'My canvas', graph: { nodes: [], edges: [] } }));
+    }
+  });
 
   const openCanvas = (c: Canvas) => {
     if (!confirmDiscard()) return;
     show({ nodes: c.nodes, edges: c.edges });
-    setDoc({ id: c.id, name: c.name, folder: c.folder ?? '' });
+    setDoc({ id: c.id, name: c.name, folder: c.folder ?? '', hidden: !!c.hidden });
     setSaved(JSON.stringify({ name: c.name, graph: { nodes: c.nodes, edges: c.edges } }));
   };
 
@@ -386,8 +397,8 @@ Save your copy over it? (Cancel keeps the saved one)`) ? graph : undefined;
     // An app keeps this workflow up to date: saving your own changes stops that (the app then leaves it alone).
     const app = canvases.find((x) => x.id === doc.id)?.managedBy;
     if (app && !confirm(`Installed by ${appName(app)} — the app may update this workflow.\n\nKeep your changes? ${appName(app)} then stops updating it.`)) return;
-    const c = await api<Canvas>(`/api/canvases${doc.id ? `/${doc.id}` : ''}`, { method: 'PUT', body: { name, ...graph, ...(shared !== undefined && { shared }), ...(app && { managedBy: null }), ...(doc.folder !== undefined && { folder: doc.folder.trim() || null }) } });
-    setDoc({ id: c.id, name: c.name, folder: c.folder ?? '' });
+    const c = await api<Canvas>(`/api/canvases${doc.id ? `/${doc.id}` : ''}`, { method: 'PUT', body: { name, ...graph, ...(shared !== undefined && { shared }), ...(app && { managedBy: null }), ...(doc.folder !== undefined && { folder: doc.folder.trim() || null }), ...(unlock.unlocked && { hidden: !!doc.hidden }) } });
+    setDoc({ id: c.id, name: c.name, folder: c.folder ?? '', hidden: !!c.hidden });
     setSaved(JSON.stringify({ name: c.name, graph: { nodes: c.nodes, edges: c.edges } }));
     setCanvases(await api<Canvas[]>('/api/canvases', { quiet: true }).catch(() => canvases));
     toast(shared === undefined ? `Saved "${c.name}"` : c.shared ? `Saved "${c.name}" — everyone can use it now` : `Saved "${c.name}" — only you can use it now`, 'ok');
@@ -578,6 +589,14 @@ Save your copy over it? (Cancel keeps the saved one)`) ? graph : undefined;
           onChange={(e) => setDoc((d) => ({ ...d, folder: e.target.value }))}
           aria-label="Folder"
         />
+        {unlock.unlocked && (
+          <label
+            className={`flex items-center gap-1 rounded px-1.5 py-0.5 text-xs ${doc.hidden ? 'bg-rose-500/20 text-rose-200' : 'text-slate-400'}`}
+            title="Hidden: only shows while unlock mode is on, and uses the hidden memory (saved with Save)"
+          >
+            <input type="checkbox" checked={!!doc.hidden} onChange={(e) => setDoc((d) => ({ ...d, hidden: e.target.checked }))} /> 🔓 hidden
+          </label>
+        )}
         <datalist id="hm-folders">
           {[...new Set(mine.map((c) => folderOf(c)))].sort().map((f) => (
             <option key={f} value={f} />

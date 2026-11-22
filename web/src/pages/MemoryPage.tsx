@@ -19,9 +19,13 @@ interface Version {
  * Settings → Memory (H11): the robot's / owner's memory as a tree of Markdown files — view, edit, search, restore a
  * version. A "Guest" switch shows the separate guest memory (used when the robot is locked).
  */
-export function MemoryPage({ active }: { active: boolean }) {
+export function MemoryPage({ active, hidden = false }: { active: boolean; hidden?: boolean }) {
   const [files, setFiles] = useState<MemFile[]>([]);
-  const [guest, setGuest] = useState(false);
+  const [guestOn, setGuest] = useState(false);
+  // Unlock mode: the hidden memory (its own folder on the server); the guest switch doesn't apply there.
+  const guest = !hidden && guestOn;
+  const sp = hidden ? { hidden: true } : { guest };
+  const spq = hidden ? '&hidden=1' : guest ? '&guest=1' : '';
   const [sel, setSel] = useState<string>();
   const [text, setText] = useState('');
   const [dirty, setDirty] = useState(false);
@@ -29,7 +33,7 @@ export function MemoryPage({ active }: { active: boolean }) {
   const [results, setResults] = useState<{ path: string; snippet: string }[] | null>(null);
   const [versions, setVersions] = useState<Version[]>([]);
 
-  const g = guest ? '?guest=1' : '';
+  const g = hidden ? '?hidden=1' : guest ? '?guest=1' : '';
   const loadTree = useCallback(() => api<{ files: MemFile[] }>(`/api/memory-files/tree${g}`, { quiet: true }).then((r) => setFiles(r.files)).catch(() => setFiles([])), [g]);
   useEffect(() => {
     if (active) loadTree();
@@ -37,25 +41,25 @@ export function MemoryPage({ active }: { active: boolean }) {
 
   const open = async (path: string) => {
     if (dirty && !confirm('Discard your unsaved changes?')) return;
-    const r = await api<{ files: { path: string; content?: string }[] }>(`/api/memory-files/read`, { body: { paths: [path], guest }, quiet: true }).catch(() => null);
+    const r = await api<{ files: { path: string; content?: string }[] }>(`/api/memory-files/read`, { body: { paths: [path], ...sp }, quiet: true }).catch(() => null);
     setSel(path);
     setText(r?.files[0]?.content ?? '');
     setDirty(false);
-    api<{ versions: Version[] }>(`/api/memory-files/versions?path=${encodeURIComponent(path)}${guest ? '&guest=1' : ''}`, { quiet: true }).then((v) => setVersions(v.versions)).catch(() => setVersions([]));
+    api<{ versions: Version[] }>(`/api/memory-files/versions?path=${encodeURIComponent(path)}${spq}`, { quiet: true }).then((v) => setVersions(v.versions)).catch(() => setVersions([]));
   };
   const save = async () => {
     if (!sel) return;
-    await api(`/api/memory-files`, { method: 'PUT', body: { path: sel, text, guest } }).catch(() => {});
+    await api(`/api/memory-files`, { method: 'PUT', body: { path: sel, text, ...sp } }).catch(() => {});
     setDirty(false);
     toast('Saved', 'ok');
     loadTree();
-    api<{ versions: Version[] }>(`/api/memory-files/versions?path=${encodeURIComponent(sel)}${guest ? '&guest=1' : ''}`, { quiet: true }).then((v) => setVersions(v.versions)).catch(() => {});
+    api<{ versions: Version[] }>(`/api/memory-files/versions?path=${encodeURIComponent(sel)}${spq}`, { quiet: true }).then((v) => setVersions(v.versions)).catch(() => {});
   };
   const del = async () => {
     if (!sel) return;
     const forever = sel.startsWith('archive/deleted/');
     if (!confirm(forever ? `Delete ${sel} forever? This can't be undone.` : `Move ${sel} to archive/deleted?`)) return;
-    await api(`/api/memory-files`, { method: 'DELETE', body: { path: sel, guest } }).catch(() => {});
+    await api(`/api/memory-files`, { method: 'DELETE', body: { path: sel, ...sp } }).catch(() => {});
     setSel(undefined);
     setText('');
     setDirty(false);
@@ -63,28 +67,32 @@ export function MemoryPage({ active }: { active: boolean }) {
   };
   const restore = async (id: string) => {
     if (!sel || !confirm('Restore this version? The current text is kept as a version too.')) return;
-    const r = await api<{ content?: never }>(`/api/memory-files/restore`, { body: { path: sel, id, guest } }).catch(() => null);
+    const r = await api<{ content?: never }>(`/api/memory-files/restore`, { body: { path: sel, id, ...sp } }).catch(() => null);
     if (r) open(sel);
   };
   const newFile = async () => {
     const path = prompt('New file path, e.g. topics/food/potatoes.md');
     if (!path) return;
-    await api(`/api/memory-files`, { method: 'PUT', body: { path, text: `# ${path.split('/').pop()?.replace(/\.md$/, '')}\n`, guest } }).catch(() => {});
+    await api(`/api/memory-files`, { method: 'PUT', body: { path, text: `# ${path.split('/').pop()?.replace(/\.md$/, '')}\n`, ...sp } }).catch(() => {});
     await loadTree();
     open(path);
   };
   const runSearch = async () => {
     if (!q.trim()) return setResults(null);
-    const r = await api<{ results: { path: string; snippet: string }[] }>(`/api/memory-files/search?q=${encodeURIComponent(q)}${guest ? '&guest=1' : ''}`, { quiet: true }).catch(() => ({ results: [] }));
+    const r = await api<{ results: { path: string; snippet: string }[] }>(`/api/memory-files/search?q=${encodeURIComponent(q)}${spq}`, { quiet: true }).catch(() => ({ results: [] }));
     setResults(r.results);
   };
 
   return (
     <div className="mx-auto max-w-6xl space-y-3">
       <div className="flex flex-wrap items-center gap-2">
-        <h2 className="text-lg font-semibold">Memory</h2>
-        <span className="text-sm text-slate-400">The characters&apos; memory as Markdown files. Edit anything; every save keeps versions.</span>
-        <label className="ml-auto flex items-center gap-1.5 text-sm text-slate-300">
+        <h2 className="text-lg font-semibold">{hidden ? '🔓 Hidden memory' : 'Memory'}</h2>
+        <span className="text-sm text-slate-400">
+          {hidden
+            ? 'Only here while unlock mode is on: hidden workflows read and write this, the normal memory never sees it.'
+            : 'The characters’ memory as Markdown files. Edit anything; every save keeps versions.'}
+        </span>
+        <label className={`ml-auto flex items-center gap-1.5 text-sm text-slate-300 ${hidden ? 'invisible' : ''}`}>
           <input type="checkbox" checked={guest} onChange={(e) => { setGuest(e.target.checked); setSel(undefined); setText(''); setDirty(false); }} /> Guest memory
         </label>
         <button className="btn-ghost text-sm" onClick={newFile}>New file</button>

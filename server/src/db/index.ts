@@ -389,6 +389,10 @@ export const MIGRATIONS: string[] = [
   -- H20: a HiveBot workspace workflow is deleted by itself after this many days without a run (default 7).
   ALTER TABLE canvases ADD COLUMN ttl_days INTEGER;
   `,
+  `
+  -- Unlock mode: a hidden workflow only shows for its owner while unlock mode is on.
+  ALTER TABLE canvases ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0;
+  `,
 ];
 
 export const db = new DatabaseSync(join(config.dataDir, 'hivemind.db'));

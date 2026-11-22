@@ -18,6 +18,7 @@ import { projectServicesFor } from '../services/projectRun.js';
 import { skillsForRun } from '../services/skills.js';
 import { voiceServicesFor } from '../services/voiceRun.js';
 import * as memFiles from '../services/memoryFiles.js';
+import { canvasHidden, isUnlocked } from '../services/unlock.js';
 
 type Listener = (ev: RunEvent) => void;
 
@@ -59,6 +60,8 @@ interface LiveBlock {
 interface LiveRun {
   id: string;
   ownerId: string;
+  /** A run of a hidden (unlock mode) workflow: only its owner sees it, and only while unlocked. */
+  hidden?: boolean;
   canvasId?: string;
   canvasName?: string;
   source: string;
@@ -159,8 +162,10 @@ export function startRun(opts: {
     end,
     pauses: new Map(),
     ...(opts.cancelWhenAlone && { alone: { followers: 0 } }),
+    ...(canvasHidden(opts.canvasId) && { hidden: true }),
   };
   live.set(id, run);
+  const sp = (guest?: boolean): memFiles.Space => (run.hidden ? 'hidden' : !!guest);
   // What it takes to start this run again after a restart; its progress is added as blocks finish.
   const meta: ResumeMeta | undefined = opts.resumable && !opts.cancelWhenAlone && !opts.chat
     ? { ...opts.resumable, graph: opts.graph, canvasId: opts.canvasId, question: opts.question, vars: opts.vars ?? {}, source, priority }
@@ -406,12 +411,13 @@ export function startRun(opts: {
           : {}),
         // Memory as MD files (H11): the owner's memory, for readMemory / writeMemory. The robot's own token may use it too.
         ...((!opts.user?.scope || opts.user.scope.robot) && {
+          // A hidden (unlock mode) workflow reads and writes only the hidden memory, never the normal one.
           memoryFiles: {
-            tree: (guest?: boolean) => memFiles.tree(opts.ownerId, guest).map((f) => ({ path: f.path, title: f.title })),
-            read: (paths: string[], guest?: boolean) => memFiles.read(opts.ownerId, paths, guest),
-            write: (path: string, text: string, o?: { mode?: 'replace' | 'append'; by?: string; guest?: boolean }) => void memFiles.write(opts.ownerId, path, text, o),
-            move: (from: string, to: string, by?: string, guest?: boolean) => memFiles.move(opts.ownerId, from, to, by, guest),
-            remove: (path: string, guest?: boolean) => memFiles.remove(opts.ownerId, path, guest),
+            tree: (guest?: boolean) => memFiles.tree(opts.ownerId, sp(guest)).map((f) => ({ path: f.path, title: f.title })),
+            read: (paths: string[], guest?: boolean) => memFiles.read(opts.ownerId, paths, sp(guest)),
+            write: (path: string, text: string, o?: { mode?: 'replace' | 'append'; by?: string; guest?: boolean }) => void memFiles.write(opts.ownerId, path, text, { ...o, guest: sp(o?.guest) }),
+            move: (from: string, to: string, by?: string, guest?: boolean) => memFiles.move(opts.ownerId, from, to, by, sp(guest)),
+            remove: (path: string, guest?: boolean) => memFiles.remove(opts.ownerId, path, sp(guest)),
           },
           // runWorkflow (H12): start another canvas as a background job, for the owner / robot.
           runCanvas: async (o: { canvas: string; question: string; priority?: number; title?: string; character?: string; vars?: Record<string, string> }) => {
@@ -566,7 +572,7 @@ export const liveRunCount = () => [...live.values()].filter((r) => !r.finished).
  */
 export function subscribe(runId: string, ownerId: string, onEvent: Listener, onEnd: () => void, opts: { admin?: boolean } = {}): (() => void) | undefined {
   const run = live.get(runId);
-  if (run && (run.ownerId === ownerId || opts.admin)) {
+  if (run && (run.ownerId === ownerId || (opts.admin && !run.hidden))) {
     run.events.forEach(onEvent);
     if (run.finished) {
       onEnd();
@@ -656,7 +662,7 @@ export function activeRuns(user: Pick<User, 'id' | 'role' | 'scope'>): ActiveRun
     return names.get(id)!;
   };
   return [...live.values()]
-    .filter((r) => !r.finished && (all || r.ownerId === user.id))
+    .filter((r) => !r.finished && (all || r.ownerId === user.id) && (!r.hidden || (r.ownerId === user.id && isUnlocked(user))))
     .sort((a, b) => a.startedAt - b.startedAt)
     .map((r) => ({
       runId: r.id,

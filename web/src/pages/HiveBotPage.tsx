@@ -30,11 +30,15 @@ const MODE_TEXT: Record<Mode, string> = {
 };
 
 interface Job {
-  id: string;
-  title: string;
+  jobId: string;
+  title?: string;
   status: string;
   character?: string;
+  createdAt?: string;
+  finishedAt?: string;
 }
+
+const FINISHED = new Set(['done', 'failed', 'cancelled']);
 
 /** This tab's own session (H30): kept in sessionStorage, so a reload keeps the conversation. */
 function sessionId(): string {
@@ -63,11 +67,30 @@ export function HiveBotPage({ active }: { active: boolean }) {
   const [silenceMs, setSilenceMs] = useState(1800);
   const [maxSec, setMaxSec] = useState(60);
   const session = useRef(sessionId());
-  const audio = useRef<HTMLAudioElement | null>(null);
   const abort = useRef<AbortController | null>(null);
   const busy = useRef(false);
+  const busySince = useRef(0);
   const modeRef = useRef<Mode>('idle');
   modeRef.current = mode;
+  // Kept current for callbacks made earlier (the job poller, the microphone loop), so they never use an old value.
+  const openRef = useRef(open);
+  openRef.current = open;
+  const voiceOnRef = useRef(voiceOn);
+  voiceOnRef.current = voiceOn;
+  const characterRef = useRef(character);
+  characterRef.current = character;
+  const rest = (): Mode => (openRef.current ? 'listening' : 'idle');
+
+  // H35: every Stop (or barge-in) bumps this; anything started before it drops itself when it comes back.
+  const gen = useRef(0);
+  const playing = useRef<{ a: HTMLAudioElement; done: () => void } | null>(null);
+  const speakAbort = useRef<AbortController | null>(null);
+  const voiceQueue = useRef<Promise<void>>(Promise.resolve());
+  // The microphone recorder (used by Stop too).
+  const stream = useRef<MediaStream | null>(null);
+  const rec = useRef<MediaRecorder | null>(null);
+  const chunks = useRef<Blob[]>([]);
+  const lastStop = useRef(0);
 
   // The listening settings from listening.md (H31): pause length and the longest question.
   useEffect(() => {
@@ -81,19 +104,127 @@ export function HiveBotPage({ active }: { active: boolean }) {
       .catch(() => {});
   }, [active]);
 
+  /** Stops the voice now. A voice still being made never plays; a paused one resolves its promise by hand. */
+  const stopVoice = () => {
+    speakAbort.current?.abort();
+    speakAbort.current = null;
+    const p = playing.current;
+    playing.current = null;
+    if (p) {
+      p.a.pause();
+      p.done(); // pause() never fires "ended": without this, whoever waits on the voice waits forever
+    }
+    setLevel(0);
+  };
+
+  /** Speaks one line in the character's voice, after the lines before it (they wait for each other, never cut off). */
+  const say = (text: string, who: string): Promise<void> => {
+    const g = gen.current;
+    const run = voiceQueue.current.then(() => (g === gen.current ? speakNow(text, who, g) : undefined));
+    voiceQueue.current = run.catch(() => {});
+    return run;
+  };
+
+  async function speakNow(text: string, who: string, g: number) {
+    if (!voiceOnRef.current || !text.trim()) return;
+    const ctl = new AbortController();
+    speakAbort.current = ctl;
+    let res: Response;
+    try {
+      res = await fetch('/api/voice/speak', { method: 'POST', signal: ctl.signal, headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text, voice: who, format: 'mp3' }) });
+    } catch {
+      return; // stopped while the voice was being made
+    }
+    if (!res.ok || g !== gen.current) return;
+    const url = URL.createObjectURL(await res.blob());
+    if (g !== gen.current) return URL.revokeObjectURL(url);
+    setMode('speaking');
+    await new Promise<void>((resolve) => {
+      const a = new Audio(url);
+      let ctx: AudioContext | undefined;
+      let finished = false;
+      const done = () => {
+        if (finished) return;
+        finished = true;
+        if (playing.current?.a === a) playing.current = null;
+        void ctx?.close().catch(() => {});
+        setLevel(0);
+        URL.revokeObjectURL(url);
+        resolve();
+      };
+      playing.current = { a, done };
+      try {
+        ctx = new AudioContext();
+        const src = ctx.createMediaElementSource(a);
+        const an = ctx.createAnalyser();
+        an.fftSize = 256;
+        src.connect(an);
+        an.connect(ctx.destination);
+        const buf = new Uint8Array(an.frequencyBinCount);
+        const tick = () => {
+          if (playing.current?.a !== a) return;
+          an.getByteFrequencyData(buf);
+          setLevel(buf.reduce((n, v) => n + v, 0) / buf.length / 128);
+          requestAnimationFrame(tick);
+        };
+        tick();
+      } catch {}
+      a.onended = a.onerror = done;
+      void a.play().catch(done);
+    });
+    if (modeRef.current === 'speaking' && !playing.current) setMode(rest());
+  }
+
+  /** Cancels a background job (an orb). */
+  const cancelJob = async (j: Job) => {
+    await api(`/api/robot/jobs/${j.jobId}/cancel`, { method: 'POST' }).catch(() => {});
+    setJobs((list) => list.map((x) => (x.jobId === j.jobId ? { ...x, status: 'cancelled', finishedAt: new Date().toISOString() } : x)));
+  };
+
+  /**
+   * Stop: the voice, the question that runs (the server cancels its run when the stream closes), a recording that is
+   * still going (thrown away) and a transcription on its way. Never leaves the page stuck. Pressed twice within 3 s:
+   * also the background jobs started in the last 2 minutes.
+   */
+  const stop = () => {
+    gen.current++;
+    stopVoice();
+    abort.current?.abort();
+    abort.current = null;
+    const r = rec.current;
+    if (r && r.state !== 'inactive') {
+      r.onstop = null;
+      r.stop();
+    }
+    rec.current = null;
+    chunks.current = [];
+    busy.current = false;
+    const now = Date.now();
+    if (now - lastStop.current < 3000) {
+      for (const j of jobsRef.current) {
+        if (!FINISHED.has(j.status) && j.createdAt && now - Date.parse(j.createdAt) < 120_000) void cancelJob(j);
+      }
+    }
+    lastStop.current = now;
+    setMode(rest());
+  };
+
   // Background jobs as orbs (like the robot); "your website is done" is spoken when one finishes.
   const seen = useRef(new Set<string>());
+  const jobsRef = useRef<Job[]>([]);
+  jobsRef.current = jobs;
   useEffect(() => {
     if (!active) return;
+    let first = true;
     const load = () =>
       api<Job[] | { jobs: Job[] }>('/api/robot/jobs', { quiet: true })
         .then((r) => {
-          const list = (Array.isArray(r) ? r : r.jobs).slice(0, 8);
+          const list = (Array.isArray(r) ? r : r.jobs).slice(0, 12);
           for (const j of list) {
-            if ((j.status === 'done' || j.status === 'failed') && !seen.current.has(j.id) && seen.current.size) void say(`${j.title}: ${j.status === 'done' ? 'done' : 'that failed'}.`, j.character ?? character);
-            if (j.status === 'done' || j.status === 'failed') seen.current.add(j.id);
+            if ((j.status === 'done' || j.status === 'failed') && !seen.current.has(j.jobId) && !first) void say(`${j.title ?? 'The job'}: ${j.status === 'done' ? 'done' : 'that failed'}.`, j.character ?? characterRef.current);
+            if (FINISHED.has(j.status)) seen.current.add(j.jobId);
           }
-          if (!seen.current.size) seen.current.add('first-load');
+          first = false;
           setJobs(list);
         })
         .catch(() => {});
@@ -103,71 +234,27 @@ export function HiveBotPage({ active }: { active: boolean }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active]);
 
-  const stopVoice = () => {
-    audio.current?.pause();
-    audio.current = null;
-    setLevel(0);
-  };
-
-  /** Speaks a text in the character's voice (the clone voice like on the robot), the face moving with the sound. */
-  const say = useCallback(
-    async (text: string, who: string) => {
-      if (!voiceOn || !text.trim()) return;
-      try {
-        const res = await fetch('/api/voice/speak', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text, voice: who, format: 'mp3' }) });
-        if (!res.ok) return;
-        const url = URL.createObjectURL(await res.blob());
-        await new Promise<void>((resolve) => {
-          stopVoice();
-          const a = new Audio(url);
-          audio.current = a;
-          setMode('speaking');
-          try {
-            const ctx = new AudioContext();
-            const src = ctx.createMediaElementSource(a);
-            const an = ctx.createAnalyser();
-            an.fftSize = 256;
-            src.connect(an);
-            an.connect(ctx.destination);
-            const buf = new Uint8Array(an.frequencyBinCount);
-            const tick = () => {
-              if (audio.current !== a) return void ctx.close();
-              an.getByteFrequencyData(buf);
-              setLevel(buf.reduce((n, v) => n + v, 0) / buf.length / 128);
-              requestAnimationFrame(tick);
-            };
-            tick();
-          } catch {}
-          a.onended = a.onerror = () => {
-            if (audio.current === a) audio.current = null;
-            setLevel(0);
-            URL.revokeObjectURL(url);
-            resolve();
-          };
-          void a.play().catch(() => resolve());
-        });
-      } finally {
-        if (modeRef.current === 'speaking') setMode(open ? 'listening' : 'idle');
-      }
-    },
-    [voiceOn, open],
-  );
-
-  /** One question to the HiveBot workflow, streamed: who answers comes first, "say now" lines are spoken at once. */
+  /** One question to the HiveBot workflow, streamed: who answers comes first, "say now" lines are spoken in order. */
   const ask = useCallback(
     async (question: string) => {
       const q = question.trim();
-      if (!q || busy.current) return;
+      if (!q) return;
+      // A safety net: something stuck for 5 minutes never keeps the page deaf.
+      if (busy.current && Date.now() - busySince.current > 5 * 60_000) stop();
+      if (busy.current) return;
+      const g = gen.current;
       busy.current = true;
+      busySince.current = Date.now();
       stopVoice();
       setMode('thinking');
-      abort.current = new AbortController();
-      let who = character;
+      const ctl = new AbortController();
+      abort.current = ctl;
+      let who = characterRef.current;
       let text = '';
       try {
         const res = await fetch('/v1/chat/completions', {
           method: 'POST',
-          signal: abort.current.signal,
+          signal: ctl.signal,
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({
             model: guest ? 'hivebot-guest' : 'hivebot',
@@ -200,6 +287,7 @@ export function HiveBotPage({ active }: { active: boolean }) {
               choices?: { delta?: { content?: string } }[];
               hivemind?: { skip?: string; character?: string; question?: string };
             };
+            if (g !== gen.current) continue; // stopped: nothing of this question is shown or spoken any more
             if (d.type === 'route' && d.character) {
               who = d.character;
               setCharacter(d.character);
@@ -215,53 +303,51 @@ export function HiveBotPage({ active }: { active: boolean }) {
           }
         }
         await Promise.all(says);
+        if (g !== gen.current) return;
         if (text.trim()) {
           setLog((l) => [...l, { who: 'you', text: q }, { who, text: text.trim() }]);
           await say(text.trim(), who);
         }
       } catch (err) {
-        if ((err as Error).name !== 'AbortError') toast(`HiveBot: ${(err as Error).message}`);
+        if ((err as Error).name !== 'AbortError' && g === gen.current) toast(`HiveBot: ${(err as Error).message}`);
       } finally {
-        busy.current = false;
-        abort.current = null;
-        setMode((m) => (m === 'thinking' || m === 'speaking' ? (open ? 'listening' : 'idle') : m));
+        // Only when nothing newer started (Stop already reset it; an old question must not clear a new one's state).
+        if (g === gen.current) {
+          busy.current = false;
+          abort.current = null;
+          setMode((m) => (m === 'thinking' || m === 'speaking' ? rest() : m));
+        }
       }
     },
-    [character, guest, open, say],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [guest],
   );
 
-  /** Stop: the voice stops at once and the question that is running is cancelled. */
-  const stop = () => {
-    stopVoice();
-    abort.current?.abort();
-    setMode(open ? 'listening' : 'idle');
-  };
-
   // ---- the microphone: open conversation (voice detection) or hold to talk ----
-  const stream = useRef<MediaStream | null>(null);
-  const rec = useRef<MediaRecorder | null>(null);
-  const chunks = useRef<Blob[]>([]);
-
   const finishRecording = useCallback(async () => {
     const r = rec.current;
     if (!r || r.state === 'inactive') return;
+    const g = gen.current;
     await new Promise<void>((res) => {
       r.onstop = () => res();
       r.stop();
     });
+    if (g !== gen.current) return; // Stop during the recording: thrown away
     rec.current = null;
     const blob = new Blob(chunks.current, { type: r.mimeType || 'audio/webm' });
     chunks.current = [];
-    if (blob.size < 2000) return setMode(open ? 'listening' : 'idle');
+    if (blob.size < 2000) return setMode(rest());
     setMode('thinking');
     try {
       const text = await transcribe(blob);
+      if (g !== gen.current) return; // Stop while speech-to-text ran: no question
       if (text.trim()) await ask(text);
-      else setMode(open ? 'listening' : 'idle');
+      else setMode(rest());
     } catch {
-      setMode(open ? 'listening' : 'idle');
+      if (g === gen.current) setMode(rest());
     }
-  }, [ask, open]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ask]);
 
   const startRecording = useCallback(() => {
     if (!stream.current || rec.current) return;
@@ -299,7 +385,7 @@ export function HiveBotPage({ active }: { active: boolean }) {
           const now = Date.now();
           const loud = rms > 0.025;
           const m = modeRef.current;
-          if (m === 'speaking' && rms > 0.08) stopVoice(); // barge in: talking over it stops the voice
+          if (m === 'speaking' && rms > 0.08) stop(); // barge in: talking over it stops everything, then it listens
           if (m === 'listening') {
             if (loud) {
               loudSince ||= now;
@@ -359,6 +445,10 @@ export function HiveBotPage({ active }: { active: boolean }) {
   });
 
   const look = LOOK[character] ?? { color: '#94a3b8', title: character };
+  // Running orbs, plus finished ones of the last 10 minutes (old failures don't pile up).
+  const shownJobs = jobs
+    .filter((j) => !FINISHED.has(j.status) || Date.now() - Date.parse(j.finishedAt ?? j.createdAt ?? '') < 10 * 60_000)
+    .slice(0, 8);
   const shownMode: Mode = guest && mode === 'idle' ? 'locked' : mode;
   return (
     <div className="mx-auto flex max-w-3xl flex-col items-center gap-4 py-4">
@@ -385,14 +475,31 @@ export function HiveBotPage({ active }: { active: boolean }) {
         <div className="mt-1 text-xs tracking-widest text-slate-400">{MODE_TEXT[shownMode]}</div>
       </div>
 
-      {jobs.length > 0 && (
+      {shownJobs.length > 0 && (
         <div className="flex flex-wrap justify-center gap-2">
-          {jobs.slice(0, 6).map((j) => (
-            <span key={j.id} title={`${j.title} · ${j.status}`} className={`flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-xs ${j.status === 'running' || j.status === 'queued' ? 'animate-pulse border-sky-500 text-sky-200' : j.status === 'done' ? 'border-emerald-600 text-emerald-300' : 'border-red-600 text-red-300'}`}>
-              <span className="h-2 w-2 rounded-full" style={{ background: LOOK[j.character ?? '']?.color ?? '#94a3b8' }} />
-              {j.title.slice(0, 32)}
-            </span>
-          ))}
+          {shownJobs.map((j) => {
+            const live = !FINISHED.has(j.status);
+            const look =
+              j.status === 'done'
+                ? 'border-emerald-600 text-emerald-300'
+                : j.status === 'cancelled'
+                  ? 'border-slate-600 text-slate-400'
+                  : j.status === 'failed'
+                    ? 'border-red-600 text-red-300'
+                    : 'animate-pulse border-sky-500 text-sky-200 hover:border-red-400';
+            return (
+              <button
+                key={j.jobId}
+                disabled={!live}
+                title={live ? `${j.title ?? 'Job'} · ${j.status} — click to cancel` : `${j.title ?? 'Job'} · ${j.status}`}
+                className={`flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-xs ${look}`}
+                onClick={() => live && confirm(`Cancel "${j.title ?? 'this job'}"?`) && void cancelJob(j)}
+              >
+                <span className="h-2 w-2 rounded-full" style={{ background: LOOK[j.character ?? '']?.color ?? '#94a3b8' }} />
+                {(j.title ?? 'Job').slice(0, 32)}
+              </button>
+            );
+          })}
         </div>
       )}
 

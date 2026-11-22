@@ -36,7 +36,21 @@ const PHONE_TABS: Tab[] = ['use', 'hivebot', 'canvas', 'activity', 'settings'];
 export function App() {
   const [me, setMe] = useState<Me | null | undefined>(undefined);
   const [needsSetup, setNeedsSetup] = useState(false);
-  const [storedTab, setTab] = useStored<Tab>('tab', 'canvas');
+  const [storedTab, setStoredTab] = useStored<Tab>('tab', 'canvas');
+  // ?tab=… in the address wins (a tab opened with the middle mouse button), and switching keeps the address current.
+  const [urlTab] = useState(() => new URLSearchParams(location.search).get('tab') as Tab | null);
+  const setTab = (t: Tab) => {
+    setStoredTab(t);
+    try {
+      const u = new URL(location.href);
+      u.searchParams.set('tab', t);
+      history.replaceState(null, '', u);
+    } catch {}
+  };
+  useEffect(() => {
+    if (urlTab && urlTab in TABS) setStoredTab(urlTab);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const allowed = (t: Tab) => t in TABS && (me?.role !== 'viewer' || VIEWER_TABS.includes(t));
   const tab: Tab = allowed(storedTab) ? storedTab : me?.role === 'viewer' ? 'use' : 'canvas';
   // Tabs stay mounted once opened, so switching never loses what you picked or a running council.
@@ -142,14 +156,20 @@ export function App() {
           {!phone && (
             <nav className="ml-2 flex min-w-0 flex-1 gap-0.5 overflow-x-auto [scrollbar-width:none] 2xl:ml-4 2xl:gap-1">
               {(Object.keys(TABS) as Tab[]).filter(allowed).map((t) => (
-                <button
+                <a
                   key={t}
-                  onClick={() => setTab(t)}
+                  href={`?tab=${t}`}
+                  // A plain click switches here; the middle button or Ctrl/Cmd+click opens a new browser tab.
+                  onClick={(e) => {
+                    if (e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey) return;
+                    e.preventDefault();
+                    setTab(t);
+                  }}
                   className={`flex shrink-0 items-center gap-1.5 rounded-md px-2 py-1.5 text-sm 2xl:px-3 ${tab === t ? 'bg-[#21262d] text-white' : 'text-slate-400 hover:text-white'}`}
                 >
                   {TABS[t]}
                   <Badge t={t} unseen={unseen} waiting={waiting} />
-                </button>
+                </a>
               ))}
             </nav>
           )}

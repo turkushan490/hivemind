@@ -57,10 +57,15 @@ export function BuilderPanel(props: {
     setText('');
     setBusy(Date.now());
     try {
-      const r = await api<{ reply: string; graph?: CanvasGraph; fixes: string[]; ms: number }>('/api/builder', {
-        body: { message: message.trim(), history, graph: props.graph },
-        quiet: true,
-      });
+      // The Builder runs as a workflow run (live in Active workflows): start it, then ask for the result until it is there.
+      let { runId } = await api<{ runId: string }>('/api/builder', { body: { message: message.trim(), history, graph: props.graph }, quiet: true });
+      let r: { status: string; runId?: string; note?: string; reply: string; graph?: CanvasGraph; fixes: string[]; ms: number };
+      for (;;) {
+        r = await api<typeof r>(`/api/builder/${runId}`, { quiet: true });
+        if (r.status === 'done') break;
+        if (r.runId && r.runId !== runId) runId = r.runId; // asked again once with the exact problem
+        if (r.note) setMsgs((m) => [...m, { role: 'assistant', content: r.note!, error: false }]);
+      }
       if (r.graph) props.onApply(r.graph);
       setMsgs((m) => [...m, { role: 'assistant', content: r.reply, fixes: r.fixes, ms: r.ms, applied: !!r.graph }]);
     } catch (err) {
@@ -166,7 +171,7 @@ export function BuilderPanel(props: {
         {busy !== null && (
           <div className="mr-6 flex items-center gap-2 rounded-2xl rounded-bl-sm border border-violet-800/60 bg-violet-950/30 px-3 py-2 text-sm text-violet-200">
             <span className="hm-core-dot" />
-            Designing your workflow… {((now - busy) / 1000).toFixed(0)}s
+            Designing your workflow… {((now - busy) / 1000).toFixed(0)}s <span className="text-xs text-slate-400">(watch it in Active workflows)</span>
           </div>
         )}
       </div>

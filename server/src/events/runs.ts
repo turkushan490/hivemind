@@ -126,6 +126,8 @@ export function startRun(opts: {
   startFrom?: Checkpoint;
   /** GPU priority (1 = first … 200, default 100): a lower number takes a shared GPU before a higher one. */
   priority?: number;
+  /** The name shown for a run without a saved canvas (e.g. "Builder"). */
+  title?: string;
 }): string {
   const access = opts.access ?? (opts.user ? allowedFor(opts.user) : undefined);
   const priority = clampPriority(opts.priority);
@@ -136,7 +138,7 @@ export function startRun(opts: {
   const source = opts.source ?? 'Screen';
   const canvasName = opts.canvasId
     ? (db.prepare('SELECT name FROM canvases WHERE id = ?').get(opts.canvasId) as { name: string } | undefined)?.name
-    : undefined;
+    : opts.title;
   let end!: () => void;
   const ended = new Promise<void>((r) => (end = r));
   const run: LiveRun = {

@@ -120,6 +120,11 @@ describe('Home Assistant block', () => {
     expect(directCommand(house, 'zet de verwarming op 21 graden')).toBeUndefined(); // a number: the model
     expect(directCommand(house, 'het is hier zo donker')).toBeUndefined(); // no action word
     expect(directCommand(house, 'doe de lamp uit')).toBeUndefined(); // which lamp? the model
+    // a question switches nothing ("is the osan lamp on?" must not turn it on)
+    expect(directCommand(house, 'is the osan kamer lamp on?')).toBeUndefined();
+    expect(directCommand(house, 'Jev, is the osan kamer lamp on')).toBeUndefined();
+    expect(directCommand(house, 'staat de osan kamer lamp aan?')).toBeUndefined();
+    expect(directCommand(house, 'Jev, turn the osan kamer lamp on')).toEqual({ service: 'light.turn_on', data: { entity_id: 'light.osan_kamer_lamp' } });
   });
 
   it('calls a service with templated JSON data', async () => {

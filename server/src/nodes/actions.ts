@@ -136,6 +136,10 @@ export function actionOf(request: string): 'on' | 'off' | 'open' | 'close' | und
  * closest (most of its name is in the request, well ahead of the next one). Undefined when unsure: a model decides.
  */
 export function directCommand(states: HaState[], request: string): { service: string; data: { entity_id: string } } | undefined {
+  // A question about a device ("is the osan lamp on?", "staat de lamp aan?") is never a command: the model answers it
+  // and switches nothing. A name in front ("Jev, is the lamp on") doesn't change that.
+  const plain = request.trim().toLowerCase().replace(/^[\p{L}\d]+\s*[,:]\s*/u, '');
+  if (/^(is|are|was|were|what|which|does|do|did|how|why|when|where|who|whats|what's|staat|staan|is|zijn|wat|welke|hoe|waarom|wanneer|waar|wie)\b/.test(plain)) return undefined;
   const act = actionOf(request);
   if (!act) return undefined;
   // Numbers ("op 21 graden", "50 procent") need a model.

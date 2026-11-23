@@ -334,7 +334,48 @@ export interface SkillMeta {
   rawExtra: string;
 }
 
-/** Name, description and instructions from one file's text (md/txt with or without frontmatter, JSON, YAML, TOML). */
+const unXml = (s: string) =>
+  s
+    .replace(/^\s*<!\[CDATA\[([\s\S]*?)\]\]>\s*$/, '$1')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&amp;/g, '&');
+
+/** Strips the common indent of a block of lines (XML bodies are usually indented). */
+const dedent = (s: string) => {
+  const lines = s.replace(/^\n+|\s+$/g, '').split('\n');
+  const ind = Math.min(...lines.filter((l) => l.trim()).map((l) => l.match(/^ */)![0].length));
+  return lines.map((l) => l.slice(Number.isFinite(ind) ? ind : 0)).join('\n');
+};
+
+/** Skill fields from XML-style tags; undefined when none of the known tags (or attributes) are there. */
+export function xmlFields(text: string): Record<string, unknown> | undefined {
+  const keys = [...NAME_KEYS, ...DESC_KEYS, ...BODY_KEYS];
+  const out: Record<string, unknown> = {};
+  let rest = text;
+  for (const k of keys) {
+    const m = text.match(new RegExp(`<${k}(?:\\s[^>]*)?>([\\s\\S]*?)</${k}\\s*>`, 'i'));
+    if (m && !(k in out)) {
+      out[k] = dedent(unXml(m[1])).trim();
+      rest = rest.replace(m[0], '');
+    }
+  }
+  // Attributes on the outer tag: <skill name="…" description="…">.
+  const root = text.match(/^<([A-Za-z][\w-]*)(\s[^>]*)>/);
+  if (root?.[2])
+    for (const a of root[2].matchAll(/([\w-]+)\s*=\s*("([^"]*)"|'([^']*)')/g)) {
+      const k = a[1].toLowerCase();
+      if (keys.includes(k) && !out[k]) out[k] = unXml(a[3] ?? a[4] ?? '');
+    }
+  if (!Object.keys(out).length) return undefined;
+  // What is left between the tags (without the outer wrapper) can be the instructions.
+  out._rest = dedent(rest.replace(/^<[A-Za-z][\w-]*(\s[^>]*)?>|<\/[A-Za-z][\w-]*>\s*$/g, '').replace(/<\/?[A-Za-z][\w-]*(\s[^>]*)?\/?>/g, '')).trim();
+  return out;
+}
+
+/** Name, description and instructions from one file's text (md/txt with or without frontmatter, JSON, YAML, TOML, XML tags). */
 export function readSkillText(text: string, path: string, hints: { folder?: string; extra?: Record<string, unknown> } = {}): SkillMeta {
   const ext = extname(path).toLowerCase();
   const t = text.replace(/^﻿/, '').replace(/\r\n?/g, '\n');
@@ -355,6 +396,10 @@ export function readSkillText(text: string, path: string, hints: { folder?: stri
     } catch {
       body = t;
     }
+  } else if (ext === '.xml' || (/^</.test(trimmed) && xmlFields(trimmed))) {
+    // <skill><name>…</name><description>…</description><instructions>…</instructions></skill> (or name="…" attributes).
+    fields = xmlFields(trimmed) ?? {};
+    body = pick(fields, BODY_KEYS, 0) || str(fields._rest);
   } else if (ext === '.yaml' || ext === '.yml') {
     fields = lowerKeys(parseYaml(t));
     body = pick(fields, BODY_KEYS);
@@ -432,7 +477,7 @@ const MAIN_NAMES = [
   'system.txt',
   'readme.md',
 ];
-const SINGLE_RE = /\.(md|mdc|markdown|txt|prompt|json|ya?ml|toml)$|^\.(cursor|windsurf|cline)rules$/i;
+const SINGLE_RE = /\.(md|mdc|markdown|txt|prompt|json|ya?ml|toml|xml)$|^\.(cursor|windsurf|cline)rules$/i;
 const base = (p: string) => (p.split('/').pop() ?? '').toLowerCase();
 const dirOf = (p: string) => (p.includes('/') ? p.slice(0, p.lastIndexOf('/') + 1) : '');
 
@@ -446,6 +491,8 @@ function standalone(f: SkillFile): boolean {
       const o = ext === '.json' ? lowerKeys(JSON.parse(text)) : ext === '.toml' ? lowerKeys(parseToml(text)) : lowerKeys(parseYaml(text));
       return !!pick(o, BODY_KEYS, 2);
     }
+    const x = /^\s*</.test(text) ? xmlFields(text.trim()) : undefined;
+    if (x) return !!(pick(x, NAME_KEYS, 0) || pick(x, DESC_KEYS, 0)) && !!(pick(x, BODY_KEYS, 0) || str(x._rest));
     const fm = splitFrontmatter(text);
     return !!(pick(fm.fields, NAME_KEYS, 0) || pick(fm.fields, DESC_KEYS, 0)) && !!fm.body.trim();
   } catch {

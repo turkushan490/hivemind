@@ -1182,7 +1182,9 @@ which project it works on, and can make a new one.
   odd characters in the name, or no frontmatter; Codex's `agents/openai.yaml` fills gaps), Claude agents and
   commands, Cursor rules (`.mdc`, `.cursorrules`), Windsurf / Cline rules, Copilot (`*.instructions.md`,
   `*.prompt.md`, `*.agent.md`), `AGENTS.md` / `CLAUDE.md` / `GEMINI.md`, Fabric patterns (`system.md`), a GPT or
-  OpenAI assistant JSON export, YAML, TOML (Gemini CLI commands), plain markdown or text.
+  OpenAI assistant JSON export, YAML, TOML (Gemini CLI commands), XML-style tags
+  (`<skill><name>…</name><description>…</description><instructions>…</instructions></skill>`, also with
+  `name="…"` attributes, in any file name such as `skill.md`), plain markdown or text.
 - Packed as `.zip`, `.skill`, `.tar`, `.tar.gz` / `.tgz` or `.gz`. One upload with many skills (a repo with
   `skills/*/SKILL.md`, a folder of agents or rules) adds each one (at most 100 at once).
 - A missing name comes from the folder, file name or first heading; a missing description from the first sentence.

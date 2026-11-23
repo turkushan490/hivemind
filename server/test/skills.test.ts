@@ -113,6 +113,18 @@ describe('skills', () => {
     expect(gpt[0]).toMatchObject({ name: 'Prompt Pal', description: 'Writes image prompts' });
     const pal = (await app.inject({ method: 'GET', url: `/api/skills/${gpt[0].id}/file?path=SKILL.md`, headers: bearer('a') })).json().text as string;
     expect(pal).toContain('Ask for the subject, then write a prompt.');
+    // XML-style tags (as some chat apps write skills), uploaded as skill.md.
+    const xml = added(
+      await upload(
+        'a',
+        '<skill>\n  <name>name based prompt maker</name>\n  <description>Prompts with ${main} &amp; ${main2} characters.</description>\n  <instructions>\n  1. Define ${main=man standing} first.\n  2. Then use ${main} by name.\n  </instructions>\n</skill>\n',
+        'skill.md',
+      ),
+    );
+    expect(xml[0]).toMatchObject({ name: 'name based prompt maker', description: 'Prompts with ${main} & ${main2} characters.' });
+    const xmlMd = (await app.inject({ method: 'GET', url: `/api/skills/${xml[0].id}/file?path=SKILL.md`, headers: bearer('a') })).json().text as string;
+    expect(xmlMd).toContain('\n\n1. Define ${main=man standing} first.\n2. Then use ${main} by name.\n');
+    expect(xmlMd).not.toContain('<instructions>');
     // Pasted text.
     const pasted = await app.inject({ method: 'POST', url: '/api/skills/import', headers: bearer('a'), payload: { text: 'You are a strict code reviewer. Point out bugs.', name: 'strict reviewer' } });
     expect(added(pasted)[0]).toMatchObject({ name: 'strict reviewer', description: 'You are a strict code reviewer.' });

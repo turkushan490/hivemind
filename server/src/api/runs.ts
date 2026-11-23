@@ -15,6 +15,8 @@ import { gpuFreerFor, resolverFor, trainingFor } from './providers.js';
 import { batchStatus, startBatch, stopBatch } from '../services/batch.js';
 import { allowedFor, checkGraph } from '../services/access.js';
 import { priorityFor } from '../services/priority.js';
+import { pickCharacter, sessionFor } from '../services/hivebotSessions.js';
+import { rulesFor } from '../services/hivebotRules.js';
 import { canvasHidden, isUnlocked, seesCanvas } from '../services/unlock.js';
 
 export interface CanvasRow {
@@ -127,12 +129,22 @@ export function startCanvasRun(user: User, body: RunRequest, opts: { scheduled?:
   as400(() => validateGraph(graph));
   if (body.cancelWhenAlone !== undefined && typeof body.cancelWhenAlone !== 'boolean') throw bad('cancelWhenAlone must be true or false');
   if (body.priority !== undefined && (typeof body.priority !== 'number' || !Number.isFinite(body.priority))) throw bad('priority must be a number from 1 (first) to 200');
+  // A workflow that picks its character by {{vars.character}} (HiveBot), run from the screen without one: the name in
+  // the question picks it, like a robot's "auto" (owner, 2026-11-23: "ultron make a website" in the Run box went to Jev).
+  let asked = question;
+  if (!opts.scheduled && (!vars.character || vars.character === 'auto') && graph.nodes.some((n) => n.type === 'router' && /vars\.character/.test(n.config.routeBy ?? ''))) {
+    const picked = pickCharacter(sessionFor(user.id, 'screen', { kind: 'browser', who: user.username }), question, rulesFor(user.id), { robot: false });
+    if (picked.character) {
+      vars.character = picked.character;
+      if (picked.named) asked = picked.question;
+    }
+  }
   return startRun({
     ownerId: user.id,
     user,
     canvasId: body.canvasId,
     graph,
-    question,
+    question: asked,
     vars,
     resolve: resolverFor(providerUser),
     freeGpu: gpuFreerFor(providerUser),

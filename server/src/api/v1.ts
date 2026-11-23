@@ -264,7 +264,7 @@ export function v1Routes(app: FastifyInstance) {
     // H32: who answers, right away, so the robot shows the right face before the answer is done.
     if (picked) send({ type: 'route', character: vars.character, question, ...(progress ? {} : {}) });
     const ping = setInterval(() => res.write(': working\n\n'), 10_000);
-    const liveText = new LiveText();
+    const liveText = new LiveText(vars.character);
     let lastLive = 0;
     // Finishes the OpenAI stream once with the final answer (used at the Output's answer when there is a tail, else at run_done).
     let replied = false;

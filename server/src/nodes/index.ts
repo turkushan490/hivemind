@@ -18,6 +18,17 @@ export interface GpuNeed {
   bytes?: number;
 }
 
+/**
+ * A character's answer without its own name in front ("Jev: The lamp is off." → "The lamp is off."): small models add
+ * it even when told not to, and the robot then says "Jev" out loud (owner, 2026-11-23).
+ */
+export function withoutOwnName(text: string, character?: string): string {
+  if (!character) return text;
+  const name = character.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const cut = text.replace(new RegExp(`^[\\s*_]*${name}[*_]*\\s*:[*_]*\\s*`, 'i'), '');
+  return cut.trim() ? cut : text;
+}
+
 /** Output of an upstream node, as seen by the node that runs next. */
 export interface NodeInput {
   nodeId: string;
@@ -487,7 +498,7 @@ export const NODES: Record<NodeType, NodeDefinition> = {
             })()
           : withSystem(system, user);
       // A fixed model answers as it is (no fallback).
-      if (!ctx.node.config.auto) return ask(ctx, messages);
+      if (!ctx.node.config.auto) return withoutOwnName(await ask(ctx, messages), ctx.vars.character);
       // Auto: the decision model picks which model answers, from the question (and what is wired in).
       const pick = await autoPick(ctx, prev.length ? `${ctx.question}\n\n${labelled(prev)}` : ctx.question);
       const a = ctx.node.config.auto;
@@ -496,7 +507,7 @@ export const NODES: Record<NodeType, NodeDefinition> = {
       for (;;) {
         tried.add(tier);
         try {
-          return await ask(ctx, messages, a[tier]!);
+          return withoutOwnName(await ask(ctx, messages, a[tier]!), ctx.vars.character);
         } catch (err) {
           // A model that is gone, rate-limited or down: the answer still comes, from another size.
           const next = canFallBack(err) && !ctx.signal?.aborted ? fallbackOrder(pick.tiers, pick.tier).find((t) => !tried.has(t)) : undefined;

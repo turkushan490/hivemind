@@ -159,10 +159,33 @@ const BEST_LINE = /^[ \t>*_#]*best(?: answer)?[*_]*\s*[:=]\s*[*_]*\s*(?:answer\s
 export class LiveText {
   private buffer = '';
   private lineOpen = false;
+  /** The start was checked for the speaker's own name ("Jev: ..."). */
+  private named = false;
+  private afterName = false;
   sent = '';
+
+  /** speaker: the character answering; an answer that starts with "<speaker>:" is sent without it (owner, 2026-11-23). */
+  constructor(private speaker?: string) {}
 
   push(text: string): string {
     this.buffer += text;
+    if (this.speaker && !this.named) {
+      const lead = this.buffer.replace(/^[\s*_]+/, '');
+      const name = `${this.speaker}:`.toLowerCase();
+      // Not sure yet: wait for a few more letters.
+      if (lead.length < name.length && name.startsWith(lead.toLowerCase())) return '';
+      this.named = true;
+      if (lead.toLowerCase().startsWith(name)) {
+        this.buffer = lead.slice(name.length);
+        this.afterName = true;
+      }
+    }
+    // The space (or "**") after the cut name may come in the next tokens.
+    if (this.afterName) {
+      this.buffer = this.buffer.replace(/^[\s*_]+/, '');
+      if (!this.buffer) return '';
+      this.afterName = false;
+    }
     let out = '';
     for (;;) {
       const nl = this.buffer.indexOf('\n');

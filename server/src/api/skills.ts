@@ -1,5 +1,5 @@
 import type { FastifyInstance, FastifyReply } from 'fastify';
-import { deleteSkill, deleteSkillFile, exportSkill, importSkillGithub, importSkillZip, listSkills, readSkillFile, saveSkill, shareSkill, skillView, writeSkillFile } from '../services/skills.js';
+import { deleteSkill, deleteSkillFile, exportSkill, importSkillFiles, importSkillGithub, importSkillZip, listSkills, readSkillFile, saveSkill, shareSkill, skillView, writeSkillFile } from '../services/skills.js';
 import { requireAdmin, requireUser } from './auth.js';
 
 type Params = { id: string };
@@ -34,11 +34,34 @@ export function skillRoutes(app: FastifyInstance) {
     }),
   );
 
-  /** A .zip with SKILL.md at the top or in one folder. */
-  app.post('/api/skills/import', { preHandler: [requireUser, noTokens], bodyLimit: 30 * 1024 * 1024 }, async (req, reply) =>
+  /**
+   * Skills in any format (Claude, Codex/ChatGPT, OpenCode/T3, Cursor, Copilot, Gemini, plain markdown, JSON, YAML,
+   * TOML), one or many:
+   * - raw body (application/zip or application/octet-stream, ?name=<file name>): a .zip / .skill / .tar(.gz) or one file;
+   * - JSON {files: [{path, data (base64) | text}]}: a folder picked in the browser, or several files;
+   * - JSON {text, name?}: pasted instructions.
+   */
+  app.post('/api/skills/import', { preHandler: [requireUser, noTokens], bodyLimit: 40 * 1024 * 1024 }, async (req, reply) =>
     safe(reply, () => {
-      if (!Buffer.isBuffer(req.body)) return reply.code(415).send({ error: 'Send the .zip as application/zip' });
-      return importSkillZip(req.user!, req.body);
+      const name = String((req.query as { name?: string }).name ?? '').slice(0, 200);
+      if (Buffer.isBuffer(req.body)) return importSkillZip(req.user!, req.body, name);
+      const b = (req.body ?? {}) as { files?: unknown; text?: unknown; name?: unknown };
+      if (typeof b.text === 'string') {
+        const n = typeof b.name === 'string' && b.name.trim() ? b.name.trim() : 'pasted.md';
+        return importSkillZip(req.user!, Buffer.from(b.text), /\.[a-z]+$/i.test(n) ? n : `${n}.md`);
+      }
+      if (Array.isArray(b.files) && b.files.length) {
+        if (b.files.length > 2000) return reply.code(413).send({ error: 'Too many files' });
+        const files = b.files.map((f: { path?: unknown; data?: unknown; text?: unknown }) => ({
+          path: String(f.path ?? ''),
+          data: typeof f.text === 'string' ? Buffer.from(f.text) : Buffer.from(String(f.data ?? ''), 'base64'),
+        }));
+        // One archive picked among the files: unpack it.
+        if (files.length === 1) return importSkillZip(req.user!, files[0].data, files[0].path);
+        const top = files[0].path.replace(/\\/g, '/').split('/')[0];
+        return importSkillFiles(req.user!, files, { hintName: files.every((f) => f.path.replace(/\\/g, '/').startsWith(`${top}/`)) ? top : undefined });
+      }
+      return reply.code(415).send({ error: 'Send a file (.zip, .skill, .tar.gz, .md, .json, …), {files: [...]} or {text}' });
     }),
   );
 

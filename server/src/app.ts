@@ -67,7 +67,7 @@ export async function buildApp(opts: { logger?: boolean; web?: boolean; onRoute?
         (req.url.startsWith('/api/import/') && type.startsWith('application/zip')) ||
         (/^\/api\/projects\/[^/]+\/file/.test(req.url) && type.startsWith('application/octet-stream')) ||
         (/^\/api\/projects\/[^/]+\/zip/.test(req.url) && type.startsWith('application/zip')) ||
-        (req.url.startsWith('/api/skills/import') && !req.url.startsWith('/api/skills/import/github') && type.startsWith('application/zip')) ||
+        (req.url.startsWith('/api/skills/import') && !req.url.startsWith('/api/skills/import/github') && /^application\/(zip|octet-stream)/.test(type)) ||
         (req.url.startsWith('/api/voice/transcribe') && /^(audio\/|video\/|application\/octet-stream)/.test(type)) ||
         (req.method === 'PUT' && req.url.startsWith('/api/installers/') && type.startsWith('application/octet-stream'));
       if (hasBody && !upload && !type.startsWith('application/json')) return reply.code(415).send({ error: 'Send JSON' });

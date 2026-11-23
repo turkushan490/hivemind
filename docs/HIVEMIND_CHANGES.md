@@ -1174,6 +1174,24 @@ which project it works on, and can make a new one.
 
 ---
 
+## Skills in any format
+
+- Settings → Skills reads skills from anywhere, not only a Claude `.zip`: **Upload files** (one or more),
+  **Upload a folder**, **Paste**, or GitHub as before.
+- Understood: Claude, Codex (ChatGPT) and OpenCode / T3 Code skills (`SKILL.md`, also with a wrapped description,
+  odd characters in the name, or no frontmatter; Codex's `agents/openai.yaml` fills gaps), Claude agents and
+  commands, Cursor rules (`.mdc`, `.cursorrules`), Windsurf / Cline rules, Copilot (`*.instructions.md`,
+  `*.prompt.md`, `*.agent.md`), `AGENTS.md` / `CLAUDE.md` / `GEMINI.md`, Fabric patterns (`system.md`), a GPT or
+  OpenAI assistant JSON export, YAML, TOML (Gemini CLI commands), plain markdown or text.
+- Packed as `.zip`, `.skill`, `.tar`, `.tar.gz` / `.tgz` or `.gz`. One upload with many skills (a repo with
+  `skills/*/SKILL.md`, a folder of agents or rules) adds each one (at most 100 at once).
+- A missing name comes from the folder, file name or first heading; a missing description from the first sentence.
+  HiveMind then writes a proper `SKILL.md` frontmatter and keeps the other fields (allowed-tools, license, …).
+- Kept: every UTF-8 text file (scripts too, as text: never run). Left out: images, programs, archives and other binaries.
+- Tests: `server/test/skills.test.ts`.
+
+---
+
 ## Unlock mode: hidden memory and hidden workflows
 
 - **🔒** next to Problems (a small icon, so the menu never moves). It asks a **PIN** (the first time: set one;

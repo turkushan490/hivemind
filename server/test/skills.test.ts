@@ -65,10 +65,116 @@ describe('skills', () => {
     expect(skipped.sort()).toEqual(['logo.png', 'tool.exe']);
   });
 
-  it('refuses a SKILL.md without name or description', async () => {
-    expect((await importZip('a', [{ name: 'SKILL.md', data: '# no frontmatter' }])).statusCode).toBe(400);
-    expect((await importZip('a', [{ name: 'SKILL.md', data: '---\nname: x\n---\nbody' }])).statusCode).toBe(400);
-    expect((await importZip('a', [{ name: 'readme.md', data: 'hi' }])).statusCode).toBe(400);
+  it('fills in a missing name or description instead of refusing', async () => {
+    const a = (await importZip('a', [{ name: 'notes/SKILL.md', data: '# Release notes\n\nWrite short release notes from a git log.' }])).json() as { skill: Skill };
+    expect(a.skill).toMatchObject({ name: 'notes', description: 'Write short release notes from a git log.' });
+    const b = (await importZip('a', [{ name: 'SKILL.md', data: '---\nname: "Build: GPT → local"\n---\nPlan first. Then build.' }])).json() as { skill: Skill };
+    expect(b.skill).toMatchObject({ name: 'Build- GPT - local', description: 'Plan first.' });
+    const md = (await app.inject({ method: 'GET', url: `/api/skills/${b.skill.id}/file?path=SKILL.md`, headers: bearer('a') })).json().text as string;
+    expect(md).toMatch(/^---\nname: Build- GPT - local\ndescription: "Plan first\."\n---\n\nPlan first\. Then build\.\n$/);
+    // Empty or binary only: still refused, with a reason.
+    expect((await importZip('a', [{ name: 'SKILL.md', data: '' }])).statusCode).toBe(400);
+    expect((await importZip('a', [{ name: 'a.png', data: Buffer.from([0x89, 0x50, 0, 1]) }])).json().error).toMatch(/No text file/);
+  });
+
+  const upload = (who: string, body: string | Buffer, name: string) =>
+    app.inject({ method: 'POST', url: `/api/skills/import?name=${encodeURIComponent(name)}`, headers: { ...bearer(who), 'content-type': 'application/octet-stream' }, payload: body });
+  const added = (res: { statusCode: number; body: string; json: () => unknown }) => {
+    expect(res.statusCode, res.body).toBe(200);
+    return (res.json() as { skills: Skill[] }).skills;
+  };
+
+  it('reads skills from Claude, Codex, OpenCode/T3, Cursor, Copilot, Gemini, GPT JSON and plain text', async () => {
+    // Codex / T3 Code: SKILL.md with a wrapped description, agents/openai.yaml and a script.
+    const codex = added(
+      await importZip('a', [
+        { name: 'build/SKILL.md', data: '---\nname: build\ndescription: Voer een taak uit met GPT,\n  een lokaal model en Claude.\nallowed-tools: Read\n---\n# Build\nStap 1.' },
+        { name: 'build/agents/openai.yaml', data: 'interface:\n  display_name: "Build"\n  short_description: "GPT → lokaal → Claude"\n' },
+        { name: 'build/assets/icon.png', data: Buffer.from([0x89, 0x50, 0x4e, 0x47, 0]) },
+      ]),
+    );
+    expect(codex[0]).toMatchObject({ name: 'build', description: 'Voer een taak uit met GPT, een lokaal model en Claude.' });
+    expect(codex[0].files.map((f) => f.path).sort()).toEqual(['SKILL.md', 'agents/openai.yaml']);
+    // A single SKILL.md or .md, uploaded as it is (no zip).
+    expect(added(await upload('a', SKILL_MD('touch', 'Touch screen helper', 'Tap big buttons.'), 'SKILL.md'))[0]).toMatchObject({ name: 'touch', description: 'Touch screen helper' });
+    expect(added(await upload('a', 'Always answer in Dutch.\n\nKeep it short.', 'dutch-answers.md'))[0]).toMatchObject({ name: 'dutch-answers', description: 'Always answer in Dutch.' });
+    // Cursor rule (.mdc), Copilot prompt file, Gemini CLI command (TOML).
+    expect(added(await upload('a', '---\ndescription: React component rules\nglobs: "*.tsx"\nalwaysApply: false\n---\nUse function components.', 'react.mdc'))[0]).toMatchObject({
+      name: 'react',
+      description: 'React component rules',
+    });
+    expect(added(await upload('a', "---\nmode: 'agent'\ndescription: 'Review a pull request'\n---\nRead the diff first.", 'review.prompt.md'))[0]).toMatchObject({ name: 'review' });
+    expect(added(await upload('a', 'description = "Explain code"\nprompt = """\nExplain this code simply.\n"""\n', 'explain.toml'))[0]).toMatchObject({
+      name: 'explain',
+      description: 'Explain code',
+    });
+    // A ChatGPT GPT / OpenAI assistant export.
+    const gpt = added(await upload('a', JSON.stringify({ gizmo: { display: { name: 'Prompt Pal', description: 'Writes image prompts' }, instructions: 'Ask for the subject, then write a prompt.' } }), 'gpt.json'));
+    expect(gpt[0]).toMatchObject({ name: 'Prompt Pal', description: 'Writes image prompts' });
+    const pal = (await app.inject({ method: 'GET', url: `/api/skills/${gpt[0].id}/file?path=SKILL.md`, headers: bearer('a') })).json().text as string;
+    expect(pal).toContain('Ask for the subject, then write a prompt.');
+    // Pasted text.
+    const pasted = await app.inject({ method: 'POST', url: '/api/skills/import', headers: bearer('a'), payload: { text: 'You are a strict code reviewer. Point out bugs.', name: 'strict reviewer' } });
+    expect(added(pasted)[0]).toMatchObject({ name: 'strict reviewer', description: 'You are a strict code reviewer.' });
+  });
+
+  it('a repo-style zip, a folder upload or a .tar.gz with many skills adds them all', async () => {
+    const many = added(
+      await importZip('b', [
+        { name: 'repo/README.md', data: '# My skills' },
+        { name: 'repo/skills/one/SKILL.md', data: SKILL_MD('one', 'First', 'Do one.') },
+        { name: 'repo/skills/two/SKILL.md', data: SKILL_MD('two', 'Second', 'Do two.') },
+        { name: 'repo/skills/two/ref/SKILL.md', data: SKILL_MD('inner', 'Nested', 'Part of two.') },
+      ]),
+    );
+    expect(many.map((s) => s.name).sort()).toEqual(['one', 'two']);
+    expect(many.find((s) => s.name === 'two')!.files.map((f) => f.path)).toContain('ref/SKILL.md');
+    // Claude agents folder: one skill per file; the README is not one.
+    const agents = await app.inject({
+      method: 'POST',
+      url: '/api/skills/import',
+      headers: bearer('b'),
+      payload: {
+        files: [
+          { path: 'agents/README.md', text: '# Agents' },
+          { path: 'agents/planner.md', text: '---\nname: planner\ndescription: Plans work\ntools: Read\n---\nMake a plan.' },
+          { path: 'agents/tester.md', text: '---\nname: tester\ndescription: Writes tests\n---\nWrite tests.' },
+        ],
+      },
+    });
+    expect(added(agents).map((s) => s.name).sort()).toEqual(['planner', 'tester']);
+    // A folder with AGENTS.md: one skill named after the folder.
+    const folder = await app.inject({
+      method: 'POST',
+      url: '/api/skills/import',
+      headers: bearer('b'),
+      payload: { files: [{ path: 'house-style/AGENTS.md', text: 'Use tabs.' }, { path: 'house-style/examples.md', text: 'x' }] },
+    });
+    expect(added(folder)[0]).toMatchObject({ name: 'house-style', description: 'Use tabs.' });
+    // .tar.gz
+    const { gzipSync } = await import('node:zlib');
+    const tar = (files: { name: string; data: string }[]) => {
+      const parts: Buffer[] = [];
+      for (const f of files) {
+        const h = Buffer.alloc(512);
+        h.write(f.name, 0);
+        h.write('0000644\0', 100);
+        h.write(`${Buffer.byteLength(f.data).toString(8).padStart(11, '0')}\0`, 124);
+        h.write('0', 156);
+        h.write('ustar\0', 257);
+        h.write('00', 263);
+        h.fill(' ', 148, 156);
+        let sum = 0;
+        for (const x of h) sum += x;
+        h.write(`${sum.toString(8).padStart(6, '0')}\0 `, 148);
+        const body = Buffer.alloc(Math.ceil(Buffer.byteLength(f.data) / 512) * 512);
+        body.write(f.data);
+        parts.push(h, body);
+      }
+      return Buffer.concat([...parts, Buffer.alloc(1024)]);
+    };
+    const tgz = gzipSync(tar([{ name: 'pack/alpha/SKILL.md', data: SKILL_MD('alpha', 'A', 'a') }, { name: 'pack/beta/skill.md', data: '# Beta\n\nBeta things here.' }]));
+    expect(added(await upload('b', tgz, 'pack.tar.gz')).map((s) => s.name).sort()).toEqual(['alpha', 'beta']);
   });
 
   it("a user can't see another user's unshared skill; a shared one every user can use", async () => {

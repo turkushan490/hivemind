@@ -1,12 +1,13 @@
 import type { Skill } from '@hivemind/shared';
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { dirname, extname, join, relative, resolve, sep } from 'node:path';
+import { dirname, join, relative, resolve, sep } from 'node:path';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { config } from '../config.js';
 import { newId } from '../crypto.js';
 import { db, getSetting, setSetting } from '../db/index.js';
 import { githubToken, REPO_RE } from './git.js';
+import { binaryPath, findSkills, isTextFile, readSkillText, toSkillMd, unpack, type SkillFile } from './skillFormats.js';
 import { createZip, readZip } from './zip.js';
 
 /**
@@ -22,40 +23,19 @@ mkdirSync(skillsDir, { recursive: true });
 
 export const SKILL_LIMITS = { fileBytes: 1024 * 1024, totalBytes: 10 * 1024 * 1024, files: 200, promptChars: 30_000 };
 
-/** Text files a skill may hold (anything else is left out on import). */
-const TEXT_EXT = new Set(['.md', '.markdown', '.txt', '.json', '.yaml', '.yml', '.toml', '.csv', '.html', '.htm', '.css', '.js', '.mjs', '.ts', '.tsx', '.jsx', '.py', '.sh', '.sql', '.xml', '.svg', '.ini', '.cfg']);
-
-const NAME_RE = /^[A-Za-z0-9][A-Za-z0-9 ._-]{0,63}$/;
-
 export interface SkillMd {
   name: string;
   description: string;
   body: string;
 }
 
-/** Reads SKILL.md: a "---" frontmatter with name and description (single line, or "|" / ">" with indented lines). */
-export function parseSkillMd(text: string): SkillMd {
-  const t = text.replace(/^﻿/, '').replace(/\r\n/g, '\n');
-  const m = t.match(/^---\n([\s\S]*?)\n---\n?([\s\S]*)$/);
-  if (!m) throw err(400, 'SKILL.md must start with a --- block with name and description');
-  const fields: Record<string, string> = {};
-  const lines = m[1].split('\n');
-  for (let i = 0; i < lines.length; i++) {
-    const kv = lines[i].match(/^([A-Za-z_][\w-]*)\s*:\s*(.*)$/);
-    if (!kv) continue;
-    let value = kv[2].trim();
-    if (value === '|' || value === '>' || value === '|-' || value === '>-') {
-      const block: string[] = [];
-      while (i + 1 < lines.length && (/^\s+/.test(lines[i + 1]) || lines[i + 1] === '')) block.push(lines[++i].trim());
-      value = block.join(value.startsWith('|') ? '\n' : ' ').trim();
-    }
-    fields[kv[1].toLowerCase()] = value.replace(/^(['"])([\s\S]*)\1$/, '$2');
-  }
-  const name = (fields.name ?? '').trim();
-  if (!NAME_RE.test(name)) throw err(400, 'SKILL.md needs a name (letters, numbers, spaces, . - _; at most 64)');
-  const description = (fields.description ?? '').trim().slice(0, 1024);
-  if (!description) throw err(400, 'SKILL.md needs a description: when to use the skill');
-  return { name, description, body: m[2].trim() };
+/**
+ * Reads a SKILL.md leniently: frontmatter (YAML or TOML) with name and description when there is one; a missing or
+ * odd name is made from the heading or `fallbackName`, a missing description from the first sentence.
+ */
+export function parseSkillMd(text: string, fallbackName?: string): SkillMd {
+  const m = readSkillText(text, 'SKILL.md', { folder: fallbackName });
+  return { name: m.name, description: m.description, body: m.body };
 }
 
 interface SkillRow {
@@ -139,28 +119,34 @@ function cleanSkillPath(p: string): string {
   return clean;
 }
 
-const isText = (p: string) => TEXT_EXT.has(extname(p).toLowerCase()) || p.toUpperCase() === 'SKILL.MD';
-
 /**
  * Stores a skill from its files (SKILL.md + extras). Non-text files are left out (listed in skipped). An existing
- * skill of yours with the same name is replaced.
+ * skill of yours with the same name is replaced. A SKILL.md without a proper name/description gets one written.
  */
-export function saveSkill(user: SkillUser, files: { path: string; data: Buffer }[], opts: { replaceId?: string } = {}): { skill: Skill; skipped: string[] } {
+export function saveSkill(user: SkillUser, files: SkillFile[], opts: { replaceId?: string; fallbackName?: string } = {}): { skill: Skill; skipped: string[] } {
   const md = files.find((f) => f.path.toUpperCase() === 'SKILL.MD');
   if (!md) throw err(400, 'No SKILL.md found (it must be at the top of the skill folder)');
-  const meta = parseSkillMd(md.data.toString('utf8'));
-  const keep: { path: string; data: Buffer }[] = [];
+  if (!isTextFile(md)) throw err(400, 'SKILL.md is not a text file');
+  const text = md.data.toString('utf8');
+  const full = readSkillText(text, 'SKILL.md', { folder: opts.fallbackName });
+  const meta = { name: full.name, description: full.description, body: full.body };
+  // Keep it as written when it already says its name and description; otherwise write them in.
+  const fm = text.replace(/^﻿/, '').match(/^---\r?\n([\s\S]*?)\r?\n---/)?.[1] ?? '';
+  const proper = new RegExp(`^name:\\s*['"]?${meta.name.replace(/[.]/g, '\\.')}['"]?\\s*$`, 'm').test(fm) && /^description:\s*\S/m.test(fm);
+  const mdData = proper ? md.data : Buffer.from(toSkillMd(full));
+  const keep: SkillFile[] = [];
   const skipped: string[] = [];
   let total = 0;
   for (const f of files) {
     const path = cleanSkillPath(f.path);
-    if (!isText(path) || f.data.length > SKILL_LIMITS.fileBytes || f.data.includes(0)) {
+    if (f.data.length > SKILL_LIMITS.fileBytes || !isTextFile({ path, data: f.data })) {
       skipped.push(path);
       continue;
     }
-    total += f.data.length;
+    const isMd = path.toUpperCase() === 'SKILL.MD';
+    total += isMd ? mdData.length : f.data.length;
     if (total > SKILL_LIMITS.totalBytes) throw err(413, `The skill is too big (at most ${SKILL_LIMITS.totalBytes / 1024 / 1024} MB of text)`);
-    keep.push({ path: path.toUpperCase() === 'SKILL.MD' ? 'SKILL.md' : path, data: f.data });
+    keep.push(isMd ? { path: 'SKILL.md', data: mdData } : { path, data: f.data });
   }
   if (keep.length > SKILL_LIMITS.files) throw err(413, `A skill may have at most ${SKILL_LIMITS.files} files`);
   const existing = opts.replaceId
@@ -182,21 +168,30 @@ export function saveSkill(user: SkillUser, files: { path: string; data: Buffer }
   return { skill: toSkill(getSkill(user, id), user), skipped };
 }
 
-/** A .zip with SKILL.md at the top, or in one folder (as Claude exports them). */
-export function importSkillZip(user: SkillUser, buf: Buffer): { skill: Skill; skipped: string[] } {
-  const entries = readZip(buf, { file: SKILL_LIMITS.fileBytes * 4, total: SKILL_LIMITS.totalBytes * 2 }) as { name: string; data: Buffer }[];
-  return saveSkill(user, rootedAtSkill(entries.map((e) => ({ path: e.name.replace(/\\/g, '/'), data: e.data }))));
+export interface ImportResult {
+  /** The first skill (older clients read only this one). */
+  skill: Skill;
+  skills: Skill[];
+  skipped: string[];
 }
 
-/** Files below the folder that holds SKILL.md (the shallowest one), with that folder taken off their paths. */
-function rootedAtSkill(files: { path: string; data: Buffer }[], under = ''): { path: string; data: Buffer }[] {
-  const prefix = under ? `${under.replace(/\/+$/, '')}/` : '';
-  const mds = files
-    .filter((f) => f.path.startsWith(prefix) && /(^|\/)SKILL\.md$/i.test(f.path))
-    .sort((a, b) => a.path.split('/').length - b.path.split('/').length);
-  if (!mds.length) throw err(400, `No SKILL.md found${under ? ` in ${under}` : ''}`);
-  const base = mds[0].path.slice(0, mds[0].path.length - 'SKILL.md'.length);
-  return files.filter((f) => f.path.startsWith(base) && !f.path.endsWith('/')).map((f) => ({ path: f.path.slice(base.length), data: f.data }));
+/** Saves every skill found in these files (any format, see skillFormats.ts). */
+export function importSkillFiles(user: SkillUser, files: SkillFile[], opts: { under?: string; hintName?: string } = {}): ImportResult {
+  const found = findSkills(files, opts);
+  const skills: Skill[] = [];
+  const skipped: string[] = [];
+  for (const s of found) {
+    const r = saveSkill(user, s.files, { fallbackName: opts.hintName });
+    skills.push(r.skill);
+    skipped.push(...r.skipped.map((p) => (found.length > 1 ? `${r.skill.name}/${p}` : p)));
+  }
+  return { skill: skills[0], skills, skipped };
+}
+
+/** An uploaded file: a .zip / .skill / .tar(.gz) with one or more skills, or one skill file in any format. */
+export function importSkillZip(user: SkillUser, buf: Buffer, filename = ''): ImportResult {
+  const stem = (filename.split(/[\\/]/).pop() ?? '').replace(/(\.(tar|prompt|instructions))?\.[A-Za-z0-9]+$/i, '');
+  return importSkillFiles(user, unpack(buf, filename), { hintName: stem || undefined });
 }
 
 /** Imports a skill from a GitHub repo ("owner/name", optional folder and branch), with the user's token when set. */
@@ -214,25 +209,29 @@ export async function importSkillGithub(user: SkillUser, body: { repo?: unknown;
   if (!res.ok) throw err(res.status === 404 ? 404 : 502, `GitHub ${res.status}: could not download ${repo}${res.status === 404 ? ' (private? add a token in Settings → GitHub)' : ''}`);
   const buf = Buffer.from(await res.arrayBuffer());
   if (buf.length > 100 * 1024 * 1024) throw err(413, 'That repo is too big to import a skill from');
-  const entries = (readZip(buf, { file: 50 * 1024 * 1024, total: 300 * 1024 * 1024 }) as { name: string; data: Buffer }[]).map((e) => ({
+  const entries = readZip(buf, { file: 50 * 1024 * 1024, total: 300 * 1024 * 1024 }).map((e) => ({
     // GitHub puts everything in one "owner-repo-sha/" folder.
     path: e.name.replace(/\\/g, '/').split('/').slice(1).join('/'),
-    data: e.data,
+    data: e.data as Buffer,
   }));
-  return saveSkill(user, rootedAtSkill(entries.filter((e) => e.path), path));
+  return importSkillFiles(
+    user,
+    entries.filter((e) => e.path),
+    { under: path, hintName: (path.split('/').pop() || repo.split('/')[1]) ?? undefined },
+  );
 }
 
 /** Writes (or replaces) one file of your skill; SKILL.md is checked first. */
 export function writeSkillFile(user: SkillUser, id: string, path: string, content: string): Skill {
   const row = getSkill(user, id, true);
   const clean = cleanSkillPath(path);
-  if (!isText(clean)) throw err(400, 'Skills hold text files only');
+  if (binaryPath(clean)) throw err(400, 'Skills hold text files only');
   if (Buffer.byteLength(content) > SKILL_LIMITS.fileBytes) throw err(413, 'That file is too big (at most 1 MB)');
   const files = skillFiles(row)
     .filter((f) => f.path !== clean)
     .map((f) => ({ path: f.path, data: readFileSync(join(dirOf(row), f.path)) }));
   files.push({ path: clean, data: Buffer.from(content) });
-  return saveSkill(user, files, { replaceId: row.id }).skill;
+  return saveSkill(user, files, { replaceId: row.id, fallbackName: row.name }).skill;
 }
 
 export function deleteSkillFile(user: SkillUser, id: string, path: string): Skill {

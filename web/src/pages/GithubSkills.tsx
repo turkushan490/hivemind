@@ -100,15 +100,32 @@ export function SkillsPanel({ active, isAdmin }: { active: boolean; isAdmin: boo
     if (active) load();
   }, [active]);
 
-  const report = (r: { skill: Skill; skipped: string[] }) => {
-    toast(`Added ${r.skill.name}${r.skipped.length ? ` (left out: ${r.skipped.join(', ')})` : ''}`, 'ok');
+  const [paste, setPaste] = useState<{ name: string; text: string }>();
+  const report = (r: { skill: Skill; skills?: Skill[]; skipped: string[] }) => {
+    const names = (r.skills ?? [r.skill]).map((s) => s.name);
+    const left = r.skipped.length ? ` (left out, not text: ${r.skipped.slice(0, 8).join(', ')}${r.skipped.length > 8 ? ` +${r.skipped.length - 8}` : ''})` : '';
+    toast(`Added ${names.length > 3 ? `${names.length} skills: ${names.slice(0, 3).join(', ')}…` : names.join(', ')}${left}`, 'ok');
     load();
   };
-  const importZip = async (f: File) => {
-    const res = await fetch('/api/skills/import', { method: 'POST', headers: { 'content-type': 'application/zip' }, body: f });
+  const send = async (body: BodyInit, type: string, name = '') => {
+    const res = await fetch(`/api/skills/import${name ? `?name=${encodeURIComponent(name)}` : ''}`, { method: 'POST', headers: { 'content-type': type }, body });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) return toast(data.error ?? `HTTP ${res.status}`);
     report(data);
+  };
+  /** One file goes as it is (an archive or one skill file); several files or a folder go as a list. */
+  const importFiles = async (list: FileList | null) => {
+    const files = [...(list ?? [])];
+    if (!files.length) return;
+    if (files.length === 1) return send(files[0], 'application/octet-stream', files[0].name);
+    const b64 = async (f: File) => {
+      const bytes = new Uint8Array(await f.arrayBuffer());
+      let s = '';
+      for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+      return btoa(s);
+    };
+    const payload = await Promise.all(files.map(async (f) => ({ path: (f as File & { webkitRelativePath?: string }).webkitRelativePath || f.name, data: await b64(f) })));
+    return send(JSON.stringify({ files: payload }), 'application/json');
   };
   const openFile = async (skill: Skill, path: string) => {
     try {
@@ -131,18 +148,60 @@ export function SkillsPanel({ active, isAdmin }: { active: boolean; isAdmin: boo
       <div className="card space-y-2">
         <h2 className="font-semibold">Skills</h2>
         <p className="text-sm text-slate-300">
-          A skill is a folder with a <code>SKILL.md</code>: a name, a description of when to use it, then instructions. The same format as Claude skills, so yours work as they are. In an AI model
-          block, pick skills under <b>Skills</b>, or let the model pick (Auto). Files in a skill are only read as text, never run.
+          A skill is a folder with a <code>SKILL.md</code>: a name, a description of when to use it, then instructions. Upload skills from anywhere: Claude, Codex / ChatGPT, OpenCode / T3 Code,
+          Cursor, Copilot, Gemini, a GPT's JSON, AGENTS.md, or plain markdown or text. A .zip, .skill or .tar.gz with many skills adds them all; a missing name or description is filled in. In an
+          AI model block, pick skills under <b>Skills</b>, or let the model pick (Auto). Files in a skill are only read as text, never run.
         </p>
         <div className="flex flex-wrap gap-2">
           <label className="btn cursor-pointer">
-            Upload a .zip
-            <input type="file" accept=".zip" hidden onChange={(e) => e.target.files?.[0] && importZip(e.target.files[0])} />
+            Upload files
+            <input
+              type="file"
+              multiple
+              hidden
+              onChange={(e) => {
+                void importFiles(e.target.files);
+                e.target.value = '';
+              }}
+            />
           </label>
+          <label className="btn-ghost cursor-pointer">
+            Upload a folder
+            <input
+              type="file"
+              hidden
+              {...({ webkitdirectory: '', directory: '' } as Record<string, string>)}
+              onChange={(e) => {
+                void importFiles(e.target.files);
+                e.target.value = '';
+              }}
+            />
+          </label>
+          <button className="btn-ghost" onClick={() => setPaste(paste ? undefined : { name: '', text: '' })}>
+            Paste
+          </button>
           <button className="btn-ghost" onClick={() => api('/api/skills', { body: { skillMd: NEW_SKILL } }).then(report, () => {})}>
             Write a new one
           </button>
         </div>
+        {paste && (
+          <div className="space-y-2">
+            <input className="input max-w-xs py-1 text-sm" placeholder="Name (optional)" value={paste.name} onChange={(e) => setPaste({ ...paste, name: e.target.value })} />
+            <textarea
+              className="input min-h-40 font-mono text-xs"
+              placeholder="Paste a SKILL.md, GPT instructions, a Cursor rule, JSON… anything"
+              value={paste.text}
+              onChange={(e) => setPaste({ ...paste, text: e.target.value })}
+            />
+            <button
+              className="btn px-3 py-1 text-sm"
+              disabled={!paste.text.trim()}
+              onClick={() => api('/api/skills/import', { body: { text: paste.text, name: paste.name || undefined } }).then((r) => (report(r), setPaste(undefined)), () => {})}
+            >
+              Add skill
+            </button>
+          </div>
+        )}
         <div className="flex flex-wrap gap-2">
           <input className="input max-w-xs py-1 text-sm" placeholder="GitHub owner/repo" value={gh.repo} onChange={(e) => setGh({ ...gh, repo: e.target.value })} />
           <input className="input max-w-xs py-1 text-sm" placeholder="folder (optional)" value={gh.path} onChange={(e) => setGh({ ...gh, path: e.target.value })} />

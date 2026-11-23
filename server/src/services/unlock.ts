@@ -4,7 +4,8 @@ import { db, getSetting, setSetting } from '../db/index.js';
 /**
  * Unlock mode: a private zone per user with its own memory (a separate folder, never mixed with the normal memory)
  * and hidden workflows. Only shown while the user turned it on with their PIN, on the screen: API tokens (T3, robots,
- * apps) never see it, also when it is on. It locks again by itself after 12 hours, and on log out.
+ * apps) never see it, also when it is on. It locks again by itself after the chosen time (default 12 hours) and on
+ * log out, or with "never" only when the user locks it.
  */
 export interface UnlockUser {
   id: string;
@@ -15,17 +16,31 @@ export interface UnlockUser {
 
 const key = (userId: string) => `user:${userId}:unlocked`;
 const pinKey = (userId: string) => `user:${userId}:unlockPin`;
-/** How long unlock mode stays on without locking it by hand. */
+const afterKey = (userId: string) => `user:${userId}:unlockAfter`;
+/** How long unlock mode stays on by default without locking it by hand. */
 export const UNLOCK_MS = 12 * 3_600_000;
+
+/** When it locks by itself (Settings → Unlock PIN): after an hour, 12 hours, a day, or never (only by hand). */
+export const LOCK_AFTER = { '1h': 3_600_000, '12h': 12 * 3_600_000, '1d': 24 * 3_600_000, never: Infinity } as const;
+export type LockAfter = keyof typeof LOCK_AFTER;
+
+export const lockAfter = (u: Pick<UnlockUser, 'id'>): LockAfter => {
+  const v = getSetting(afterKey(u.id));
+  return v && v in LOCK_AFTER ? (v as LockAfter) : '12h';
+};
+
+export function setLockAfter(u: Pick<UnlockUser, 'id'>, v: LockAfter) {
+  setSetting(afterKey(u.id), v);
+}
 
 /** May this login use unlock mode at all (a screen login, not a viewer, not an API token)? */
 export const canUnlock = (u: UnlockUser) => !u.tokenId && !u.scope && u.role !== 'viewer';
 
-/** On, and switched on less than 12 hours ago (the setting holds when it was switched on). */
+/** On, and switched on less than its lock time ago (the setting holds when it was switched on). */
 export const isUnlocked = (u: UnlockUser) => {
   if (!canUnlock(u)) return false;
   const at = Number(getSetting(key(u.id)) ?? 0);
-  return at > 1e12 && Date.now() - at < UNLOCK_MS;
+  return at > 1e12 && Date.now() - at < LOCK_AFTER[lockAfter(u)];
 };
 
 export function setUnlocked(u: Pick<UnlockUser, 'id'>, on: boolean) {
@@ -33,7 +48,10 @@ export function setUnlocked(u: Pick<UnlockUser, 'id'>, on: boolean) {
 }
 
 /** When it locks by itself (ms), while on. */
-export const unlockedUntil = (u: UnlockUser) => (isUnlocked(u) ? Number(getSetting(key(u.id))) + UNLOCK_MS : undefined);
+export const unlockedUntil = (u: UnlockUser) => {
+  if (!isUnlocked(u) || lockAfter(u) === 'never') return undefined;
+  return Number(getSetting(key(u.id))) + LOCK_AFTER[lockAfter(u)];
+};
 
 export const hasPin = (u: Pick<UnlockUser, 'id'>) => !!getSetting(pinKey(u.id));
 

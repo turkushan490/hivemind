@@ -1177,8 +1177,8 @@ which project it works on, and can make a new one.
 ## Unlock mode: hidden memory and hidden workflows
 
 - **🔒** next to Problems (a small icon, so the menu never moves). It asks a **PIN** (the first time: set one;
-  change it in Settings → Unlock PIN). 5 wrong tries block it for 5 minutes. It locks by itself after 12 hours and
-  on log out. When it is on, Memory gets a **🔓 Hidden memory** switch, and hidden workflows show in Open… (on top)
+  change it in Settings → Unlock PIN). 5 wrong tries block it for 5 minutes. When it locks by itself is a choice in
+  Settings → Unlock PIN: after 1 hour, 12 hours (default) or 1 day (and on log out), or never: only when you lock it. When it is on, Memory gets a **🔓 Hidden memory** switch, and hidden workflows show in Open… (on top)
   and Use. Locked again, they are gone from every list (also a hidden workflow open on screen closes).
 - **Hidden memory** lives in its own folder (`<data>/memory-hidden/<user>`), outside the normal memory: normal
   workflows, HiveBot and memory search can never reach it. A hidden workflow's Read/Write memory blocks use only

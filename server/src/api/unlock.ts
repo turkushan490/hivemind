@@ -2,7 +2,7 @@ import type { CanvasGraph } from '@hivemind/shared';
 import type { FastifyInstance } from 'fastify';
 import { newId } from '../crypto.js';
 import { db } from '../db/index.js';
-import { canUnlock, checkPin, goodPin, hasPin, isUnlocked, setPin, setUnlocked, unlockedUntil } from '../services/unlock.js';
+import { canUnlock, checkPin, goodPin, hasPin, isUnlocked, LOCK_AFTER, lockAfter, setLockAfter, setPin, setUnlocked, unlockedUntil, type LockAfter } from '../services/unlock.js';
 import * as memFiles from '../services/memoryFiles.js';
 import { requireUser, type User } from './auth.js';
 
@@ -98,7 +98,17 @@ export function ensureUnlockedStart(user: User) {
 export function unlockRoutes(app: FastifyInstance) {
   app.get('/api/unlock', { preHandler: requireUser }, async (req) => {
     const u = req.user!;
-    return { allowed: canUnlock(u), unlocked: isUnlocked(u), hasPin: canUnlock(u) && hasPin(u), until: unlockedUntil(u) };
+    return { allowed: canUnlock(u), unlocked: isUnlocked(u), hasPin: canUnlock(u) && hasPin(u), until: unlockedUntil(u), lockAfter: lockAfter(u) };
+  });
+
+  /** Body: { after: "1h" | "12h" | "1d" | "never" }: when it locks by itself ("never": only by hand, also not on log out). */
+  app.post('/api/unlock/after', { preHandler: requireUser }, async (req, reply) => {
+    const u = req.user!;
+    if (!canUnlock(u)) return reply.code(403).send({ error: 'Unlock mode is only for a login on the screen' });
+    const after = (req.body as { after?: string } | undefined)?.after;
+    if (!after || !(after in LOCK_AFTER)) return reply.code(400).send({ error: `after must be one of ${Object.keys(LOCK_AFTER).join(', ')}` });
+    setLockAfter(u, after as LockAfter);
+    return { lockAfter: after, unlocked: isUnlocked(u), until: unlockedUntil(u) };
   });
 
   /** Body: { on, pin }. Turning it on needs the PIN (set one first); turning it off never does. Screen logins only. */
@@ -117,7 +127,7 @@ export function unlockRoutes(app: FastifyInstance) {
     }
     setUnlocked(u, on);
     if (on) ensureUnlockedStart(u);
-    return { allowed: true, unlocked: on, hasPin: true, until: unlockedUntil(u) };
+    return { allowed: true, unlocked: on, hasPin: true, until: unlockedUntil(u), lockAfter: lockAfter(u) };
   });
 
   /** Body: { pin, old? }. The first PIN is set freely; changing it needs the old one. */

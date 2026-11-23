@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { toast } from '../notify';
-import { loadUnlock, setUnlock, setUnlockPin, useUnlock } from '../unlock';
+import { loadUnlock, setLockAfter, setUnlock, setUnlockPin, useUnlock } from '../unlock';
 
 /** Asks the PIN to unlock (or, the first time, sets one and unlocks). */
 export function PinDialog({ hasPin, onClose }: { hasPin: boolean; onClose: () => void }) {
@@ -48,7 +48,7 @@ export function PinDialog({ hasPin, onClose }: { hasPin: boolean; onClose: () =>
             {busy ? '…' : 'Unlock'}
           </button>
         </div>
-        <p className="text-xs text-slate-500">It locks again by itself after 12 hours, and when you log out.</p>
+        <p className="text-xs text-slate-500">When it locks by itself: Settings → Unlock PIN.</p>
       </form>
     </div>
   );
@@ -86,9 +86,22 @@ export function UnlockPinPanel() {
     <form className="card max-w-2xl space-y-3" onSubmit={save}>
       <h3 className="font-semibold">Unlock PIN</h3>
       <p className="text-sm text-slate-400">
-        The 🔒 next to Problems shows hidden workflows and the hidden memory (Memory → 🔓 Hidden memory). It asks this PIN, locks again by itself after 12 hours, and when you
-        log out. API tokens (T3 Code, robots, apps) never see the hidden part.
+        The 🔒 next to Problems shows hidden workflows and the hidden memory (Memory → 🔓 Hidden memory). It asks this PIN. API tokens (T3 Code, robots, apps) never see
+        the hidden part.
       </p>
+      <label className="flex flex-wrap items-center gap-2 text-sm text-slate-300">
+        <span>Lock by itself</span>
+        <select
+          className="input w-auto py-1"
+          value={unlock.lockAfter ?? '12h'}
+          onChange={(e) => void setLockAfter(e.target.value).then(() => toast('Saved', 'ok'), (err: Error) => toast(err.message))}
+        >
+          <option value="1h">after 1 hour, and on log out</option>
+          <option value="12h">after 12 hours, and on log out</option>
+          <option value="1d">after 1 day, and on log out</option>
+          <option value="never">never: only when I lock it</option>
+        </select>
+      </label>
       <p className="text-sm">{unlock.hasPin ? 'A PIN is set.' : 'No PIN yet.'}</p>
       {unlock.hasPin && <input className="input w-64" type="password" autoComplete="off" placeholder="Current PIN" value={old} onChange={(e) => setOld(e.target.value)} />}
       <div className="flex flex-wrap gap-2">

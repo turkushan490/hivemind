@@ -51,6 +51,25 @@ describe('unlock mode', () => {
     expect((await get('/api/unlock')).json()).toMatchObject({ unlocked: false });
   });
 
+  it('"never" stays unlocked until locked by hand, also after a day and a log out', async () => {
+    const unlock = await import('../src/services/unlock.js');
+    const { setSetting } = await import('../src/db/index.js');
+    expect((await send('POST', '/api/unlock/after', { after: 'soon' })).statusCode).toBe(400);
+    expect((await send('POST', '/api/unlock/after', { after: 'never' })).json()).toMatchObject({ lockAfter: 'never' });
+    setSetting('user:u1:unlocked', String(Date.now() - 3 * 86_400_000));
+    expect((await get('/api/unlock')).json()).toMatchObject({ unlocked: true, lockAfter: 'never' });
+    const { sha256 } = await import('../src/crypto.js');
+    db.prepare('INSERT INTO sessions (token_hash, user_id, expires_at) VALUES (?, ?, ?)').run(sha256('third'), 'u1', Date.now() + 3_600_000);
+    await app.inject({ method: 'POST', url: '/api/auth/logout', cookies: { hm_session: 'third' } });
+    expect((await get('/api/unlock')).json()).toMatchObject({ unlocked: true });
+    await send('POST', '/api/unlock', { on: false });
+    expect((await get('/api/unlock')).json()).toMatchObject({ unlocked: false });
+    // 1 day: two days old is locked.
+    await send('POST', '/api/unlock/after', { after: '1d' });
+    setSetting('user:u1:unlocked', String(Date.now() - 2 * 86_400_000));
+    expect(unlock.isUnlocked({ id: 'u1' })).toBe(false);
+  });
+
   it('turning it on makes the hidden Prompt maker and hidden memory, outside the normal memory', async () => {
     mem.write('u1', 'notes/normal.md', 'normal note');
     // (the block from the test above is in memory: start fresh)

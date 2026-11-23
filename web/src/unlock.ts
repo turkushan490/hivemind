@@ -9,6 +9,8 @@ export interface UnlockState {
   hasPin?: boolean;
   /** When it locks by itself (ms). */
   until?: number;
+  /** "1h" | "12h" | "1d" | "never" (only by hand). */
+  lockAfter?: string;
 }
 
 let current: UnlockState = { allowed: false, unlocked: false };
@@ -30,6 +32,13 @@ export async function setUnlock(on: boolean, pin?: string): Promise<UnlockState>
 export async function setUnlockPin(pin: string, old?: string): Promise<void> {
   await api('/api/unlock/pin', { body: { pin, old } });
   current = { ...current, hasPin: true };
+  window.dispatchEvent(new Event(EVENT));
+}
+
+/** When it locks by itself: "1h", "12h", "1d" or "never". */
+export async function setLockAfter(after: string): Promise<void> {
+  const r = await api<Partial<UnlockState>>('/api/unlock/after', { body: { after } });
+  current = { ...current, ...r };
   window.dispatchEvent(new Event(EVENT));
 }
 

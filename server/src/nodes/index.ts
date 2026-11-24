@@ -890,6 +890,13 @@ export const NODES: Record<NodeType, NodeDefinition> = {
       const guest = !!ctx.node.config.memoryGuest;
       const input = ctx.inputs.map((i) => i.text).join('\n');
       const spec = ctx.node.config.memoryPaths ? fill(ctx.node.config.memoryPaths, ctx, input) : input;
+      const folder = ctx.node.config.memoryList?.trim().replace(/^\/+/, '');
+      if (folder) {
+        const prefix = folder.endsWith('/') ? folder : `${folder}/`;
+        const found = svc.tree(guest).filter((f) => f.path.startsWith(prefix) && f.title).map((f) => f.path);
+        ctx.progress(`${found.length} file${found.length === 1 ? '' : 's'} in ${prefix}`);
+        return found.join('\n') || 'none';
+      }
       const paths = memoryPathList(spec).slice(0, 8);
       const parts: string[] = [];
       if (ctx.node.config.memoryIndex) {

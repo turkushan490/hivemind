@@ -95,7 +95,7 @@ export function Inspector(props: {
         <p className="text-xs text-slate-400">{meta.description}</p>
       </div>
 
-      {meta.usesModel && !(node.data.kind === 'llm' && cfg.auto) && !(node.data.kind === 'router' && cfg.decideWith === 'jev') && (
+      {meta.usesModel && !(node.data.kind === 'llm' && cfg.auto) && !(node.data.kind === 'router' && (cfg.decideWith === 'jev' || !!cfg.routeBy?.trim())) && (
         <div className="space-y-1">
           <div className="text-xs font-semibold text-slate-300">
             {node.data.kind === 'generate' ? 'Teacher model (writes the examples)' : node.data.kind === 'evaluate' ? 'Judge model (grades the answers)' : node.data.kind === 'deploy' ? 'Model to put to work' : 'Model'}

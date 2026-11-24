@@ -419,6 +419,11 @@ function KindSettings(p: Props) {
           <label className="flex items-center gap-2 text-sm text-slate-300">
             <input type="checkbox" checked={!!p.config.memoryGuest} onChange={(e) => p.onChange({ memoryGuest: e.target.checked || undefined })} /> Guest memory (when the robot is locked)
           </label>
+          <label className="block space-y-1">
+            <Label>Or only list a folder</Label>
+            <input className="input text-xs" placeholder="conversations/" value={p.config.memoryList ?? ''} onChange={(e) => p.onChange({ memoryList: e.target.value || undefined })} />
+            <span className="text-xs text-slate-500">Filled in, then the block only gives the paths of the files in that folder, one per line (for a For each). No model copies paths.</span>
+          </label>
         </div>
       );
     case 'writeMemory':

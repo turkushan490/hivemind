@@ -77,6 +77,19 @@ describe('H14 memory and routing', () => {
     expect(mem.search('u1', 'potatoes').map((h) => h.path)).toEqual(['topics/potatoes.md']);
   });
 
+  it('readMemory with memoryList gives only the paths in that folder: no guest/, no empty files', async () => {
+    mem.write('u1', 'conversations/cats.md', '- Owner: I like cats');
+    mem.write('u1', 'conversations/empty.md', '');
+    mem.write('u1', 'guest/conversations/dogs.md', '- Guest: dogs');
+    const { c } = ctx('readMemory', { memoryList: 'conversations' });
+    const out = await nodes.NODES.readMemory.execute(c);
+    expect(out.split('\n')).toContain('conversations/cats.md');
+    expect(out).not.toContain('guest/');
+    expect(out).not.toContain('empty.md');
+    const none = ctx('readMemory', { memoryList: 'nothing-here/' });
+    expect(await nodes.NODES.readMemory.execute(none.c)).toBe('none');
+  });
+
   it('a file in archive/deleted is deleted for real', () => {
     const p = mem.tree('u1').find((f) => f.path.startsWith('archive/deleted/'))!.path;
     mem.remove('u1', p);

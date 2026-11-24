@@ -132,6 +132,11 @@ export interface NodeConfig {
   memoryPaths?: string;
   /** readMemory: also include index.md and the file tree (so a model/robot can see what memory exists). */
   memoryIndex?: boolean;
+  /**
+   * readMemory: only list the paths of the (non-empty) files in this folder ("conversations/"), one per line, nothing else.
+   * No model has to copy paths (2026-11-24: a small model dropped "guest/" and guest talk was merged into the owner's topics).
+   */
+  memoryList?: string;
   /** writeMemory: replace the file, append to it, move it, or delete it (to archive/deleted). */
   memoryMode?: 'replace' | 'append' | 'move' | 'delete';
   /** writeMemory: the file path to write (replace/append) or move from ({{...}} filled). Empty = from input JSON {path,text}. */

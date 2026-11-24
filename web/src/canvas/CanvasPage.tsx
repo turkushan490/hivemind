@@ -514,7 +514,8 @@ Save your copy over it? (Cancel keeps the saved one)`) ? graph : undefined;
     if (!edges.some((e) => e.source === input.id)) return toast('Wire the Question block to something', 'info');
     const noModel = nodes.filter((n) => {
       const c = n.data.config;
-      const optional = (n.data.kind === 'llm' && !!c.auto) || (n.data.kind === 'router' && c.decideWith === 'jev' && !!c.decider);
+      // A Router that routes by a value ("{{vars.character}}") needs no model, like on the server.
+      const optional = (n.data.kind === 'llm' && !!c.auto) || (n.data.kind === 'router' && ((c.decideWith === 'jev' && !!c.decider) || !!c.routeBy?.trim()));
       return NODE_META[n.data.kind].usesModel && !c.model && !optional;
     });
     if (noModel.length) {

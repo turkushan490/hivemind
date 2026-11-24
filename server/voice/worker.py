@@ -394,6 +394,22 @@ class Handler(BaseHTTPRequestHandler):
                 with stt_lock:
                     return self.send(200, json.dumps(transcribe(body)).encode())
             if self.path == "/unload":
+                # needBytes: a model that wants the GPU (HiveMind, before an Ollama load). Only when the GPU has too little
+                # free room for it does the voice model let go (owner, 2026-11-24: it took 5.7 GB of the T4 between loads,
+                # so gemma4:26b and qwen3.5:9b kept pushing each other out and every agent job died).
+                need = float(body.get("needBytes") or 0)
+                if need:
+                    try:
+                        import torch
+
+                        if state["device"] != "cuda" or torch.cuda.mem_get_info()[0] >= need * 1.15 + 1.5e9:
+                            return self.send(200, b'{"ok":true,"kept":true}')
+                    except Exception:
+                        return self.send(200, b'{"ok":true,"kept":true}')
+                    with lock:
+                        unload()
+                    log("let go of the GPU for a model load (the voice loads again on the next use)")
+                    return self.send(200, b'{"ok":true,"freed":true}')
                 with lock:
                     unload()
                 with stt_lock:

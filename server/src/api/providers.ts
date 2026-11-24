@@ -14,6 +14,7 @@ import { canvasAllowed, datasetAllowed, trainingAllowed } from './scope.js';
 import { mayUseFile } from '../services/files.js';
 import { addToBasic, allowedFor, keepComfyCopy, type Access } from '../services/access.js';
 import { colibriAvailable, colibriSettings, gpuUsable } from '../colibri/engine.js';
+import { releaseVoiceGpu } from '../services/voiceTraining.js';
 
 /** The two providers of the built-in colibri engine (src/colibri). */
 export const isColibri = (preset: string) => preset === 'colibri' || preset === 'colibri-decisions';
@@ -273,6 +274,8 @@ export function gpuFreerFor(user: User) {
       const loaded = await adapterFor(own).loaded?.().catch(() => undefined);
       if (loaded?.some((m) => sameModel(m.model, need.model!))) return;
     }
+    // HiveMind's own voice engine sits on this machine's GPU too: it lets go of its memory when the model doesn't fit next to it.
+    if (need.bytes && hostKey === colibriGpuHost()) await releaseVoiceGpu(need.bytes).catch(() => false);
     const rows = visibleRows(user).filter(
       (r) => r.enabled && r.local && r.id !== exceptProviderId && gpuHostOf(r) === hostKey && !(own && originOf(r.base_url) === originOf(own.base_url)),
     );

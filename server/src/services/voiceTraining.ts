@@ -147,6 +147,21 @@ function ensureWorker(stt = false): Promise<string> {
   return starting;
 }
 
+/**
+ * Before a local model that needs the GPU loads: the voice engine (on the same GPU) lets go of its voice model when the GPU
+ * has too little room for that model. Never while it speaks or listens; the voice loads again on its next use.
+ * True when it freed memory.
+ */
+export async function releaseVoiceGpu(needBytes: number): Promise<boolean> {
+  if (!proc || proc.exitCode !== null || starting || inFlight > 0 || !(needBytes > 0)) return false;
+  try {
+    const res = await fetch(`http://127.0.0.1:${state.port}/unload`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ needBytes }), signal: AbortSignal.timeout(15_000) });
+    return res.ok && !!((await res.json().catch(() => ({}))) as { freed?: boolean }).freed;
+  } catch {
+    return false;
+  }
+}
+
 export async function stopVoiceWorker() {
   if (idle) clearTimeout(idle);
   const p = proc;

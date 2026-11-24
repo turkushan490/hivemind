@@ -1,3 +1,5 @@
+// First: the network limits for every fetch (a slow model load is not a dropped connection).
+import './net.js';
 import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { seedColibri, seedProviders } from './api/providers.js';

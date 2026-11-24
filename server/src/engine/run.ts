@@ -290,7 +290,7 @@ class TimeLimitError extends Error {}
 /** An abort signal that fires after `seconds`, or with the run's own signal. */
 function callTimer(signal: AbortSignal, seconds: number) {
   const timer = new AbortController();
-  const t = setTimeout(() => timer.abort(), seconds * 1000);
+  let t = setTimeout(() => timer.abort(), seconds * 1000);
   const both = AbortSignal.any([signal, timer.signal]);
   /** Rejects when either fires, so a provider that ignores its signal can't hang the block. */
   const stopped = new Promise<never>((_, reject) => {
@@ -299,8 +299,25 @@ function callTimer(signal: AbortSignal, seconds: number) {
     else both.addEventListener('abort', fire, { once: true });
   });
   stopped.catch(() => {});
-  return { signal: both, timedOut: () => timer.signal.aborted && !signal.aborted, stopped, clear: () => clearTimeout(t) };
+  return {
+    signal: both,
+    timedOut: () => timer.signal.aborted && !signal.aborted,
+    stopped,
+    clear: () => clearTimeout(t),
+    /** Starts the clock again with a new limit (a model load has its own, longer one). */
+    restart: (s: number) => {
+      clearTimeout(t);
+      if (!timer.signal.aborted) t = setTimeout(() => timer.abort(), s * 1000);
+    },
+  };
 }
+
+/**
+ * A model load has its own limit; the block's time limit starts when the model answers (owner, 2026-11-24: a 60 s limit
+ * hung up on qwen3.5:9b while Ollama was still loading it, Ollama 0.40 logged "client connection closed before
+ * llama-server finished loading, aborting load" and then answered no request at all for five hours).
+ */
+const LOAD_LIMIT_SECS = 15 * 60;
 
 export async function runGraph(
   graph: CanvasGraph,
@@ -488,6 +505,12 @@ export async function runGraph(
         const limitSecs = maxSecondsOf(node, limits, p);
         // The clock starts here, once the GPU is held: time in the queue doesn't count.
         const timer = callTimer(signal, limitSecs);
+        let loadClock = false; // the load's own limit runs (until the first token)
+        const answering = () => {
+          if (!loadClock) return;
+          loadClock = false;
+          timer.restart(limitSecs);
+        };
         const it = p.adapter.stream({ model: ref.model, messages, temperature: node.config.temperature, think, json, numCtx: numCtxOf(node, limits, p.local), maxTokens, keepAlive: node.config.keepAlive }, timer.signal)[Symbol.asyncIterator]();
         try {
           for (;;) {
@@ -496,6 +519,8 @@ export async function runGraph(
             const chunk = next.value;
             if (chunk.type === 'loading') {
               loading = true;
+              loadClock = true;
+              timer.restart(LOAD_LIMIT_SECS);
               sizeBytes = (await p.modelInfo(ref.model).catch(() => undefined))?.sizeBytes;
               const expect = p.stats?.expectLoad(ref.model, sizeBytes);
               deps.emit({ ...base, type: 'model_loading', model: ref.model, sizeBytes, expectedMs: expect?.ms, estimated: expect?.estimated });
@@ -505,10 +530,12 @@ export async function runGraph(
               deps.emit({ ...base, type: 'node_progress', note: chunk.text });
             } else if (chunk.type === 'thinking') {
               thought = true;
+              answering();
               markReady();
               if (!firstToken) firstToken = Date.now();
               deps.emit({ ...base, type: 'thinking', model: ref.model, text: chunk.text });
             } else if (chunk.type === 'token') {
+              answering();
               markReady();
               if (!firstToken) firstToken = Date.now();
               // Live speed counts from the first word of the answer, not from the start of thinking.
@@ -551,7 +578,7 @@ export async function runGraph(
             }
           }
         } catch (err) {
-          if (timer.timedOut()) throw new TimeLimitError(`${ref.model} was stopped after ${limitSecs} seconds`);
+          if (timer.timedOut()) throw new TimeLimitError(loadClock ? `${ref.model} was still loading after ${LOAD_LIMIT_SECS / 60} minutes` : `${ref.model} was stopped after ${limitSecs} seconds`);
           if (signal.aborted) throw new Error(cancelText(signal));
           // H28: a local model whose load broke off (another load at the same time, a dropped connection) gets one
           // more try a little later, instead of failing the whole job.

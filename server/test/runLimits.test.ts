@@ -71,6 +71,33 @@ describe('time limit per model call', () => {
     expect(p.calls.filter((x) => x.model === 'hang')).toHaveLength(1);
   });
 
+  it('does not count the model load: the limit starts when the model answers (Ollama wedged after a hang-up mid-load)', async () => {
+    const loads = (loadMs: number, answerMs: number): ResolvedProvider => ({
+      local: true,
+      hostKey: 'gpu',
+      modelInfo: async () => undefined,
+      adapter: {
+        listModels: async () => [],
+        async *stream(req: ChatRequest, signal: AbortSignal) {
+          yield { type: 'loading' as const };
+          await sleep(loadMs);
+          if (signal.aborted) throw new Error('aborted');
+          yield { type: 'token' as const, text: 'loaded: ' };
+          await sleep(answerMs);
+          if (signal.aborted) throw new Error('aborted');
+          yield { type: 'token' as const, text: 'ok' };
+          yield { type: 'done' as const, inputTokens: 1, outputTokens: 2 };
+        },
+      },
+    });
+    // A 0.4 s load with a 0.2 s limit: fine, the limit counts only the answer.
+    const slowLoad = await go(one('m'), loads(400, 10), { maxSeconds: 0.2 });
+    expect(slowLoad.result.status).toBe('done');
+    // The answer itself still has the limit.
+    const slowAnswer = await go(one('m'), loads(10, 400), { maxSeconds: 0.2 });
+    expect(slowAnswer.errors).toContain('m was stopped after 0.2 seconds');
+  });
+
   it('does not count time waiting in the queue', async () => {
     const p = gpu({ delay: 200 });
     const runs = await Promise.all([go(one('a'), p, { maxSeconds: 0.35 }), go(one('b'), p, { maxSeconds: 0.35 })]);

@@ -17,6 +17,8 @@ import { memoryRoutes } from './api/memory.js';
 import { memoryFilesRoutes } from './api/memoryFiles.js';
 import { unlockRoutes } from './api/unlock.js';
 import { nightWorkRoutes } from './api/nightWork.js';
+import { logRoutes } from './api/logs.js';
+import { debugLog, logUrl, onLogMode, serverLogLevel, serverLogStream } from './logfile.js';
 import { problemRoutes } from './api/problems.js';
 import { projectRoutes } from './api/projects.js';
 import { skillRoutes } from './api/skills.js';
@@ -39,12 +41,20 @@ import { claimExistingFiles } from './services/files.js';
 export async function buildApp(opts: { logger?: boolean; web?: boolean; onRoute?: (r: RouteOptions) => void } = {}): Promise<FastifyInstance> {
   // Files that were in the folder before files had owners go to the first admin (once).
   claimExistingFiles();
-  const app = Fastify({ logger: opts.logger === false ? false : { level: process.env.LOG_LEVEL || 'info' }, trustProxy: process.env.TRUST_PROXY || 'loopback, linklocal, uniquelocal', bodyLimit: 5 * 1024 * 1024 });
+  // Logs go to stdout and (Settings → Log file) to the file; debug in Settings turns on the debug lines without a restart.
+  const app = Fastify({ logger: opts.logger === false ? false : { level: serverLogLevel(), stream: serverLogStream }, trustProxy: process.env.TRUST_PROXY || 'loopback, linklocal, uniquelocal', bodyLimit: 5 * 1024 * 1024 });
 
   if (opts.onRoute) app.addHook('onRoute', opts.onRoute);
   // Activity → Incoming API calls: every request with an API token, route pattern and status only.
   app.addHook('onSend', captureError);
   app.addHook('onResponse', logApiCall);
+  // Log file on debug: one short line per request (path without query, status, time).
+  app.addHook('onResponse', async (req, reply) => {
+    // The Log file page refreshing itself would fill the file with its own reads.
+    if (req.url.startsWith('/api/logs/tail')) return;
+    debugLog('http', `${req.method} ${logUrl(req.url)} ${reply.statusCode} ${Math.round(reply.elapsedTime)}ms`);
+  });
+  if (opts.logger !== false) onLogMode((m) => (app.log.level = serverLogLevel(m)));
   await app.register(cookie);
 
   // Unexpected errors in a request: logged with an id the UI can show.
@@ -108,6 +118,7 @@ export async function buildApp(opts: { logger?: boolean; web?: boolean; onRoute?
   memoryFilesRoutes(app);
   unlockRoutes(app);
   nightWorkRoutes(app);
+  logRoutes(app);
   libraryRoutes(app);
   settingsRoutes(app);
   builderRoutes(app);

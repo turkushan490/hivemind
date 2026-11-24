@@ -9,7 +9,8 @@ mkdirSync(dataDir, { recursive: true });
 /**
  * A plain-text log file of problems, crashes and start/stop, so the exe (where there is no `docker logs`) leaves
  * something to send when it misbehaves. On by default for the packaged exe; elsewhere set LOG_FILE to switch it on
- * (a path, or "1"/"true" for the default location). Docker keeps logging to stdout as before.
+ * (a path, or "1"/"true" for the default location). Settings → Log file (off / on / debug) overrides this default.
+ * Docker keeps logging to stdout as before.
  */
 function logFilePath(): string | undefined {
   const env = process.env.LOG_FILE;

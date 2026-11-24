@@ -13,6 +13,7 @@ import { T3CodePanel } from './T3Code';
 import { Users } from './Users';
 import { Access } from './Access';
 import { GithubPanel, SkillsPanel } from './GithubSkills';
+import { LogFilePanel } from './LogFile';
 
 type Role = 'admin' | 'user' | 'viewer';
 
@@ -39,11 +40,12 @@ const SECTIONS = {
   api: 'OpenAI API',
   t3: 'T3 Code',
   unlock: 'Unlock PIN',
+  logs: 'Log file',
 } as const;
 type Section = keyof typeof SECTIONS;
 
 /** Viewers only get their API tokens; users everything but Users and Access. */
-const shown = (role: Role, s: Section) => (role === 'viewer' ? s === 'tokens' || s === 'api' : (s !== 'users' && s !== 'access' && s !== 'colibri' && s !== 'robots' && s !== 'nightwork') || role === 'admin');
+const shown = (role: Role, s: Section) => (role === 'viewer' ? s === 'tokens' || s === 'api' : (s !== 'users' && s !== 'access' && s !== 'colibri' && s !== 'robots' && s !== 'nightwork' && s !== 'logs') || role === 'admin');
 
 export function Settings({ role, meId, active, onWizard }: { role: Role; meId: string; active: boolean; onWizard: () => void }) {
   const [stored, setSection] = useStored<Section>('settings.section', 'providers');
@@ -100,6 +102,7 @@ export function Settings({ role, meId, active, onWizard }: { role: Role; meId: s
         {panel('tokens', <Tokens isAdmin={isAdmin} />)}
         {panel('api', <OpenAIApiSettings active={active && section === 'api'} onTokens={() => setSection('tokens')} />)}
         {panel('t3', <T3CodePanel active={active && section === 't3'} />)}
+        {panel('logs', <LogFilePanel active={active && section === 'logs'} />)}
       </div>
     </div>
   );

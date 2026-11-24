@@ -1174,6 +1174,36 @@ which project it works on, and can make a new one.
 
 ---
 
+## Log file (off / on / debug)
+
+Settings → **Log file** (admin) switches HiveMind's plain-text log file:
+
+- **Off**: nothing is written. Problems still show on the Problems page. This is the default in Docker.
+- **On**: problems, crashes, warnings, `console.error`/`warn`, and start/stop. This is the default for the exe, or when
+  `LOG_FILE` is set.
+- **Debug**: everything from On, plus:
+  - one line per request: method, path without the query, status and time;
+  - debug lines from the web server;
+  - `console.log`/`info`.
+
+How it works:
+
+- The switch takes effect at once, without a restart, and the choice is kept after one.
+- The file is `hivemind.log` in the data folder, or the `LOG_FILE` path when that is set. It rotates to
+  `hivemind.log.1` at 5 MB (20 MB on debug), so there are never more than two files.
+- Keys, tokens, PINs, passwords and cookies are blanked out (`***`). A request path stops at any part named `hidden`.
+- The page shows the last 200 lines (refreshing every 5 s) and has **Download** (both files) and **Clear** buttons.
+
+API (admin only):
+
+| Method and path | What it does |
+| --- | --- |
+| `GET /api/settings/log` | `{mode, path, size, old}` |
+| `PUT /api/settings/log` | Body `{mode: "off" \| "on" \| "debug"}` |
+| `GET /api/logs/tail?lines=200` | The last lines, as `{text, …}` |
+| `GET /api/logs/download` | Both files as text |
+| `DELETE /api/logs` | Empties the log |
+
 ## Skills in any format
 
 - Settings → Skills reads skills from anywhere, not only a Claude `.zip`: **Upload files** (one or more),

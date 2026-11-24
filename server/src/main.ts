@@ -13,7 +13,7 @@ import { closeStaleRuns } from './events/runs.js';
 import { resumeStoppedRuns } from './api/runs.js';
 import { lockDataDir } from './services/build.js';
 import { isPackaged, openBrowser } from './packaging.js';
-import { appendLog } from './logfile.js';
+import { appendLog, captureConsole, logMode, logPath } from './logfile.js';
 
 // A crash is never silent: it is stored, shown in the Problems tab after the restart, then the process exits so Docker restarts it.
 process.on('uncaughtException', (err) => {
@@ -28,6 +28,8 @@ process.on('unhandledRejection', (err) => {
 
 // Hard crashes (native aborts, out-of-memory kills, power loss) skip every handler above.
 // A marker file that only a clean stop removes catches those at the next start.
+// console output also reaches the log file (errors when on, everything on debug).
+captureConsole();
 appendLog('server', `HiveMind starting (release ${process.env.APP_RELEASE || 'dev'}, pid ${process.pid})`);
 const marker = join(config.dataDir, 'running.json');
 if (existsSync(marker)) {
@@ -91,7 +93,7 @@ seedColibri();
 seedBuiltinSkills();
 
 await app.listen({ port: config.port, host: config.host });
-appendLog('server', `HiveMind listening on http://${config.host}:${config.port}${config.logFile ? ` — log file: ${config.logFile}` : ''}`);
+appendLog('server', `HiveMind listening on http://${config.host}:${config.port}${logMode() !== 'off' ? ` — log file (${logMode()}): ${logPath()}` : ''}`);
 
 // Windows .exe (or HIVEMIND_OPEN_BROWSER set): show the UI in a window. In Docker this env is unset, so nothing opens.
 openBrowser(`http://localhost:${config.port}`);

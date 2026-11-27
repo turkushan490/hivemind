@@ -2,6 +2,9 @@ import { useEffect, useState, type FormEvent } from 'react';
 import { toast } from '../notify';
 import { loadUnlock, setLockAfter, setUnlock, setUnlockPin, useUnlock } from '../unlock';
 
+/** A PIN is not a website password: Bitwarden, 1Password and LastPass must not offer to make or save one here. */
+const NO_PASSWORD_MANAGER = { 'data-bwignore': 'true', 'data-1p-ignore': 'true', 'data-lpignore': 'true', 'data-form-type': 'other' } as Record<string, string>;
+
 /** Asks the PIN to unlock (or, the first time, sets one and unlocks). */
 export function PinDialog({ hasPin, onClose }: { hasPin: boolean; onClose: () => void }) {
   const [pin, setPin] = useState('');
@@ -37,8 +40,8 @@ export function PinDialog({ hasPin, onClose }: { hasPin: boolean; onClose: () =>
       <form className="card w-80 space-y-3" onSubmit={submit}>
         <h3 className="font-semibold">{hasPin ? '🔒 Unlock' : '🔒 Set a PIN for unlock mode'}</h3>
         {!hasPin && <p className="text-xs text-slate-400">4 to 32 characters. You need it every time you unlock; change it in Settings → Unlock PIN.</p>}
-        <input className="input w-full" type="password" autoFocus autoComplete="off" placeholder="PIN" value={pin} onChange={(e) => setPin(e.target.value)} />
-        {!hasPin && <input className="input w-full" type="password" autoComplete="off" placeholder="PIN again" value={again} onChange={(e) => setAgain(e.target.value)} />}
+        <input className="input w-full" type="password" {...NO_PASSWORD_MANAGER} autoFocus autoComplete="off" placeholder="PIN" value={pin} onChange={(e) => setPin(e.target.value)} />
+        {!hasPin && <input className="input w-full" type="password" {...NO_PASSWORD_MANAGER} autoComplete="off" placeholder="PIN again" value={again} onChange={(e) => setAgain(e.target.value)} />}
         {err && <p className="text-sm text-red-300">{err}</p>}
         <div className="flex justify-end gap-2">
           <button type="button" className="btn-ghost" onClick={onClose}>
@@ -104,10 +107,10 @@ export function UnlockPinPanel() {
       </label>
       <p className="text-xs text-slate-500">Logging in always starts locked: unlock with your PIN after every log-in.</p>
       <p className="text-sm">{unlock.hasPin ? 'A PIN is set.' : 'No PIN yet.'}</p>
-      {unlock.hasPin && <input className="input w-64" type="password" autoComplete="off" placeholder="Current PIN" value={old} onChange={(e) => setOld(e.target.value)} />}
+      {unlock.hasPin && <input className="input w-64" type="password" {...NO_PASSWORD_MANAGER} autoComplete="off" placeholder="Current PIN" value={old} onChange={(e) => setOld(e.target.value)} />}
       <div className="flex flex-wrap gap-2">
-        <input className="input w-64" type="password" autoComplete="new-password" placeholder="New PIN (4–32 characters)" value={pin} onChange={(e) => setPin(e.target.value)} />
-        <input className="input w-64" type="password" autoComplete="new-password" placeholder="New PIN again" value={again} onChange={(e) => setAgain(e.target.value)} />
+        <input className="input w-64" type="password" {...NO_PASSWORD_MANAGER} autoComplete="off" placeholder="New PIN (4–32 characters)" value={pin} onChange={(e) => setPin(e.target.value)} />
+        <input className="input w-64" type="password" {...NO_PASSWORD_MANAGER} autoComplete="off" placeholder="New PIN again" value={again} onChange={(e) => setAgain(e.target.value)} />
       </div>
       <button className="btn" disabled={busy || pin.length < 4 || (unlock.hasPin && !old)}>
         {unlock.hasPin ? 'Change PIN' : 'Set PIN'}

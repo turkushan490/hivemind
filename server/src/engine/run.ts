@@ -2,6 +2,7 @@ import type { CanvasGraph, CanvasNode, ModelInfo, ModelRef, OutputFile, RunEvent
 import { NODES, type ChatContext, type NodeInput, type NodeServices } from '../nodes/index.js';
 import type { DecisionRequest, DecisionResult } from '../providers/decisions.js';
 import type { ChatMessage, ProviderAdapter } from '../providers/types.js';
+import { biggerBudget, stripThink } from '../providers/think.js';
 import { callCost } from '../services/pricing.js';
 import { seesPictures } from '@hivemind/shared';
 import { loopsOf, validateGraph, type Loop } from './graph.js';
@@ -366,26 +367,41 @@ export async function runGraph(
   // Models that refused pictures in this run although they looked like they could see.
   const blind = new Set<string>();
   /** The picture reader looks at one picture and writes what it sees (at most 5 minutes). */
-  const readPicture = async (path: string, reader: ModelRef): Promise<string | undefined> => {
+  const readPicture = async (path: string, reader: ModelRef, note?: (text: string) => void, budget = 1500): Promise<string | undefined> => {
     const data = deps.services!.readFile!(decodeURIComponent(path));
     if (data.length > 20 * 1024 * 1024) throw new Error('the picture is larger than 20 MB');
     const p = await deps.resolve(reader.providerId);
     const timer = callTimer(signal, 300);
     let out = '';
+    let thought = false;
+    let used = budget;
     try {
       const it = p.adapter.stream(
-        { model: reader.model, messages: [{ role: 'user', content: READ_PICTURE, images: [{ data, ext: path.split('.').pop()!.toLowerCase() }] }], think: false, maxTokens: 1500, numCtx: p.local ? limits.numCtx : undefined, keepAlive: '30m' },
+        { model: reader.model, messages: [{ role: 'user', content: READ_PICTURE, images: [{ data, ext: path.split('.').pop()!.toLowerCase() }] }], think: false, maxTokens: budget, numCtx: p.local ? limits.numCtx : undefined, keepAlive: '30m' },
         timer.signal,
       )[Symbol.asyncIterator]();
       for (;;) {
         const next = await Promise.race([it.next(), timer.stopped]);
         if (next.done) break;
-        if (next.value.type === 'token') out += next.value.text;
+        const c = next.value;
+        if (c.type === 'token') out += c.text;
+        else if (c.type === 'thinking') thought = true;
+        else if (c.type === 'note') note?.(`${reader.model}: ${c.text}`);
+        else if (c.type === 'done' && c.budget) used = c.budget;
       }
     } finally {
       timer.clear();
     }
-    return out.trim() || undefined;
+    // A "thinking" vision model that ignores think: false: <think>…</think> in the text is left out.
+    const text = stripThink(out).trim();
+    if (text) return text;
+    // It spent the whole budget thinking: once more with a bigger one (unless the provider already did).
+    const more = thought && !signal.aborted ? biggerBudget(used) : undefined;
+    if (more && budget === 1500) {
+      note?.(`${reader.model} only thought and described nothing — asking once more with ${more} tokens`);
+      return readPicture(path, reader, note, more);
+    }
+    throw new Error(thought ? 'it only thought and gave no description (a thinking model that ignores think: false)' : 'it gave no description');
   };
   const allFiles: OutputFile[] = [];
   let cost = 0;
@@ -456,7 +472,7 @@ export async function runGraph(
         deps.emit({ ...base, type: 'model_ready', warm: !loading });
       };
 
-      const call = async (messages: ChatMessage[], ref: ModelRef, think?: boolean, json?: boolean, noImages = false, retried = false): Promise<string> => {
+      const call = async (messages: ChatMessage[], ref: ModelRef, think?: boolean, json?: boolean, noImages = false, retried = false, budget?: number): Promise<string> => {
         const p = await deps.resolve(ref.providerId);
         const asked = messages;
         // A model that can't see gets the picture reader's description of each picture in place of the picture.
@@ -468,7 +484,7 @@ export async function runGraph(
               deps.emit({ ...base, type: 'node_progress', note: `${ref.model} can't see pictures — ${reader.model} describes ${links.length === 1 ? 'the picture' : `${links.length} pictures`} first` });
               const texts = new Map<string, string>();
               for (const l of links) {
-                if (!described.has(l.path)) described.set(l.path, readPicture(l.path, reader).catch((err) => {
+                if (!described.has(l.path)) described.set(l.path, readPicture(l.path, reader, (note) => deps.emit({ ...base, type: 'node_progress', note })).catch((err) => {
                   deps.emit({ ...base, type: 'node_progress', note: `${reader.model} could not read ${l.name}: ${(err as Error).message.slice(0, 160)}` });
                   return undefined;
                 }));
@@ -501,7 +517,9 @@ export async function runGraph(
         let callGen: number | undefined;
         let callIn = 0;
         let callCostUsd: number | undefined;
-        const maxTokens = maxTokensOf(node, limits, p.local);
+        const maxTokens = budget ?? maxTokensOf(node, limits, p.local);
+        let usedBudget = maxTokens;
+        let thinkNoted = false; // the provider already said it only thought
         const limitSecs = maxSecondsOf(node, limits, p);
         // The clock starts here, once the GPU is held: time in the queue doesn't count.
         const timer = callTimer(signal, limitSecs);
@@ -527,6 +545,7 @@ export async function runGraph(
             } else if (chunk.type === 'warm') {
               sizeBytes ??= (await p.modelInfo(ref.model).catch(() => undefined))?.sizeBytes;
             } else if (chunk.type === 'note') {
+              if (/only thought/.test(chunk.text)) thinkNoted = true;
               deps.emit({ ...base, type: 'node_progress', note: chunk.text });
             } else if (chunk.type === 'thinking') {
               thought = true;
@@ -574,6 +593,7 @@ export async function runGraph(
                 nodeCost = (nodeCost ?? 0) + c;
                 callCostUsd = (callCostUsd ?? 0) + c;
               }
+              if (chunk.budget) usedBudget = chunk.budget;
               if (chunk.stopped === 'length') deps.emit({ ...base, type: 'node_progress', note: maxTokens ? `Stopped at the ${maxTokens}-token limit` : 'Stopped at the token limit' });
             }
           }
@@ -617,6 +637,17 @@ export async function runGraph(
           deps.emit({ ...base, type: 'node_progress', note: 'Only thought, no answer — asking again without thinking' });
           return call(messages, ref, false, json, noImages);
         }
+        // A "thinking" model that ignores think: false (qwen3-vl abliterated…): <think>…</think> that leaked into the
+        // answer is left out; when it only thought, once more with a bigger budget (unless the provider already did).
+        if (out.includes('<think>')) out = stripThink(out);
+        if (!out.trim() && thought && think === false && budget === undefined && !signal.aborted) {
+          const more = biggerBudget(usedBudget);
+          if (more) {
+            deps.emit({ ...base, type: 'node_progress', note: `${ref.model} only thought and gave no answer — asking once more with ${more} tokens` });
+            return call(messages, ref, think, json, noImages, retried, more);
+          }
+        }
+        if (!out.trim() && thought && !thinkNoted) deps.emit({ ...base, type: 'node_progress', note: `${ref.model} only thought and gave no answer` });
         return out;
       };
 

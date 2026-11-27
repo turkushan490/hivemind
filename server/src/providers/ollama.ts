@@ -1,5 +1,6 @@
 import type { ModelInfo } from '@hivemind/shared';
 import { readLines } from './lines.js';
+import { biggerBudget, thinkSplitter } from './think.js';
 import { checkResponse, foldSystem, ollamaMessages, ProviderError, type ChatRequest, type LoadedModel, type ProviderAdapter, type PullProgress, type ProviderConfig, type StreamChunk } from './types.js';
 
 /**
@@ -107,6 +108,8 @@ export function ollamaAdapter(cfg: ProviderConfig): ProviderAdapter {
 
       // H36.1: a GPU too full to load the model (ComfyUI holds it) → the same call once more on the CPU.
       let cpu = !!cfg.cpuOnly;
+      let numPredict = req.maxTokens;
+      let sentMessages = req.messages;
       const chat = (messages: ChatRequest['messages']) =>
         fetch(`${base}/api/chat`, {
           method: 'POST',
@@ -122,7 +125,7 @@ export function ollamaAdapter(cfg: ProviderConfig): ProviderAdapter {
             ...(req.tools?.length && { tools: req.tools }),
             options: {
               ...(req.temperature !== undefined && { temperature: req.temperature }),
-              ...(req.maxTokens !== undefined && { num_predict: req.maxTokens }),
+              ...(numPredict !== undefined && { num_predict: numPredict }),
               ...(req.numCtx !== undefined && { num_ctx: req.numCtx }),
               ...(req.topP !== undefined && { top_p: req.topP }),
               ...(req.stop !== undefined && { stop: Array.isArray(req.stop) ? req.stop : [req.stop] }),
@@ -144,7 +147,10 @@ export function ollamaAdapter(cfg: ProviderConfig): ProviderAdapter {
       if (!res.ok && req.messages.some((m) => m.role === 'system')) {
         // Some GGUF chat templates choke on system messages ("System message must be at the beginning").
         const detail = await res.clone().text().catch(() => '');
-        if (/system/i.test(detail)) res = await chat(foldSystem(req.messages));
+        if (/system/i.test(detail)) {
+          sentMessages = foldSystem(req.messages);
+          res = await chat(sentMessages);
+        }
       }
       if (res.status === 404) {
         const body = (await res.json().catch(() => ({}))) as { error?: string };
@@ -163,38 +169,86 @@ export function ollamaAdapter(cfg: ProviderConfig): ProviderAdapter {
       }
       await checkResponse(res, 'Ollama /api/chat');
       let toolIndex = 0;
-      for await (const line of readLines(res.body!)) {
-        if (!line.trim()) continue;
-        const msg = JSON.parse(line) as {
-          message?: { content?: string; thinking?: string; tool_calls?: { id?: string; function?: { name?: string; arguments?: unknown } }[] };
-          done?: boolean;
-          error?: string;
-          prompt_eval_count?: number;
-          eval_count?: number;
-          eval_duration?: number;
-          load_duration?: number;
-          done_reason?: string;
-        };
-        if (msg.error) throw new Error(`Ollama: ${msg.error}`);
-        if (msg.message?.thinking) yield { type: 'thinking', text: msg.message.thinking };
-        if (msg.message?.content) yield { type: 'token', text: msg.message.content };
-        // Ollama sends each tool call whole (arguments as an object): it gets an id here.
-        for (const c of msg.message?.tool_calls ?? []) {
-          const args = c.function?.arguments;
-          yield { type: 'tool_call', index: toolIndex++, id: c.id || `call_${Math.random().toString(36).slice(2, 12)}`, name: c.function?.name ?? '', arguments: typeof args === 'string' ? args : JSON.stringify(args ?? {}) };
-        }
-        if (msg.done) {
-          yield {
-            type: 'done',
-            inputTokens: msg.prompt_eval_count,
-            outputTokens: msg.eval_count,
-            genMs: msg.eval_duration ? msg.eval_duration / 1e6 : undefined,
-            loadMs: msg.load_duration ? msg.load_duration / 1e6 : undefined,
-            // num_predict reached: the answer was cut off at the token ceiling.
-            ...(msg.done_reason === 'length' && { stopped: 'length' as const }),
+      // "Thinking" models (qwen3-vl abliterated…) may ignore think: false: they think in the thinking field until
+      // num_predict runs out, or write <think>…</think> into the answer. The second is split off as thinking;
+      // for the first the same call goes once more with a bigger budget.
+      let biggerTried = false;
+      let inTokens = 0;
+      let outTokens = 0;
+      for (;;) {
+        const split = thinkSplitter();
+        let answered = false;
+        let thought = false;
+        let tools = false;
+        let last: { genMs?: number; loadMs?: number; stopped?: boolean } | undefined;
+        for await (const line of readLines(res.body!)) {
+          if (!line.trim()) continue;
+          const msg = JSON.parse(line) as {
+            message?: { content?: string; thinking?: string; tool_calls?: { id?: string; function?: { name?: string; arguments?: unknown } }[] };
+            done?: boolean;
+            error?: string;
+            prompt_eval_count?: number;
+            eval_count?: number;
+            eval_duration?: number;
+            load_duration?: number;
+            done_reason?: string;
           };
-          return;
+          if (msg.error) throw new Error(`Ollama: ${msg.error}`);
+          if (msg.message?.thinking) {
+            thought = true;
+            yield { type: 'thinking', text: msg.message.thinking };
+          }
+          if (msg.message?.content) {
+            for (const c of split.push(msg.message.content)) {
+              if (c.type === 'thinking') thought = true;
+              if (c.type === 'token' && c.text.trim()) answered = true;
+              yield c;
+            }
+          }
+          // Ollama sends each tool call whole (arguments as an object): it gets an id here.
+          for (const c of msg.message?.tool_calls ?? []) {
+            tools = true;
+            const args = c.function?.arguments;
+            yield { type: 'tool_call', index: toolIndex++, id: c.id || `call_${Math.random().toString(36).slice(2, 12)}`, name: c.function?.name ?? '', arguments: typeof args === 'string' ? args : JSON.stringify(args ?? {}) };
+          }
+          if (msg.done) {
+            inTokens += msg.prompt_eval_count ?? 0;
+            outTokens += msg.eval_count ?? 0;
+            last = {
+              genMs: msg.eval_duration ? msg.eval_duration / 1e6 : undefined,
+              loadMs: msg.load_duration ? msg.load_duration / 1e6 : undefined,
+              // num_predict reached: the answer was cut off at the token ceiling.
+              stopped: msg.done_reason === 'length',
+            };
+            break;
+          }
         }
+        for (const c of split.flush()) {
+          if (c.type === 'token') answered = true;
+          yield c;
+        }
+        // Only when thinking was turned off: with thinking on, the engine asks again without it.
+        const more = req.think === false && !answered && thought && !tools && !biggerTried && !signal.aborted ? biggerBudget(numPredict) : undefined;
+        if (more) {
+          biggerTried = true;
+          numPredict = more;
+          yield { type: 'note', text: `${model} only thought and gave no answer — asking once more with ${more} tokens` };
+          res = await chat(sentMessages);
+          await checkResponse(res, 'Ollama /api/chat');
+          continue;
+        }
+        if (req.think === false && !answered && thought && !tools) yield { type: 'note', text: `${model} only thought and gave no answer${biggerTried ? `, also with ${numPredict} tokens` : ''}` };
+        if (!last) return;
+        yield {
+          type: 'done',
+          inputTokens: inTokens || undefined,
+          outputTokens: outTokens || undefined,
+          genMs: last.genMs,
+          loadMs: last.loadMs,
+          ...(last.stopped && { stopped: 'length' as const }),
+          ...(biggerTried && { budget: numPredict }),
+        };
+        return;
       }
     },
   };

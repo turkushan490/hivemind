@@ -120,8 +120,9 @@ export type StreamChunk =
   | { type: 'thinking'; text: string }
   /** A tool call, whole or in pieces: the first piece of a call has its id and name, later ones add to its arguments. */
   | { type: 'tool_call'; index: number; id?: string; name?: string; arguments?: string; extra?: Record<string, unknown> }
-  /** genMs: pure generation time when the provider reports it (more exact tok/s). stopped: cut off at maxTokens. */
-  | { type: 'done'; inputTokens?: number; outputTokens?: number; genMs?: number; loadMs?: number; stopped?: 'length' };
+  /** genMs: pure generation time when the provider reports it (more exact tok/s). stopped: cut off at maxTokens.
+   *  budget: the token budget used in the end, when the provider asked again with a bigger one. */
+  | { type: 'done'; inputTokens?: number; outputTokens?: number; genMs?: number; loadMs?: number; stopped?: 'length'; budget?: number };
 
 /** Runtime config of one provider, key already decrypted. */
 export interface ProviderConfig {

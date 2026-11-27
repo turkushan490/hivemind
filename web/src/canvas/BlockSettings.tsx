@@ -1,4 +1,5 @@
 import { DECISION_TYPES, HTTP_METHODS, SEARCH_SOURCES, type DecideQuestion, type ModelInfo, type ModelRef, type NodeConfig, type NodeType, type ProviderInfo } from '@hivemind/shared';
+import { SkillBlockSettings } from './SkillBlockSettings';
 import { useEffect, useState } from 'react';
 import { api } from '../api';
 import { toast } from '../notify';
@@ -401,27 +402,7 @@ function KindSettings(p: Props) {
         </div>
       );
     case 'skill':
-      return (
-        <div className="space-y-2">
-          <label className="block space-y-1">
-            <Label>What it does</Label>
-            <select className="input text-sm" value={p.config.skillOp ?? 'read'} onChange={(e) => p.onChange({ skillOp: e.target.value === 'read' ? undefined : (e.target.value as 'save') })}>
-              <option value="read">Read: list my skills + the one the request names</option>
-              <option value="save">Save: the text wired in becomes a skill</option>
-            </select>
-          </label>
-          <label className="block space-y-1">
-            <Label>Skill name (optional)</Label>
-            <input
-              className="input text-sm"
-              placeholder={p.config.skillOp === 'save' ? 'default: the name in the SKILL.md' : 'default: the skill the request names'}
-              value={p.config.skillName ?? ''}
-              onChange={(e) => p.onChange({ skillName: e.target.value || undefined })}
-            />
-          </label>
-          <p className="text-xs text-slate-500">In a hidden workflow it also reads your locked skills, and a new skill it saves is locked. A normal workflow never changes a locked skill.</p>
-        </div>
-      );
+      return <SkillBlockSettings config={p.config} onChange={p.onChange} />;
     case 'readMemory':
       return (
         <div className="space-y-2">

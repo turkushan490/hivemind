@@ -7,7 +7,7 @@ import { config } from '../config.js';
 import { newId } from '../crypto.js';
 import { db, getSetting, setSetting } from '../db/index.js';
 import { githubToken, REPO_RE } from './git.js';
-import { binaryPath, findSkills, isTextFile, readSkillText, toSkillMd, unpack, type SkillFile } from './skillFormats.js';
+import { binaryPath, cleanName as cleanSkillName, findSkills, isTextFile, readSkillText, toSkillMd, unpack, type SkillFile } from './skillFormats.js';
 import { createZip, readZip } from './zip.js';
 import { isUnlocked } from './unlock.js';
 
@@ -325,10 +325,14 @@ export function skillsForRun(user: SkillUser, opts: { hidden?: boolean } = {}) {
      * workflow's new skill is locked; a normal run never touches a locked skill.
      */
     save: (md: string, name?: string): { name: string; created: boolean; locked: boolean } => {
-      const full = readSkillText(md, 'SKILL.md', { folder: name });
-      const own = db.prepare('SELECT id, hidden FROM skills WHERE owner_id = ? AND name = ? COLLATE NOCASE').get(user.id, name || full.name) as { id: string; hidden: number } | undefined;
-      if (own?.hidden && !opts.hidden) throw err(409, `A skill named "${name || full.name}" can't be changed here: give it another name`);
-      const r = saveSkill(user, [{ path: 'SKILL.md', data: Buffer.from(md) }], { fallbackName: name, run: true, ...(own && { replaceId: own.id }) });
+      const full = readSkillText(md, 'SKILL.md');
+      // A name given ("Save as"): the skill is saved under that name, whatever the text says (the old one stays as it was).
+      const as = name ? cleanSkillName(name) : '';
+      const finalName = as || full.name;
+      const text = as && as !== full.name ? toSkillMd({ ...full, name: as }) : md;
+      const own = db.prepare('SELECT id, hidden FROM skills WHERE owner_id = ? AND name = ? COLLATE NOCASE').get(user.id, finalName) as { id: string; hidden: number } | undefined;
+      if (own?.hidden && !opts.hidden) throw err(409, `A skill named "${finalName}" can't be changed here: give it another name`);
+      const r = saveSkill(user, [{ path: 'SKILL.md', data: Buffer.from(text) }], { fallbackName: finalName, run: true, ...(own && { replaceId: own.id }) });
       const locked = own ? !!own.hidden : !!opts.hidden;
       if (!own && opts.hidden) db.prepare('UPDATE skills SET hidden = 1, shared = 0 WHERE id = ?').run(r.skill.id);
       return { name: r.skill.name, created: !own, locked };

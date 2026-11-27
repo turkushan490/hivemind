@@ -110,4 +110,18 @@ describe('Skill block', () => {
     expect(row('secret-style')?.description).toBe('My secret style v2');
     expect(skills.skillsForRun({ id: 'u1', role: 'admin' }).list().map((s) => s.name)).toEqual(['tidy-code']);
   });
+
+  it('loads a picked skill and saves the changed one under a new name; the old one stays', async () => {
+    const g = JSON.parse(JSON.stringify(graph)) as typeof graph & { nodes: { config: Record<string, unknown> }[] };
+    g.nodes[1].config = { skillName: 'tidy-code' };
+    g.nodes[3].config = { skillOp: 'save', skillName: 'tidy code strict' };
+    const c = (await app.inject({ method: 'PUT', url: '/api/canvases', ...screen, payload: { name: 'Copy skill', ...g } })).json() as { id: string };
+    reply = '---\nname: tidy-code\ndescription: Very tidy code\n---\nShort functions, types, no globals.';
+    const r = await run(c.id, 'make it stricter');
+    expect(r.status).toBe('done');
+    expect(lastPrompt).toContain('The skill "tidy-code" as it is now');
+    expect(r.final).toContain('Made the skill "tidy code strict"');
+    expect(row('tidy code strict')?.description).toBe('Very tidy code');
+    expect(row('tidy-code')?.description).toBe('Keep code tidy and typed'); // untouched
+  });
 });

@@ -119,9 +119,10 @@ export function listSkills(user: SkillUser): Skill[] {
 const seesSkill = (user: SkillUser, row: SkillRow) => !row.hidden || (row.owner_id === user.id && isUnlocked(user as Parameters<typeof isUnlocked>[0]));
 
 /** A skill this user may use (own or shared); edit=true: only its owner (or a full admin). */
-function getSkill(user: SkillUser, id: string, edit = false): SkillRow {
+function getSkill(user: SkillUser, id: string, edit = false, run = false): SkillRow {
   const row = db.prepare('SELECT * FROM skills WHERE id = ?').get(id) as SkillRow | undefined;
-  const may = row && seesSkill(user, row) && (row.owner_id === user.id || isFullAdmin(user) || (!edit && row.shared));
+  // run: a hidden workflow's own run reads and saves its owner's locked skills, also when the lock came on meanwhile.
+  const may = row && (run ? !row.hidden || row.owner_id === user.id : seesSkill(user, row)) && (row.owner_id === user.id || isFullAdmin(user) || (!edit && row.shared));
   if (!row || !may) throw err(404, 'Skill not found');
   return row;
 }
@@ -139,7 +140,7 @@ function cleanSkillPath(p: string): string {
  * Stores a skill from its files (SKILL.md + extras). Non-text files are left out (listed in skipped). An existing
  * skill of yours with the same name is replaced. A SKILL.md without a proper name/description gets one written.
  */
-export function saveSkill(user: SkillUser, files: SkillFile[], opts: { replaceId?: string; fallbackName?: string } = {}): { skill: Skill; skipped: string[] } {
+export function saveSkill(user: SkillUser, files: SkillFile[], opts: { replaceId?: string; fallbackName?: string; run?: boolean } = {}): { skill: Skill; skipped: string[] } {
   const md = files.find((f) => f.path.toUpperCase() === 'SKILL.MD');
   if (!md) throw err(400, 'No SKILL.md found (it must be at the top of the skill folder)');
   if (!isTextFile(md)) throw err(400, 'SKILL.md is not a text file');
@@ -166,7 +167,7 @@ export function saveSkill(user: SkillUser, files: SkillFile[], opts: { replaceId
   }
   if (keep.length > SKILL_LIMITS.files) throw err(413, `A skill may have at most ${SKILL_LIMITS.files} files`);
   const existing = opts.replaceId
-    ? getSkill(user, opts.replaceId, true)
+    ? getSkill(user, opts.replaceId, true, opts.run)
     : (db.prepare('SELECT * FROM skills WHERE owner_id = ? AND name = ? COLLATE NOCASE').get(user.id, meta.name) as SkillRow | undefined);
   const clash = db.prepare('SELECT id FROM skills WHERE owner_id = ? AND name = ? COLLATE NOCASE').get(existing?.owner_id ?? user.id, meta.name) as { id: string } | undefined;
   if (clash && clash.id !== existing?.id) throw err(409, `You already have a skill named "${meta.name}"`);
@@ -181,7 +182,7 @@ export function saveSkill(user: SkillUser, files: SkillFile[], opts: { replaceId
   }
   if (existing) db.prepare("UPDATE skills SET name = ?, description = ?, updated_at = datetime('now') WHERE id = ?").run(meta.name, meta.description, id);
   else db.prepare('INSERT INTO skills (id, owner_id, name, description, folder) VALUES (?, ?, ?, ?, ?)').run(id, user.id, meta.name, meta.description, `skills/${id}`);
-  return { skill: toSkill(getSkill(user, id), user), skipped };
+  return { skill: toSkill(getSkill(user, id, false, opts.run), user), skipped };
 }
 
 export interface ImportResult {
@@ -311,6 +312,27 @@ export function skillsForRun(user: SkillUser, opts: { hidden?: boolean } = {}) {
   const byName = (name: string) => rows.find((r) => r.name.toLowerCase() === name.trim().toLowerCase());
   return {
     list: () => rows.map((r) => ({ name: r.name, description: r.description })),
+    /** A skill's text files as they are (the Skill block, to edit it). */
+    raw: (name: string): { path: string; text: string }[] | undefined => {
+      const row = byName(name);
+      if (!row) return;
+      return skillFiles(row)
+        .filter((f) => f.size < 60_000)
+        .map((f) => ({ path: f.path, text: readFileSync(join(dirOf(row), f.path), 'utf8') }));
+    },
+    /**
+     * Saves a SKILL.md (the Skill block): a new skill, or an update of the person's own skill with that name. A hidden
+     * workflow's new skill is locked; a normal run never touches a locked skill.
+     */
+    save: (md: string, name?: string): { name: string; created: boolean; locked: boolean } => {
+      const full = readSkillText(md, 'SKILL.md', { folder: name });
+      const own = db.prepare('SELECT id, hidden FROM skills WHERE owner_id = ? AND name = ? COLLATE NOCASE').get(user.id, name || full.name) as { id: string; hidden: number } | undefined;
+      if (own?.hidden && !opts.hidden) throw err(409, `A skill named "${name || full.name}" can't be changed here: give it another name`);
+      const r = saveSkill(user, [{ path: 'SKILL.md', data: Buffer.from(md) }], { fallbackName: name, run: true, ...(own && { replaceId: own.id }) });
+      const locked = own ? !!own.hidden : !!opts.hidden;
+      if (!own && opts.hidden) db.prepare('UPDATE skills SET hidden = 1, shared = 0 WHERE id = ?').run(r.skill.id);
+      return { name: r.skill.name, created: !own, locked };
+    },
     /** The skill's instructions for a system prompt: SKILL.md's body and its other files by name, cut at 30,000 chars. */
     load: (name: string): string | undefined => {
       const row = byName(name);

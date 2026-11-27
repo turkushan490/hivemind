@@ -1258,7 +1258,14 @@ API (admin only):
   - With **🔒 New skills are locked** ticked, new, pasted, uploaded and GitHub skills are locked straight away
     (`?hidden=1`, which needs unlock mode).
   - The `skills.hidden` column is added outside the numbered migrations.
-- **Skills has its own tab** at the top (moved out of Settings).
+- **Skills has its own tab** at the top, right after HiveBot (moved out of Settings).
+- **Skill block** (`type: "skill"`), so a workflow can make and edit skills:
+  - `skillOp: "read"` (default) gives the list of your skills, plus the whole text of the skill the request names (or
+    `skillName`), for a model to edit.
+  - `skillOp: "save"` saves the SKILL.md wired in, as a new skill or the one with that name. A fenced block or text
+    before the front matter is fine.
+  - In a hidden workflow it also reads your locked skills, and a skill it makes is locked. A normal workflow never sees
+    or changes a locked skill.
 - The workflow editor's question box grows to about 4 lines while typing and is one line when you click away; long
   text scrolls inside it.
 - Tests: `server/test/unlock.test.ts`, `server/test/hiddenFiles.test.ts`, `server/test/hiddenSkills.test.ts`.

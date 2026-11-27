@@ -9,6 +9,7 @@ import { AGENT_NODES, type BrowserServices, type SandboxServices, type Workspace
 import { AGENT_NODE } from './agent.js';
 import { RESEARCH_NODES } from './research.js';
 import { VOICE_NODES } from './voice.js';
+import { SKILL_NODE } from './skill.js';
 
 /** What a model about to load needs, so other AI servers on the GPU only give memory back when it doesn't fit. */
 export interface GpuNeed {
@@ -111,7 +112,14 @@ export interface NodeServices {
     speak(text: string, voice: string): Promise<{ file: OutputFile; note?: string }>;
   };
   /** Skills (Settings → Skills): your own and the shared ones, by name. */
-  skills?: { list(): { name: string; description: string }[]; load(name: string): string | undefined };
+  skills?: {
+    list(): { name: string; description: string }[];
+    load(name: string): string | undefined;
+    /** Skill block: a skill's files as they are (to edit it). */
+    raw?(name: string): { path: string; text: string }[] | undefined;
+    /** Skill block: save a SKILL.md as a skill (new, or the one with its name). */
+    save?(md: string, name?: string): { name: string; created: boolean; locked: boolean };
+  };
   /** Memory as MD files (H11): the owner's memory, for the readMemory / writeMemory blocks. */
   memoryFiles?: {
     tree(guest?: boolean): { path: string; title?: string }[];
@@ -1005,4 +1013,7 @@ export const NODES: Record<NodeType, NodeDefinition> = {
 
   // ---- Voice ----
   ...VOICE_NODES,
+
+  // ---- Skills ----
+  skill: SKILL_NODE,
 };

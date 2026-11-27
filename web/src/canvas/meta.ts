@@ -199,6 +199,15 @@ export const NODE_META: Record<NodeType, NodeMeta> = {
     hasInput: true,
     hasOutput: true,
   },
+  skill: {
+    title: 'Skill',
+    color: '#fbbf24',
+    group: 'Data',
+    description: 'Read: your skills, and whole the one the request names (for a model to edit). Save: the SKILL.md wired in becomes a skill (new, or the one with that name). In a hidden workflow also your locked skills, and new skills are locked.',
+    usesModel: false,
+    hasInput: true,
+    hasOutput: true,
+  },
   readMemory: {
     title: 'Read memory',
     color: '#a3e635',

@@ -129,7 +129,7 @@ describe('hidden files', () => {
       JSON.stringify([{ type: 'node_done', files: [{ path: oldOut, kind: 'text' }] }]),
     );
     db.prepare("INSERT INTO runs (id, owner_id, canvas_id, question, status) VALUES ('openrun', 'u1', NULL, ?, 'done')").run(`look ![b](hm-file:${keep})`);
-    db.prepare("DELETE FROM settings WHERE key = 'files.hiddenBackfill'").run();
+    db.prepare("DELETE FROM settings WHERE key = 'files.hiddenBackfill2'").run();
     files.hideFilesOfHiddenRuns();
     const h = (p: string) => (db.prepare('SELECT hidden FROM files WHERE path = ?').get(p) as { hidden: number }).hidden;
     expect(h(old)).toBe(1);

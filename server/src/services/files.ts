@@ -104,14 +104,15 @@ export function filesIn(text: string): string[] {
  * what they saved becomes hidden. Server-side only; nothing is shown or logged.
  */
 export function hideFilesOfHiddenRuns() {
-  if (getSetting('files.hiddenBackfill')) return;
+  // (2: once more, for copies attached while the editor didn't know its workflow was hidden)
+  if (getSetting('files.hiddenBackfill2')) return;
   try {
     const rows = db
       .prepare('SELECT r.owner_id, r.question, r.events FROM runs r JOIN canvases c ON c.id = r.canvas_id WHERE c.hidden = 1')
       .all() as { owner_id: string; question: string; events: string | null }[];
     for (const r of rows) hideFiles(r.owner_id, filesIn(`${r.question}\n${r.events ?? ''}`));
   } catch {}
-  setSetting('files.hiddenBackfill', '1');
+  setSetting('files.hiddenBackfill2', '1');
 }
 
 /**

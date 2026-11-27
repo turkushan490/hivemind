@@ -16,6 +16,8 @@ export interface Attachment {
   /** Pictures: a link to show the thumbnail. */
   preview?: string;
   busy?: boolean;
+  /** The uploaded file (pictures, audio): deleted again when the attachment is removed before sending. */
+  path?: string;
 }
 
 const MAX_TEXT = 100_000;
@@ -77,13 +79,13 @@ export function useAttachments(hidden = false) {
         try {
           if (kind === 'image') {
             const path = await upload(file, hidden);
-            patch(id, { busy: false, text: `![${file.name}](hm-file:${linkPath(path)})`, preview: `/api/files/raw?inline=1&path=${encodeURIComponent(path)}` });
+            patch(id, { busy: false, path, text: `![${file.name}](hm-file:${linkPath(path)})`, preview: `/api/files/raw?inline=1&path=${encodeURIComponent(path)}` });
           } else if (kind === 'audio') {
             // The file itself goes along (a Voice trainer needs the recording); a short voice note also as its words.
             const path = await upload(file, hidden);
             const link = `[${file.name}](hm-file:${linkPath(path)})`;
             const said = file.size < 5 * 1024 * 1024 && file.type.startsWith('audio/') ? await transcribe(file).catch(() => '') : '';
-            patch(id, { busy: false, text: said ? `${link}\n--- Audio "${file.name}" (what is said in it) ---\n${clip(said, file.name)}` : link });
+            patch(id, { busy: false, path, text: said ? `${link}\n--- Audio "${file.name}" (what is said in it) ---\n${clip(said, file.name)}` : link });
           } else {
             const text = clip(file.name.toLowerCase().endsWith('.pdf') ? await pdfText(file) : await file.text(), file.name);
             if (!text) throw new Error('no text found in it (a scanned PDF has only pictures)');
@@ -100,7 +102,12 @@ export function useAttachments(hidden = false) {
   return {
     list,
     add,
-    remove: (id: string) => patch(id, null),
+    remove: (id: string) => {
+      // Not sent: the uploaded copy goes too (no stray copies in Files, e.g. from a hidden workflow).
+      const path = list.find((a) => a.id === id)?.path;
+      if (path) void fetch(`/api/files?path=${encodeURIComponent(path)}`, { method: 'DELETE' }).catch(() => {});
+      patch(id, null);
+    },
     clear: () => setList([]),
     busy: list.some((a) => a.busy),
     /** The question as it is sent: the text, then every attachment. */

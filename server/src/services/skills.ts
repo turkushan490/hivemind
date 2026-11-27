@@ -9,6 +9,13 @@ import { db, getSetting, setSetting } from '../db/index.js';
 import { githubToken, REPO_RE } from './git.js';
 import { binaryPath, findSkills, isTextFile, readSkillText, toSkillMd, unpack, type SkillFile } from './skillFormats.js';
 import { createZip, readZip } from './zip.js';
+import { isUnlocked } from './unlock.js';
+
+// Unlock mode: a locked (hidden) skill only shows for its owner while unlocked, and only hidden workflows use it.
+// Added here, outside the numbered migrations, so it never clashes with them.
+if (!(db.prepare('PRAGMA table_info(skills)').all() as { name: string }[]).some((c) => c.name === 'hidden')) {
+  db.exec('ALTER TABLE skills ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0');
+}
 
 /**
  * Skills: a folder with a SKILL.md (frontmatter name + description, then instructions) and optional extra text
@@ -46,6 +53,7 @@ interface SkillRow {
   shared: number;
   folder: string;
   updated_at: string;
+  hidden?: number;
   username?: string | null;
 }
 
@@ -91,6 +99,7 @@ function toSkill(row: SkillRow, user: SkillUser): Skill {
     files,
     sizeBytes: files.reduce((n, f) => n + f.size, 0),
     updatedAt: row.updated_at,
+    ...(row.hidden ? { hidden: true } : {}),
   };
 }
 
@@ -99,13 +108,20 @@ export function listSkills(user: SkillUser): Skill[] {
   const rows = db
     .prepare(`SELECT s.*, u.username FROM skills s LEFT JOIN users u ON u.id = s.owner_id ${isFullAdmin(user) ? '' : 'WHERE s.owner_id = ? OR s.shared = 1'} ORDER BY s.name COLLATE NOCASE`)
     .all(...(isFullAdmin(user) ? [] : [user.id])) as unknown as SkillRow[];
-  return rows.map((r) => toSkill(r, user));
+  // Locked skills: only your own, only while unlocked (also for an admin). Locked ones first.
+  return rows
+    .filter((r) => seesSkill(user, r))
+    .sort((a, b) => (b.hidden ?? 0) - (a.hidden ?? 0))
+    .map((r) => toSkill(r, user));
 }
+
+/** A locked skill: only its owner, only while unlocked. Others: everyone who may use it. */
+const seesSkill = (user: SkillUser, row: SkillRow) => !row.hidden || (row.owner_id === user.id && isUnlocked(user as Parameters<typeof isUnlocked>[0]));
 
 /** A skill this user may use (own or shared); edit=true: only its owner (or a full admin). */
 function getSkill(user: SkillUser, id: string, edit = false): SkillRow {
   const row = db.prepare('SELECT * FROM skills WHERE id = ?').get(id) as SkillRow | undefined;
-  const may = row && (row.owner_id === user.id || isFullAdmin(user) || (!edit && row.shared));
+  const may = row && seesSkill(user, row) && (row.owner_id === user.id || isFullAdmin(user) || (!edit && row.shared));
   if (!row || !may) throw err(404, 'Skill not found');
   return row;
 }
@@ -260,9 +276,17 @@ export function deleteSkill(user: SkillUser, id: string) {
   db.prepare('DELETE FROM skills WHERE id = ?').run(row.id);
 }
 
-/** Admins: shared skills can be used by every user. */
+/** Admins: shared skills can be used by every user. A locked skill is never shared. */
 export function shareSkill(id: string, shared: boolean) {
-  db.prepare('UPDATE skills SET shared = ? WHERE id = ?').run(shared ? 1 : 0, id);
+  db.prepare('UPDATE skills SET shared = ? WHERE id = ? AND hidden = 0').run(shared ? 1 : 0, id);
+}
+
+/** Lock (hide) or unlock a skill: only its owner, only while unlocked. Locking stops sharing it. */
+export function lockSkill(user: SkillUser, id: string, hidden: boolean): Skill {
+  const row = getSkill(user, id, true);
+  if (row.owner_id !== user.id) throw err(403, 'Only the owner can lock or unlock a skill');
+  db.prepare(`UPDATE skills SET hidden = ?${hidden ? ', shared = 0' : ''} WHERE id = ?`).run(hidden ? 1 : 0, row.id);
+  return toSkill(getSkill(user, id), user);
 }
 
 export function exportSkill(user: SkillUser, id: string): { name: string; zip: Buffer } {
@@ -275,8 +299,13 @@ export function exportSkill(user: SkillUser, id: string): { name: string; zip: B
  * What a run's blocks may use: the person's own and shared skills, by name (their own wins over a shared one with
  * the same name).
  */
-export function skillsForRun(user: SkillUser) {
-  const rows = (db.prepare('SELECT * FROM skills WHERE owner_id = ? OR shared = 1 ORDER BY owner_id = ? DESC').all(user.id, user.id) as unknown as SkillRow[]).filter(
+export function skillsForRun(user: SkillUser, opts: { hidden?: boolean } = {}) {
+  // A hidden workflow also gets its owner's locked skills; every other run never sees them.
+  const rows = (
+    db.prepare(`SELECT * FROM skills WHERE (owner_id = ? OR shared = 1)${opts.hidden ? ' AND (hidden = 0 OR owner_id = ?)' : ' AND hidden = 0'} ORDER BY hidden DESC, owner_id = ? DESC`).all(
+      ...(opts.hidden ? [user.id, user.id, user.id] : [user.id, user.id]),
+    ) as unknown as SkillRow[]
+  ).filter(
     (r, i, all) => all.findIndex((x) => x.name.toLowerCase() === r.name.toLowerCase()) === i,
   );
   const byName = (name: string) => rows.find((r) => r.name.toLowerCase() === name.trim().toLowerCase());

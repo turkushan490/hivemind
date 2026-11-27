@@ -12,7 +12,7 @@ import { UnlockPinPanel } from '../components/PinDialog';
 import { T3CodePanel } from './T3Code';
 import { Users } from './Users';
 import { Access } from './Access';
-import { GithubPanel, SkillsPanel } from './GithubSkills';
+import { GithubPanel } from './GithubSkills';
 import { LogFilePanel } from './LogFile';
 
 type Role = 'admin' | 'user' | 'viewer';
@@ -32,7 +32,6 @@ const SECTIONS = {
   nightwork: 'Night work',
   limits: 'Run limits',
   pictures: 'Pictures',
-  skills: 'Skills',
   github: 'GitHub',
   users: 'Users',
   access: 'Access',
@@ -95,7 +94,6 @@ export function Settings({ role, meId, active, onWizard }: { role: Role; meId: s
         {panel('nightwork', <NightWorkPanel isAdmin={isAdmin} active={active && section === 'nightwork'} />)}
         {panel('limits', <RunLimitsPanel isAdmin={isAdmin} active={active && section === 'limits'} />)}
         {panel('pictures', <PictureReaderPanel isAdmin={isAdmin} active={active && section === 'pictures'} />)}
-        {panel('skills', <SkillsPanel isAdmin={isAdmin} active={active && section === 'skills'} />)}
         {panel('github', <GithubPanel active={active && section === 'github'} />)}
         {panel('users', <Users meId={meId} active={active && section === 'users'} />)}
         {panel('access', <Access active={active && section === 'access'} />)}

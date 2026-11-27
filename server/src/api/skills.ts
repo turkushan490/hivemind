@@ -1,5 +1,7 @@
 import type { FastifyInstance, FastifyReply } from 'fastify';
-import { deleteSkill, deleteSkillFile, exportSkill, importSkillFiles, importSkillGithub, importSkillZip, listSkills, readSkillFile, saveSkill, shareSkill, skillView, writeSkillFile } from '../services/skills.js';
+import type { Skill } from '@hivemind/shared';
+import { deleteSkill, deleteSkillFile, exportSkill, importSkillFiles, importSkillGithub, importSkillZip, listSkills, lockSkill, readSkillFile, saveSkill, shareSkill, skillView, writeSkillFile } from '../services/skills.js';
+import { isUnlocked } from '../services/unlock.js';
 import { requireAdmin, requireUser } from './auth.js';
 
 type Params = { id: string };
@@ -23,14 +25,38 @@ export function skillRoutes(app: FastifyInstance) {
 
   app.get('/api/skills', { preHandler: requireUser }, async (req) => listSkills(req.user!));
 
+  // ?hidden=1 on a new or imported skill (unlock mode on): it is made as a locked skill.
+  const mayLock = (req: { user?: Parameters<typeof isUnlocked>[0]; query: unknown }) => {
+    const h = (req.query as { hidden?: string } | undefined)?.hidden;
+    if ((h === '1' || h === 'true') && (!req.user || !isUnlocked(req.user))) throw Object.assign(new Error('Turn on unlock mode first'), { statusCode: 403 });
+  };
+  const lockNew = <T,>(req: { user?: unknown; query: unknown }, out: T): T => {
+    const h = (req.query as { hidden?: string } | undefined)?.hidden;
+    // Only a result with skills in it (an error reply passes through untouched).
+    if ((h !== '1' && h !== 'true') || !out || typeof out !== 'object' || !('skill' in out)) return out;
+    const r = out as unknown as { skill?: Skill; skills?: Skill[] };
+    const user = req.user as Parameters<typeof lockSkill>[0];
+    const locked = (r.skills ?? (r.skill ? [r.skill] : [])).map((s) => lockSkill(user, s.id, true));
+    return { ...r, ...(r.skill && { skill: locked[0] }), ...(r.skills && { skills: locked }) } as unknown as T;
+  };
+
+  /** Lock (hide) or unlock a skill: {hidden: boolean}. Only its owner, only while unlocked. */
+  app.put('/api/skills/:id/hidden', { preHandler: [requireUser, noTokens] }, async (req, reply) =>
+    safe(reply, () => {
+      if (!isUnlocked(req.user!)) return reply.code(403).send({ error: 'Turn on unlock mode first' });
+      return lockSkill(req.user!, (req.params as Params).id, !!(req.body as { hidden?: unknown } | undefined)?.hidden);
+    }),
+  );
+
   app.get('/api/skills/:id', { preHandler: requireUser }, async (req, reply) => safe(reply, () => skillView(req.user!, (req.params as Params).id)));
 
   /** A new skill from the editor: {skillMd: "---\nname: …"} (more files can be added after). */
   app.post('/api/skills', { preHandler: [requireUser, noTokens] }, async (req, reply) =>
     safe(reply, () => {
+      mayLock(req);
       const md = (req.body as { skillMd?: unknown } | undefined)?.skillMd;
       if (typeof md !== 'string') return reply.code(400).send({ error: 'Send {skillMd}' });
-      return saveSkill(req.user!, [{ path: 'SKILL.md', data: Buffer.from(md) }]);
+      return lockNew(req, saveSkill(req.user!, [{ path: 'SKILL.md', data: Buffer.from(md) }]));
     }),
   );
 
@@ -42,7 +68,8 @@ export function skillRoutes(app: FastifyInstance) {
    * - JSON {text, name?}: pasted instructions.
    */
   app.post('/api/skills/import', { preHandler: [requireUser, noTokens], bodyLimit: 40 * 1024 * 1024 }, async (req, reply) =>
-    safe(reply, () => {
+    safe(reply, () => lockNew(req, (() => {
+      mayLock(req);
       const name = String((req.query as { name?: string }).name ?? '').slice(0, 200);
       if (Buffer.isBuffer(req.body)) return importSkillZip(req.user!, req.body, name);
       const b = (req.body ?? {}) as { files?: unknown; text?: unknown; name?: unknown };
@@ -62,12 +89,12 @@ export function skillRoutes(app: FastifyInstance) {
         return importSkillFiles(req.user!, files, { hintName: files.every((f) => f.path.replace(/\\/g, '/').startsWith(`${top}/`)) ? top : undefined });
       }
       return reply.code(415).send({ error: 'Send a file (.zip, .skill, .tar.gz, .md, .json, …), {files: [...]} or {text}' });
-    }),
+    })())),
   );
 
   /** {repo: "owner/name", path?: "skills/my-skill", ref?: "main"}. */
   app.post('/api/skills/import/github', { preHandler: [requireUser, noTokens] }, async (req, reply) =>
-    safe(reply, () => importSkillGithub(req.user!, (req.body ?? {}) as Record<string, unknown>)),
+    safe(reply, async () => (mayLock(req), lockNew(req, await importSkillGithub(req.user!, (req.body ?? {}) as Record<string, unknown>)))),
   );
 
   app.get('/api/skills/:id/file', { preHandler: requireUser }, async (req, reply) =>

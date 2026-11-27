@@ -451,7 +451,7 @@ export function startRun(opts: {
           },
         }),
         pause: { wait: (info, signal) => waitAtPause(run, info, emit, signal) },
-        skills: skillsForRun(fileUser),
+        skills: skillsForRun(fileUser, { hidden: run.hidden }),
         // Voice blocks: the person who runs it (not viewers, not limited API tokens).
         ...(!opts.user?.scope && fileUser.role !== 'viewer' && { voice: voiceServicesFor(fileUser) }),
         logProblem: (message) => logError({ source: 'run', message, userId: opts.ownerId, runId: id }),

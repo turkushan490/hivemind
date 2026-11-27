@@ -888,6 +888,8 @@ export interface Skill {
   files: { path: string; size: number }[];
   sizeBytes: number;
   updatedAt: string;
+  /** Unlock mode: a locked skill (only shown while unlocked, only used by hidden workflows). */
+  hidden?: boolean;
 }
 
 /** One chat model call as it was sent. */

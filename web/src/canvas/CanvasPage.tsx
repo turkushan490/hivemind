@@ -769,6 +769,7 @@ Save your copy over it? (Cancel keeps the saved one)`) ? graph : undefined;
               onChange={setQuestion}
               onSubmit={() => !run.running && askWithAttachments()}
               attachments={attachments}
+              compact
               placeholder="Ask this canvas a question… (📎 pictures, PDFs, files, audio; Shift+Enter for a new line)"
             />
           </div>

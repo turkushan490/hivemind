@@ -1250,7 +1250,18 @@ API (admin only):
 - A hidden run still reads its own hidden files after the lock switches on mid-run.
 - Once, at the next start, files that earlier hidden runs used or saved become hidden (`files.hiddenBackfill`). The
   `files.hidden` column is added outside the numbered migrations.
-- Tests: `server/test/unlock.test.ts`, `server/test/hiddenFiles.test.ts`.
+- **Locked skills**: a locked skill only shows, and can only be opened, edited or exported, for its owner while
+  unlocked. It shows at the top with 🔒. Rules:
+  - It is never shared, and only that owner's hidden workflows use it (`skillsForRun(user, {hidden})`). Normal runs
+    never see it.
+  - Lock or unlock one with `PUT /api/skills/:id/hidden {hidden}`, while unlocked.
+  - With **🔒 New skills are locked** ticked, new, pasted, uploaded and GitHub skills are locked straight away
+    (`?hidden=1`, which needs unlock mode).
+  - The `skills.hidden` column is added outside the numbered migrations.
+- **Skills has its own tab** at the top (moved out of Settings).
+- The workflow editor's question box grows to about 4 lines while typing and is one line when you click away; long
+  text scrolls inside it.
+- Tests: `server/test/unlock.test.ts`, `server/test/hiddenFiles.test.ts`, `server/test/hiddenSkills.test.ts`.
 
 ---
 

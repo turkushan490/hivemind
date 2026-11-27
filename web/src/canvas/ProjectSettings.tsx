@@ -249,7 +249,7 @@ export function SkillsOption(p: Props) {
       </label>
       {mode === 'fixed' && (
         <div className="max-h-40 space-y-1 overflow-auto">
-          {skills.length === 0 && <p className="text-xs text-slate-500">No skills yet: add them in Settings → Skills.</p>}
+          {skills.length === 0 && <p className="text-xs text-slate-500">No skills yet: add them on the Skills tab.</p>}
           {skills.map((s) => (
             <label key={s.id} className="flex items-start gap-2 text-xs text-slate-300" title={s.description}>
               <input
@@ -264,6 +264,7 @@ export function SkillsOption(p: Props) {
                 }}
               />
               <span>
+                {s.hidden && <span title="Locked: only hidden workflows use it">🔒 </span>}
                 {s.name}
                 {s.shared && !s.mine && <span className="ml-1 text-slate-500">(shared)</span>}
                 <span className="block text-slate-500">{s.description.slice(0, 90)}</span>

@@ -127,10 +127,13 @@ export function QuestionBox(p: {
   autoFocus?: boolean;
   /** Bigger text (the Use page). */
   big?: boolean;
+  /** In a toolbar (the workflow editor): grows to about 4 lines while you type, one line when you click away. */
+  compact?: boolean;
 }) {
   const box = useRef<HTMLTextAreaElement>(null);
   const picker = useRef<HTMLInputElement>(null);
   const [drag, setDrag] = useState(false);
+  const [focused, setFocused] = useState(false);
   const a = p.attachments;
 
   // Grows up to about 10 lines, then scrolls.
@@ -140,8 +143,10 @@ export function QuestionBox(p: {
     el.style.height = 'auto';
     // Empty: one line. A long placeholder in a narrow box would otherwise make it many lines tall.
     if (!p.value) return;
-    el.style.height = `${Math.min(el.scrollHeight, 240)}px`;
-  }, [p.value]);
+    // Compact (a toolbar): a long text must not make the whole bar tall; it scrolls inside the box.
+    const max = p.compact ? (focused ? 96 : 38) : 240;
+    el.style.height = `${Math.min(el.scrollHeight, max)}px`;
+  }, [p.value, p.compact, focused]);
 
   const keys = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
@@ -195,6 +200,8 @@ export function QuestionBox(p: {
           onChange={(e) => p.onChange(e.target.value)}
           onKeyDown={keys}
           onPaste={paste}
+          onFocus={() => setFocused(true)}
+          onBlur={() => setFocused(false)}
           autoFocus={p.autoFocus}
         />
         <button

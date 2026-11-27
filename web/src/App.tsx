@@ -7,6 +7,7 @@ import { ActivityPage } from './pages/ActivityPage';
 import { ActiveWorkflowsPage } from './pages/ActiveWorkflows';
 import { HiveBotPage } from './pages/HiveBotPage';
 import { FilesPage } from './pages/FilesPage';
+import { SkillsPanel } from './pages/GithubSkills';
 import { Login } from './pages/Login';
 import { Problems } from './pages/Problems';
 import { loadUnlock, setUnlock, useUnlock } from './unlock';
@@ -28,7 +29,7 @@ interface Me {
   role: 'admin' | 'user' | 'viewer';
 }
 
-const TABS = { use: 'Use', canvas: 'Workflow', active: 'Active workflows', hivebot: 'HiveBot', projects: 'Projects', files: 'Files', memory: 'Memory', run: 'Quick council', stats: 'Stats', lab: 'Lab', activity: 'Activity', settings: 'Settings', problems: 'Problems' } as const;
+const TABS = { use: 'Use', canvas: 'Workflow', active: 'Active workflows', hivebot: 'HiveBot', projects: 'Projects', files: 'Files', skills: 'Skills', memory: 'Memory', run: 'Quick council', stats: 'Stats', lab: 'Lab', activity: 'Activity', settings: 'Settings', problems: 'Problems' } as const;
 type Tab = keyof typeof TABS;
 /** Viewers only use canvases. */
 const VIEWER_TABS: Tab[] = ['use', 'activity', 'settings', 'problems'];
@@ -217,6 +218,11 @@ export function App() {
         {opened.has('projects') && (
           <div hidden={tab !== 'projects'}>
             <ProjectsPage active={tab === 'projects'} />
+          </div>
+        )}
+        {opened.has('skills') && (
+          <div hidden={tab !== 'skills'}>
+            <SkillsPanel isAdmin={me.role === 'admin'} active={tab === 'skills'} />
           </div>
         )}
         {opened.has('files') && (

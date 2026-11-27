@@ -2,6 +2,7 @@ import type { GithubSettings, Skill } from '@hivemind/shared';
 import { useEffect, useState } from 'react';
 import { api } from '../api';
 import { toast } from '../notify';
+import { useOnUnlockChange, useUnlock } from '../unlock';
 
 /** Settings → GitHub: your token (never shown again) and who commits. */
 export function GithubPanel({ active }: { active: boolean }) {
@@ -90,7 +91,7 @@ description: When to use this skill, in one or two lines (the model reads this t
 Instructions for the model…
 `;
 
-/** Settings → Skills: SKILL.md folders (like Claude skills) that AI model blocks can follow. */
+/** The Skills tab: SKILL.md folders (like Claude skills) that AI model blocks can follow. */
 export function SkillsPanel({ active, isAdmin }: { active: boolean; isAdmin: boolean }) {
   const [skills, setSkills] = useState<Skill[]>([]);
   const [open, setOpen] = useState<{ skill: Skill; path: string; text: string; saved: string }>();
@@ -99,6 +100,14 @@ export function SkillsPanel({ active, isAdmin }: { active: boolean; isAdmin: boo
   useEffect(() => {
     if (active) load();
   }, [active]);
+  // Unlock mode: locked skills come or go; while unlocked, new skills can be made locked straight away.
+  const unlock = useUnlock();
+  const [lockNew, setLockNew] = useState(false);
+  const lockQ = unlock.unlocked && lockNew ? 'hidden=1' : '';
+  useOnUnlockChange(() => {
+    setOpen(undefined);
+    void load();
+  });
 
   const [paste, setPaste] = useState<{ name: string; text: string }>();
   const report = (r: { skill: Skill; skills?: Skill[]; skipped: string[] }) => {
@@ -108,7 +117,8 @@ export function SkillsPanel({ active, isAdmin }: { active: boolean; isAdmin: boo
     load();
   };
   const send = async (body: BodyInit, type: string, name = '') => {
-    const res = await fetch(`/api/skills/import${name ? `?name=${encodeURIComponent(name)}` : ''}`, { method: 'POST', headers: { 'content-type': type }, body });
+    const q = [name && `name=${encodeURIComponent(name)}`, lockQ].filter(Boolean).join('&');
+    const res = await fetch(`/api/skills/import${q ? `?${q}` : ''}`, { method: 'POST', headers: { 'content-type': type }, body });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) return toast(data.error ?? `HTTP ${res.status}`);
     report(data);
@@ -180,7 +190,12 @@ export function SkillsPanel({ active, isAdmin }: { active: boolean; isAdmin: boo
           <button className="btn-ghost" onClick={() => setPaste(paste ? undefined : { name: '', text: '' })}>
             Paste
           </button>
-          <button className="btn-ghost" onClick={() => api('/api/skills', { body: { skillMd: NEW_SKILL } }).then(report, () => {})}>
+          {unlock.unlocked && (
+            <label className="flex items-center gap-1.5 text-sm text-amber-300" title="Locked skills only show while unlock mode is on, and only hidden workflows use them">
+              <input type="checkbox" checked={lockNew} onChange={(e) => setLockNew(e.target.checked)} /> 🔒 New skills are locked
+            </label>
+          )}
+          <button className="btn-ghost" onClick={() => api(`/api/skills${lockQ ? `?${lockQ}` : ''}`, { body: { skillMd: NEW_SKILL } }).then(report, () => {})}>
             Write a new one
           </button>
         </div>
@@ -196,7 +211,7 @@ export function SkillsPanel({ active, isAdmin }: { active: boolean; isAdmin: boo
             <button
               className="btn px-3 py-1 text-sm"
               disabled={!paste.text.trim()}
-              onClick={() => api('/api/skills/import', { body: { text: paste.text, name: paste.name || undefined } }).then((r) => (report(r), setPaste(undefined)), () => {})}
+              onClick={() => api(`/api/skills/import${lockQ ? `?${lockQ}` : ''}`, { body: { text: paste.text, name: paste.name || undefined } }).then((r) => (report(r), setPaste(undefined)), () => {})}
             >
               Add skill
             </button>
@@ -206,7 +221,7 @@ export function SkillsPanel({ active, isAdmin }: { active: boolean; isAdmin: boo
           <input className="input max-w-xs py-1 text-sm" placeholder="GitHub owner/repo" value={gh.repo} onChange={(e) => setGh({ ...gh, repo: e.target.value })} />
           <input className="input max-w-xs py-1 text-sm" placeholder="folder (optional)" value={gh.path} onChange={(e) => setGh({ ...gh, path: e.target.value })} />
           <input className="input w-32 py-1 text-sm" placeholder="branch" value={gh.ref} onChange={(e) => setGh({ ...gh, ref: e.target.value })} />
-          <button className="btn-ghost" disabled={!gh.repo} onClick={() => api('/api/skills/import/github', { body: gh }).then(report, () => {})}>
+          <button className="btn-ghost" disabled={!gh.repo} onClick={() => api(`/api/skills/import/github${lockQ ? `?${lockQ}` : ''}`, { body: gh }).then(report, () => {})}>
             Import from GitHub
           </button>
         </div>
@@ -218,6 +233,7 @@ export function SkillsPanel({ active, isAdmin }: { active: boolean; isAdmin: boo
             <div key={s.id} className="card space-y-1">
               <div className="flex items-center gap-2">
                 <span className="font-medium">{s.name}</span>
+                {s.hidden && <span className="rounded bg-amber-500/20 px-1.5 text-xs text-amber-300" title="Locked: only shown while unlocked, only hidden workflows use it">🔒 locked</span>}
                 {s.shared && <span className="rounded bg-indigo-500/20 px-1.5 text-xs text-indigo-300">shared</span>}
                 {!s.mine && s.owner && <span className="text-xs text-slate-500">by {s.owner}</span>}
                 <span className="ml-auto text-xs text-slate-500">{(s.sizeBytes / 1024).toFixed(1)} KB</span>
@@ -245,7 +261,12 @@ export function SkillsPanel({ active, isAdmin }: { active: boolean; isAdmin: boo
                 <a className="btn-ghost px-2 py-0.5 text-xs" href={`/api/skills/${s.id}/zip`}>
                   Export .zip
                 </a>
-                {isAdmin && (
+                {s.mine && unlock.unlocked && (
+                  <button className="btn-ghost px-2 py-0.5 text-xs text-amber-300" onClick={() => api(`/api/skills/${s.id}/hidden`, { method: 'PUT', body: { hidden: !s.hidden } }).then(load, () => {})}>
+                    {s.hidden ? '🔓 Unlock' : '🔒 Lock'}
+                  </button>
+                )}
+                {isAdmin && !s.hidden && (
                   <button className="btn-ghost px-2 py-0.5 text-xs" onClick={() => api(`/api/skills/${s.id}/shared`, { method: 'PUT', body: { shared: !s.shared } }).then(load, () => {})}>
                     {s.shared ? 'Stop sharing' : 'Share with everyone'}
                   </button>

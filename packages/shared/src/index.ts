@@ -257,9 +257,9 @@ export interface NodeConfig {
   pageBatch?: number;
   maxPages?: number;
   maxRounds?: number;
-  /** Skills (LLM, Review, Judge): fixed skills by name, or "auto": the model's own pick from the list. */
+  /** Skills (LLM, Review, Judge): fixed skills by name, "auto": the model's own pick from the list, or "force": the named skills first, a reminder, and one check of the answer. */
   skills?: string[];
-  skillMode?: 'off' | 'fixed' | 'auto';
+  skillMode?: 'off' | 'fixed' | 'auto' | 'force';
   /** Skill block: read (your skills, the named one whole) or save (the text wired in becomes a skill). */
   skillOp?: 'read' | 'save';
   /** Skill block: which skill (template; default: the one the request names). */
@@ -732,6 +732,8 @@ export interface RunEvent {
   model?: string;
   /** token: the new text piece. node_done: the full output. */
   text?: string;
+  /** token: this piece starts the block's text over (a corrected answer replaces what was shown). */
+  replace?: boolean;
   /** Output tokens so far (token) or total (node_done). */
   tokens?: number;
   inputTokens?: number;

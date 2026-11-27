@@ -228,7 +228,7 @@ export function ForeachSettings(p: Props) {
   );
 }
 
-/** Skills (Settings → Skills) for AI model blocks: none, fixed ones, or the model's own pick. */
+/** Skills (Settings → Skills) for AI model blocks: none, forced or fixed ones, or the model's own pick. */
 export function SkillsOption(p: Props) {
   const [skills, setSkills] = useState<Skill[]>([]);
   useEffect(() => {
@@ -243,11 +243,12 @@ export function SkillsOption(p: Props) {
         <span className="text-xs font-semibold text-slate-300">Skills</span>
         <select className="input text-xs" value={mode} onChange={(e) => p.onChange({ skillMode: e.target.value === 'off' ? undefined : (e.target.value as NodeConfig['skillMode']) })}>
           <option value="off">None</option>
+          <option value="force">Force: always follow these skills</option>
           <option value="fixed">These skills</option>
           <option value="auto">Auto: the model picks (one short extra call)</option>
         </select>
       </label>
-      {mode === 'fixed' && (
+      {(mode === 'fixed' || mode === 'force') && (
         <div className="max-h-40 space-y-1 overflow-auto">
           {skills.length === 0 && <p className="text-xs text-slate-500">No skills yet: add them on the Skills tab.</p>}
           {skills.map((s) => (
@@ -260,7 +261,8 @@ export function SkillsOption(p: Props) {
                   const next = new Set(chosen);
                   if (e.target.checked) next.add(s.name);
                   else next.delete(s.name);
-                  p.onChange({ skills: next.size ? [...next] : undefined, skillMode: 'fixed' });
+                  // Picked by hand: Force, unless "These skills" was chosen on purpose.
+                  p.onChange({ skills: next.size ? [...next] : undefined, skillMode: c.skillMode === 'fixed' ? 'fixed' : 'force' });
                 }}
               />
               <span>
@@ -273,7 +275,10 @@ export function SkillsOption(p: Props) {
           ))}
         </div>
       )}
-      <span className="block text-xs text-slate-500">A skill's instructions go into the system prompt (they count towards the context). The run shows which skills were loaded.</span>
+      <span className="block text-xs text-slate-500">
+        A skill's instructions go into the system prompt (they count towards the context). The run shows which skills were loaded.
+        {mode === 'force' && ' Force: the skills go first, a reminder ends the message, and the answer is checked once against them (and corrected when it breaks a rule).'}
+      </span>
     </div>
   );
 }

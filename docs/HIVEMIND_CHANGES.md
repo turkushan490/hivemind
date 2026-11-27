@@ -1277,6 +1277,16 @@ API (admin only):
     before the front matter is fine.
   - In a hidden workflow it also reads your locked skills, and a skill it makes is locked. A normal workflow never sees
     or changes a locked skill.
+- **Force skills** (`skillMode: "force"`, "Force: always follow these skills"; the default when you tick skills by
+  hand) on LLM, Review and Judge blocks, for models that ignore skills:
+  - The skill text goes at the **start** of the system prompt, before the block's own; the user message ends with a
+    reminder per skill (`- Follow skill X: <its bullet rules>`).
+  - After the answer, **one check** with the same model (JSON `{"ok", "broken"}`, its tokens are not shown). Broken
+    rules: one more call for a corrected answer naming them, which replaces the shown text (`token.replace`) and is
+    the block's output. Notes: "Skills checked: ok" / "Skills: fixed N rules". A failed check keeps the first answer.
+  - `/v1` streams such a block's answer in one piece at the end (a stream can't take text back).
+  - Review blocks now use their skills too (the picker was shown but not used). Fixed and Auto work as before.
+  - Tests: `server/test/forceSkills.test.ts`.
 - The workflow editor's question box grows to about 4 lines while typing and is one line when you click away; long
   text scrolls inside it.
 - Tests: `server/test/unlock.test.ts`, `server/test/hiddenFiles.test.ts`, `server/test/hiddenSkills.test.ts`.

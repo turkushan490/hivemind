@@ -159,7 +159,8 @@ export interface NodeContext {
   /** Blocks wired after this one (for the Router). */
   outgoing: { id: string; label: string; type: NodeType }[];
   /** Streams one model call; token events are emitted by the engine. Defaults to the block's own model. */
-  callModel(messages: ChatMessage[], model?: ModelRef, opts?: { json?: boolean }): Promise<string>;
+  /** opts.quiet: its tokens are not shown (a check). opts.fresh: its answer replaces the text shown so far. */
+  callModel(messages: ChatMessage[], model?: ModelRef, opts?: { json?: boolean; quiet?: boolean; fresh?: boolean }): Promise<string>;
   /** Settings → Access: may the person who runs this use that model? (Auto model only picks allowed ones.) */
   allowedModel?(model: ModelRef): boolean;
   /** Router: only these outgoing blocks run; the others are skipped. */
@@ -244,17 +245,17 @@ export function parseJson(text: string): unknown {
  * JSON mode: asks for JSON (with the block's schema in the system prompt), checks it, and asks once more
  * with the parser's error when it isn't valid. Returns the normalised JSON text.
  */
-export async function jsonCall(ctx: NodeContext, messages: ChatMessage[], model?: ModelRef): Promise<string> {
+export async function jsonCall(ctx: NodeContext, messages: ChatMessage[], model?: ModelRef, opts: { fresh?: boolean } = {}): Promise<string> {
   const schema = ctx.node.config.jsonSchema?.trim();
   const rule = `Reply with only valid JSON, no other text.${schema ? `\nThe JSON must have this shape:\n${schema}` : ''}`;
   const sys = messages.findIndex((m) => m.role === 'system');
   const asked: ChatMessage[] =
     sys >= 0 ? messages.map((m, i) => (i === sys ? { ...m, content: `${m.content}\n\n${rule}` } : m)) : [{ role: 'system', content: rule }, ...messages];
   // Some models loop on whitespace in Ollama's JSON mode until it stops them: then ask once without it.
-  const reply = await ctx.callModel(asked, model, { json: true }).catch((err: Error) => {
+  const reply = await ctx.callModel(asked, model, { json: true, ...opts }).catch((err: Error) => {
     if (!/repeat limit/i.test(err.message)) throw err;
     ctx.progress('The model looped in JSON mode — asking again without it');
-    return ctx.callModel(asked, model);
+    return ctx.callModel(asked, model, opts);
   });
   try {
     return JSON.stringify(parseJson(reply));
@@ -263,7 +264,7 @@ export async function jsonCall(ctx: NodeContext, messages: ChatMessage[], model?
     const fixed = await ctx.callModel(
       [...asked, { role: 'assistant', content: reply }, { role: 'user', content: `Your last answer was not valid JSON: ${(err as Error).message}. Reply with only the corrected JSON.` }],
       model,
-      { json: true },
+      { json: true, fresh: true },
     );
     try {
       return JSON.stringify(parseJson(fixed));
@@ -408,21 +409,29 @@ export function fallbackOrder(tiers: AutoTier[], failed: AutoTier): AutoTier[] {
   return [...tiers.slice(0, i).reverse(), ...tiers.slice(i + 1)];
 }
 
+/** Force mode: the skills that were loaded, for the reminder and the check of the answer. */
+export interface ForcedSkills {
+  names: string[];
+  texts: string[];
+}
+
 /**
  * Skills (Settings → Skills) in a block's system prompt. Fixed: the skills named on the block. Auto: a short first
- * call with the block's model picks 0-3 from the list of names and descriptions. The run shows which were loaded.
+ * call with the block's model picks 0-3 from the list of names and descriptions. Force: the named skills go first in
+ * the system prompt, a reminder ends the user message (skillReminder) and the answer is checked once (enforceSkills).
+ * The run shows which were loaded.
  */
-export async function withSkills(ctx: NodeContext, system: string | undefined): Promise<string | undefined> {
+export async function prepareSkills(ctx: NodeContext, system: string | undefined): Promise<{ system: string | undefined; force?: ForcedSkills }> {
   const c = ctx.node.config;
   const mode = c.skillMode ?? (c.skills?.length ? 'fixed' : 'off');
   const svc = ctx.services.skills;
-  if (mode === 'off' || !svc) return system;
+  if (mode === 'off' || !svc) return { system };
   let names: string[] = [];
-  if (mode === 'fixed') {
+  if (mode === 'fixed' || mode === 'force') {
     names = (c.skills ?? []).filter(Boolean);
   } else {
     const all = svc.list();
-    if (!all.length) return system;
+    if (!all.length) return { system };
     ctx.progress('Choosing skills…');
     const prev = answers(ctx.inputs);
     const task = `${ctx.question}${prev.length ? `\n\n${labelled(prev).slice(0, 4000)}` : ''}`.slice(0, 6000);
@@ -446,7 +455,7 @@ export async function withSkills(ctx: NodeContext, system: string | undefined): 
       parts.push(text);
     } else missing.push(n);
   }
-  if (missing.length && mode === 'fixed') {
+  if (missing.length && mode !== 'auto') {
     const locked = missing.filter((n) => svc.locked?.(n));
     const gone = missing.filter((n) => !locked.includes(n));
     if (locked.length) ctx.progress(`Skill locked: ${locked.join(', ')}. Only a hidden workflow (Unlocked) can use it: open it from the Unlocked folder and run it there`);
@@ -454,13 +463,105 @@ export async function withSkills(ctx: NodeContext, system: string | undefined): 
   }
   if (!loaded.length) {
     if (mode === 'auto') ctx.progress('No skill fits this task');
-    return system;
+    return { system };
   }
   ctx.progress(`Skills loaded: ${loaded.join(', ')}`);
+  if (mode === 'force') {
+    // Force: the skills come first, before the block's own instructions, so the model reads them as the rules.
+    const block = `SKILLS: the person's own instructions. You MUST follow every rule in them, always. Where anything later (the block's instructions, its settings, sizes, steps, format, style, words to use or avoid) says something different, the skill wins.\n\n${parts.join('\n\n---\n\n')}\n\n(End of skills. They win over every instruction below.)`;
+    return { system: system ? `${block}\n\n${system}` : block, force: { names: loaded, texts: parts } };
+  }
   // The person's skills win: where a skill says something else than the block's own instructions (settings, format,
   // style, words to use or avoid), the model follows the skill.
   const block = `SKILLS: the person's own instructions. Follow them exactly where they apply. Where a skill says something different from the instructions above (settings, sizes, steps, format, style, words to use or avoid), the skill wins.\n\n${parts.join('\n\n---\n\n')}\n\n(End of skills. Remember: where they apply, the skills above win over every other instruction.)`;
-  return system ? `${system}\n\n${block}` : block;
+  return { system: system ? `${system}\n\n${block}` : block };
+}
+
+/** The block's system prompt with its skills (see prepareSkills). */
+export async function withSkills(ctx: NodeContext, system: string | undefined): Promise<string | undefined> {
+  return (await prepareSkills(ctx, system)).system;
+}
+
+/** A skill's key rules, short: its bullet / numbered lines (else its first lines), at most ~400 characters. */
+export function keyRules(text: string): string {
+  // The loaded text starts "## Skill: name" and the description line.
+  const body = text.replace(/^## Skill: [^\n]*\n[^\n]*\n/, '').replace(/^---\n[\s\S]*?\n---\n/, '');
+  const lines = body.split('\n').map((l) => l.trim()).filter((l) => l && !/^#+\s/.test(l) && !/^```/.test(l));
+  const rules = lines.filter((l) => /^([-*•]|\d+[.)])\s+/.test(l)).map((l) => l.replace(/^([-*•]|\d+[.)])\s+/, ''));
+  let out = '';
+  for (const l of rules.length ? rules : lines) {
+    const next = out ? `${out}; ${l}` : l;
+    if (next.length > 400) {
+      if (!out) out = `${l.slice(0, 397)}…`;
+      break;
+    }
+    out = next;
+  }
+  return out;
+}
+
+/** Force mode: the reminder at the end of the user message, one line per skill. */
+export const skillReminder = (f: ForcedSkills) =>
+  `REMINDER: follow the skills in the system prompt exactly; they win over everything else.\n${f.names.map((n, i) => `- Follow skill ${n}: ${keyRules(f.texts[i]) || 'all of its rules'}`).join('\n')}`;
+
+/** The messages with the reminder added to the last user message. */
+export function remindSkills(messages: ChatMessage[], f: ForcedSkills | undefined): ChatMessage[] {
+  if (!f) return messages;
+  const i = messages.map((m) => m.role).lastIndexOf('user');
+  if (i < 0) return [...messages, { role: 'user', content: skillReminder(f) }];
+  return messages.map((m, j) => (j === i ? { ...m, content: `${m.content}\n\n${skillReminder(f)}` } : m));
+}
+
+const SKILL_CHECK_SYSTEM =
+  'You check an answer against the rules of some skills (instructions the person wrote for an AI). List every rule of the skills the answer breaks (a setting, size, step, format, style or word it gets wrong or leaves out). Rules that do not apply to this task are not broken. Reply with only JSON: {"ok": true, "broken": []} when no rule is broken, else {"ok": false, "broken": ["<the rule, and what the answer does instead>", ...]}.';
+
+/**
+ * Force mode, after the answer: one check with the same model (its tokens are not shown). When a rule is broken, the
+ * model is asked once more for a corrected answer naming those rules, and that answer is used (it replaces the one
+ * shown). Never more than one retry; a check that fails keeps the first answer.
+ */
+export async function enforceSkills(ctx: NodeContext, f: ForcedSkills | undefined, messages: ChatMessage[], answer: string, model?: ModelRef): Promise<string> {
+  if (!f) return answer;
+  const task = messages.filter((m) => m.role === 'user').at(-1)?.content ?? ctx.question;
+  let broken: string[];
+  try {
+    ctx.progress('Checking the answer against the skills…');
+    const reply = await ctx.callModel(
+      withSystem(SKILL_CHECK_SYSTEM, `Skills:\n\n${f.texts.join('\n\n---\n\n')}\n\nTask:\n${task.slice(0, 20_000)}\n\nAnswer:\n${answer.slice(0, 60_000)}`),
+      model,
+      { json: true, quiet: true },
+    );
+    const j = parseJson(reply) as { ok?: unknown; broken?: unknown };
+    if (!j || typeof j !== 'object' || typeof j.ok !== 'boolean') throw new Error('the check did not say ok true or false');
+    broken = Array.isArray(j.broken) ? j.broken.map((b) => (typeof b === 'string' ? b : JSON.stringify(b)).trim()).filter(Boolean) : [];
+    if (j.ok && broken.length === 0) {
+      ctx.progress('Skills checked: ok');
+      return answer;
+    }
+    if (!broken.length) broken = ['(the check gave no rule: follow every rule of the skills)'];
+  } catch (err) {
+    if (ctx.signal?.aborted) throw err;
+    ctx.progress(`Skills check failed (${(err as Error).message.slice(0, 120)}): kept the first answer`);
+    return answer;
+  }
+  const fix: ChatMessage[] = [
+    ...messages,
+    { role: 'assistant', content: answer },
+    {
+      role: 'user',
+      content: `Your answer breaks these rules of the skills (${f.names.join(', ')}):\n${broken.map((b) => `- ${b}`).join('\n')}\n\nWrite the whole answer again, corrected, so it follows every rule of the skills. Reply with only the corrected answer.`,
+    },
+  ];
+  try {
+    const fixed = ctx.node.config.json ? await jsonCall(ctx, fix, model, { fresh: true }) : await ctx.callModel(fix, model, { fresh: true });
+    if (!fixed.trim()) throw new Error('empty answer');
+    ctx.progress(`Skills: fixed ${broken.length} rule${broken.length === 1 ? '' : 's'}`);
+    return fixed;
+  } catch (err) {
+    if (ctx.signal?.aborted) throw err;
+    ctx.progress(`Skills: the corrected answer failed (${(err as Error).message.slice(0, 120)}): kept the first answer`);
+    return answer;
+  }
 }
 
 const QUALITY_LEVELS = ['Wrong, off-topic or unhelpful', 'Partly right or incomplete', 'Mostly right and useful', 'Correct, complete and clear'];
@@ -505,11 +606,12 @@ export const NODES: Record<NodeType, NodeDefinition> = {
     async execute(ctx) {
       const prev = answers(ctx.inputs);
       const { prompt } = ctx.node.config;
-      const system = await withSkills(ctx, ctx.node.config.system && fill(ctx.node.config.system, ctx, labelled(prev)));
+      const { system, force } = await prepareSkills(ctx, ctx.node.config.system && fill(ctx.node.config.system, ctx, labelled(prev)));
       let user: string;
       if (prompt) user = fill(prompt, ctx, labelled(prev));
       else if (prev.length === 0) user = ctx.question;
       else user = `Question: ${ctx.question}\n\nInput from previous steps:\n\n${labelled(prev)}\n\nUse this input to answer the question.`;
+      if (force) user = `${user}\n\n${skillReminder(force)}`;
       const messages =
         ctx.node.config.useMessages && ctx.chat
           ? // The real conversation: system prompts, the earlier turns, then this block's prompt.
@@ -519,7 +621,7 @@ export const NODES: Record<NodeType, NodeDefinition> = {
             })()
           : withSystem(system, user);
       // A fixed model answers as it is (no fallback).
-      if (!ctx.node.config.auto) return withoutOwnName(await ask(ctx, messages), ctx.vars.character);
+      if (!ctx.node.config.auto) return withoutOwnName(await enforceSkills(ctx, force, messages, await ask(ctx, messages)), ctx.vars.character);
       // Auto: the decision model picks which model answers, from the question (and what is wired in).
       const pick = await autoPick(ctx, prev.length ? `${ctx.question}\n\n${labelled(prev)}` : ctx.question);
       const a = ctx.node.config.auto;
@@ -528,7 +630,8 @@ export const NODES: Record<NodeType, NodeDefinition> = {
       for (;;) {
         tried.add(tier);
         try {
-          return withoutOwnName(await ask(ctx, messages, a[tier]!), ctx.vars.character);
+          const first = await ask(ctx, messages, a[tier]!);
+          return withoutOwnName(await enforceSkills(ctx, force, messages, first, a[tier]!), ctx.vars.character);
         } catch (err) {
           // A model that is gone, rate-limited or down: the answer still comes, from another size.
           const next = canFallBack(err) && !ctx.signal?.aborted ? fallbackOrder(pick.tiers, pick.tier).find((t) => !tried.has(t)) : undefined;
@@ -551,7 +654,9 @@ export const NODES: Record<NodeType, NodeDefinition> = {
       // Anonymous: reviewers only see letters, not model names.
       const body = prev.map((p, i) => `### Answer ${letter(i)}\n${p.text}`).join('\n\n');
       const user = fill(ctx.node.config.prompt ?? 'Question: {{question}}\n\n{{inputs}}', ctx, body);
-      return ctx.callModel(withSystem(ctx.node.config.system ? fill(ctx.node.config.system, ctx) : REVIEW_SYSTEM, user));
+      const { system, force } = await prepareSkills(ctx, ctx.node.config.system ? fill(ctx.node.config.system, ctx) : REVIEW_SYSTEM);
+      const messages = remindSkills(withSystem(system, user), force);
+      return enforceSkills(ctx, force, messages, await ctx.callModel(messages));
     },
   },
 
@@ -574,11 +679,15 @@ export const NODES: Record<NodeType, NodeDefinition> = {
         .join('\n\n');
       const contenders = prev.map((p, i) => ({ p, n: i + 1 })).filter(({ p }) => p.type !== 'review');
       let user = fill(ctx.node.config.prompt ?? 'Question: {{question}}\n\n{{inputs}}', ctx, body);
-      const judgeSystem = await withSkills(ctx, ctx.node.config.system ? fill(ctx.node.config.system, ctx) : JUDGE_SYSTEM);
+      const { system: judgeSystem, force } = await prepareSkills(ctx, ctx.node.config.system ? fill(ctx.node.config.system, ctx) : JUDGE_SYSTEM);
       // With two or more answers the judge also names the best one, for the leaderboard; that line is removed again.
-      if (ctx.node.config.json) return jsonCall(ctx, withSystem(judgeSystem, user));
+      if (ctx.node.config.json) {
+        const asked = remindSkills(withSystem(judgeSystem, user), force);
+        return enforceSkills(ctx, force, asked, await jsonCall(ctx, asked));
+      }
       if (contenders.length >= 2) user += `\n\nAfter your final answer, add one last line exactly like "BEST: <number>" with the number of the best single answer (${contenders.map((c) => c.n).join(', ')}).`;
-      const { text, best } = splitBest(await ctx.callModel(withSystem(judgeSystem, user)));
+      const asked = remindSkills(withSystem(judgeSystem, user), force);
+      const { text, best } = splitBest(await enforceSkills(ctx, force, asked, await ctx.callModel(asked)));
       const winner = contenders.find((c) => c.n === best);
       if (winner) {
         ctx.pickWinner?.(winner.p.nodeId, contenders.map((c) => c.p.nodeId));

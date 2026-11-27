@@ -456,7 +456,9 @@ export async function runGraph(
         deps.emit({ ...base, type: 'model_ready', warm: !loading });
       };
 
-      const call = async (messages: ChatMessage[], ref: ModelRef, think?: boolean, json?: boolean, noImages = false, retried = false): Promise<string> => {
+      // live.quiet: no token events (a check the person needn't see). live.fresh: the first token says the text so far is
+      // replaced (a corrected answer).
+      const call = async (messages: ChatMessage[], ref: ModelRef, think?: boolean, json?: boolean, noImages = false, retried = false, live: { quiet?: boolean; fresh?: boolean } = {}): Promise<string> => {
         const p = await deps.resolve(ref.providerId);
         const asked = messages;
         // A model that can't see gets the picture reader's description of each picture in place of the picture.
@@ -542,9 +544,10 @@ export async function runGraph(
               if (!firstAnswer) firstAnswer = Date.now();
               tokens++;
               callTokens++;
+              const first = !out;
               out += chunk.text;
               const secs = (Date.now() - firstAnswer) / 1000;
-              deps.emit({ ...base, type: 'token', model: ref.model, text: chunk.text, tokens, tokensPerSec: secs > 0.2 ? tokens / secs : undefined });
+              if (!live.quiet) deps.emit({ ...base, type: 'token', model: ref.model, text: chunk.text, tokens, tokensPerSec: secs > 0.2 ? tokens / secs : undefined, ...(first && live.fresh && { replace: true }) });
             } else if (chunk.type === 'tool_call') {
               // Blocks offer no tools; only /v1 calls for coding agents do.
             } else {
@@ -587,7 +590,7 @@ export async function runGraph(
             deps.emit({ ...base, type: 'node_progress', note: `Loading ${ref.model} failed (${(err as Error).message.slice(0, 80)}): waiting for the GPU, then trying once more` });
             await new Promise((r) => setTimeout(r, 8000));
             if (signal.aborted) throw new Error(cancelText(signal));
-            return call(asked, ref, think, json, noImages, true);
+            return call(asked, ref, think, json, noImages, true, live);
           }
           // A model that can't see refuses the pictures: ask once more with the text alone.
           if (pictures && !out) {
@@ -597,10 +600,10 @@ export async function runGraph(
             if (deps.pictureReader && node.config.pictures !== 'direct' && !blind.has(key)) {
               blind.add(key);
               deps.emit({ ...base, type: 'node_progress', note: `${ref.model} can't read images (${(err as Error).message.slice(0, 120)}) — the picture reader describes them` });
-              return call(asked, ref, think, json, false);
+              return call(asked, ref, think, json, false, false, live);
             }
             deps.emit({ ...base, type: 'node_progress', note: `${ref.model} can't read images (${(err as Error).message.slice(0, 120)}) — asking with the text only` });
-            return call(stripImages(messages), ref, think, json, true);
+            return call(stripImages(messages), ref, think, json, true, false, live);
           }
           throw err;
         } finally {
@@ -615,7 +618,7 @@ export async function runGraph(
         // Small local thinking models sometimes think until they stop and never answer: ask once more without thinking.
         if (!out.trim() && thought && think === undefined && p.local && !signal.aborted) {
           deps.emit({ ...base, type: 'node_progress', note: 'Only thought, no answer — asking again without thinking' });
-          return call(messages, ref, false, json, noImages);
+          return call(messages, ref, false, json, noImages, false, live);
         }
         return out;
       };
@@ -633,6 +636,7 @@ export async function runGraph(
         callModel: async (messages, ref, opts) => {
           const m = ref ?? primary;
           const json = opts?.json;
+          const live = { quiet: opts?.quiet, fresh: opts?.fresh };
           if (!m) throw new Error('This block has no model');
           mayUse(m);
           const p = await deps.resolve(m.providerId);
@@ -640,8 +644,8 @@ export async function runGraph(
           if (p.local && p.exclusive !== false) await deps.services?.freeGpu?.(p.hostKey, m.providerId, { model: m.model, bytes: (await p.modelInfo(m.model).catch(() => undefined))?.sizeBytes }).catch(() => {});
           // A different local GPU than the one this block holds: wait for that GPU too.
           if (p.local && p.exclusive !== false && p.hostKey !== heldHost)
-            return withHostLock(p.hostKey, () => call(messages, m, node.config.think === false ? false : undefined, json), { signal, label: lockLabel, priority: deps.priority });
-          return call(messages, m, node.config.think === false ? false : undefined, json);
+            return withHostLock(p.hostKey, () => call(messages, m, node.config.think === false ? false : undefined, json, false, false, live), { signal, label: lockLabel, priority: deps.priority });
+          return call(messages, m, node.config.think === false ? false : undefined, json, false, false, live);
         },
         decide: async (req, ref) => {
           const m = ref ?? primary;

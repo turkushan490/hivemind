@@ -107,7 +107,8 @@ export function applyEvent(views: Record<string, NodeView>, ev: RunEvent): Recor
       next = { ...v, state: 'thinking', thinking: (v.thinking ?? '') + (ev.text ?? '') };
       break;
     case 'token':
-      next = { ...v, state: 'streaming', text: v.text + (ev.text ?? ''), tokens: ev.tokens, tps: ev.tokensPerSec ?? v.tps };
+      // replace: a corrected answer (skills in Force mode) starts the text over.
+      next = { ...v, state: 'streaming', text: (ev.replace ? '' : v.text) + (ev.text ?? ''), tokens: ev.tokens, tps: ev.tokensPerSec ?? v.tps };
       break;
     case 'node_done':
       next = {

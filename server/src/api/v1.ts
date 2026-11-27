@@ -209,7 +209,10 @@ export function v1Routes(app: FastifyInstance) {
           ...(e.fallback && { fallback: true, fallbackFor: e.fallbackFor }),
         }));
     const model = body.model;
-    const live = streamSource(graph);
+    // Skills in Force mode may replace the answer after a check, and a stream can't take text back: that block's answer
+    // comes in one piece at the end.
+    const liveId = streamSource(graph);
+    const live = liveId && graph.nodes.find((n) => n.id === liveId)?.config.skillMode !== 'force' ? liveId : undefined;
     // Early output (H12): if blocks are wired after the Output (e.g. writeMemory), reply at the Output's answer and let
     // the tail finish in the background. Without a tail, wait for run_done as before.
     const outIds = new Set(graph.nodes.filter((n) => n.type === 'output').map((n) => n.id));
@@ -245,7 +248,7 @@ export function v1Routes(app: FastifyInstance) {
         return reply.code(500).send(apiError(`The canvas "${row.name}" gave no answer${errors.length ? `: ${errors.join('; ')}` : ''} (run ${runId}, see Problems)`, 'server_error', 'run_failed'));
       const info = routeInfo(events);
       const stats = statsOf(events);
-      const answering = live ? stats.find((s) => s.node === labelOf(live)) : stats.at(-1);
+      const answering = liveId ? stats.find((s) => s.node === labelOf(liveId)) : stats.at(-1);
       const reply1 = completion(runId, model, done.final, usageOf(events));
       if (session) recordTurn(session, vars.character, question, done.final);
       return {
@@ -276,7 +279,7 @@ export function v1Routes(app: FastifyInstance) {
       if (rest) send(chunk(runId, model, { content: rest }));
       if (session) recordTurn(session, vars.character, question, final);
       const st = statsOf(events);
-      const ans = live ? st.find((s) => s.node === labelOf(live)) : st.at(-1);
+      const ans = liveId ? st.find((s) => s.node === labelOf(liveId)) : st.at(-1);
       send({ ...chunk(runId, model, {}, 'stop'), usage: { ...usageOf(events), ...(ans?.tokensPerSecond && { tokensPerSecond: ans.tokensPerSecond }) } });
       resolve();
     };

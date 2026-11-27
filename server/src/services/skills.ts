@@ -312,6 +312,9 @@ export function skillsForRun(user: SkillUser, opts: { hidden?: boolean } = {}) {
   const byName = (name: string) => rows.find((r) => r.name.toLowerCase() === name.trim().toLowerCase());
   return {
     list: () => rows.map((r) => ({ name: r.name, description: r.description })),
+    /** A skill this run may not use because it is locked (only a hidden workflow of its owner may). */
+    locked: (name: string): boolean =>
+      !opts.hidden && !!db.prepare('SELECT 1 FROM skills WHERE owner_id = ? AND hidden = 1 AND name = ? COLLATE NOCASE').get(user.id, name.trim()),
     /** A skill's text files as they are (the Skill block, to edit it). */
     raw: (name: string): { path: string; text: string }[] | undefined => {
       const row = byName(name);

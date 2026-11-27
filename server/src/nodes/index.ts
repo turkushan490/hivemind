@@ -115,6 +115,8 @@ export interface NodeServices {
   skills?: {
     list(): { name: string; description: string }[];
     load(name: string): string | undefined;
+    /** Locked: it exists, but only a hidden workflow may use it. */
+    locked?(name: string): boolean;
     /** Skill block: a skill's files as they are (to edit it). */
     raw?(name: string): { path: string; text: string }[] | undefined;
     /** Skill block: save a SKILL.md as a skill (new, or the one with its name). */
@@ -212,11 +214,14 @@ export const historyText = (history: ChatMessage[]) =>
   history.map((m) => `${m.role === 'assistant' ? 'Assistant' : 'User'}: ${m.content}`).join('\n\n');
 
 /**
- * Fills {{question}}, {{inputs}}, {{system}}, {{history}} and {{vars.name}} in one pass, so text that came in
- * is never filled in again. An unknown var becomes empty.
+ * Fills {{question}}, {{inputs}}, {{system}}, {{history}}, {{now}} ("2026-11-27 14:05", local time) and {{vars.name}}
+ * in one pass, so text that came in is never filled in again. An unknown var becomes empty.
  */
+/** "2026-11-27 14:05" in the server's time zone (TZ). */
+export const nowText = () => new Date().toLocaleString('sv-SE', { timeZone: process.env.TZ || undefined }).slice(0, 16);
+
 export const fill = (tpl: string, ctx: Pick<NodeContext, 'question' | 'vars'> & { chat?: ChatContext }, inputs = '') =>
-  tpl.replace(/\{\{\s*(question|inputs|system|history|session\.history|session\.character|vars\.([a-zA-Z0-9_]{1,40}))\s*\}\}/g, (_, k: string, name?: string) => {
+  tpl.replace(/\{\{\s*(question|inputs|system|history|now|session\.history|session\.character|vars\.([a-zA-Z0-9_]{1,40}))\s*\}\}/g, (_, k: string, name?: string) => {
     if (name !== undefined) return ctx.vars?.[name] ?? '';
     // H30: the session's conversation (it comes in as the chat history) and its character.
     if (k === 'session.history') return historyText(ctx.chat?.history ?? []);
@@ -224,6 +229,7 @@ export const fill = (tpl: string, ctx: Pick<NodeContext, 'question' | 'vars'> & 
     if (k === 'question') return ctx.question;
     if (k === 'system') return ctx.chat?.system ?? '';
     if (k === 'history') return historyText(ctx.chat?.history ?? []);
+    if (k === 'now') return nowText();
     return inputs;
   });
 
@@ -440,7 +446,12 @@ export async function withSkills(ctx: NodeContext, system: string | undefined): 
       parts.push(text);
     } else missing.push(n);
   }
-  if (missing.length && mode === 'fixed') ctx.progress(`Skill not found: ${missing.join(', ')}`);
+  if (missing.length && mode === 'fixed') {
+    const locked = missing.filter((n) => svc.locked?.(n));
+    const gone = missing.filter((n) => !locked.includes(n));
+    if (locked.length) ctx.progress(`Skill locked: ${locked.join(', ')}. Only a hidden workflow (Unlocked) can use it: open it from the Unlocked folder and run it there`);
+    if (gone.length) ctx.progress(`Skill not found: ${gone.join(', ')}`);
+  }
   if (!loaded.length) {
     if (mode === 'auto') ctx.progress('No skill fits this task');
     return system;

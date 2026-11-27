@@ -202,9 +202,18 @@ export const AGENT_NODE: NodeDefinition = {
           case 'readMemory':
             result = await asBlock(ctx, 'readMemory', { memoryPaths: Array.isArray(i.paths) ? i.paths.join('\n') : str(i.paths ?? i.path), memoryIndex: !!i.index }, '', n);
             break;
-          case 'writeMemory':
+          case 'writeMemory': {
+            // Only the files the block allows (e.g. the Prompt coach never touches the history it reads).
+            const only = (c.agentWritePaths ?? '').split(/\r?\n|,/).map((x) => x.trim().replace(/^\/+/, '')).filter(Boolean);
+            if (only.length) {
+              const path = str(i.path).trim().replace(/^\/+/, '');
+              if (!only.some((o) => (o.endsWith('/') ? path.startsWith(o) : path === o))) throw new Error(`You may only write: ${only.join(', ')}`);
+              // Moves and deletes go by JSON in the text: not with a list of allowed files.
+              if (/^\s*\{[\s\S]*"(from|to|delete)"\s*:/.test(str(i.text))) throw new Error('Moving or deleting files is not allowed here; write the whole text');
+            }
             result = await asBlock(ctx, 'writeMemory', { memoryPath: str(i.path), memoryMode: i.mode === 'append' ? 'append' : 'replace', memoryBy: ctx.vars.character || 'agent' }, str(i.text), n);
             break;
+          }
           case 'search':
             // The web, not Wikipedia (H29): DuckDuckGo unless the model names a source; optionally read the best pages.
             result = await asBlock(ctx, 'search', { source: typeof i.source === 'string' && i.source ? i.source : 'duckduckgo', ...(i.read !== undefined && { readPages: Math.max(0, Math.min(3, Number(i.read) || 0)) }) }, str(i.query), n);

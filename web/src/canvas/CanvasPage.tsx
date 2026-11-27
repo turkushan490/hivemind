@@ -68,6 +68,8 @@ const toGraph = (nodes: HiveFlowNode[], edges: Edge[]): CanvasGraph => ({
 interface Draft {
   id?: string;
   name: string;
+  folder?: string;
+  hidden?: boolean;
   graph: CanvasGraph;
   saved?: string;
 }
@@ -124,7 +126,7 @@ function Editor({ active, onProblem, followRequest }: { active: boolean; onProbl
   const initial = useRef(loadDraft());
   const [nodes, setNodes, onNodesChange] = useNodesState<HiveFlowNode>(initial.current ? toFlow(initial.current.graph).nodes : []);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>(initial.current ? toFlow(initial.current.graph).edges : []);
-  const [doc, setDoc] = useState<{ id?: string; name: string; folder?: string; hidden?: boolean }>({ id: initial.current?.id, name: initial.current?.name ?? 'My canvas' });
+  const [doc, setDoc] = useState<{ id?: string; name: string; folder?: string; hidden?: boolean }>({ id: initial.current?.id, name: initial.current?.name ?? 'My canvas', folder: initial.current?.folder, hidden: initial.current?.hidden });
   // The graph as last saved, to know if there are unsaved changes.
   const [saved, setSaved] = useState<string | undefined>(initial.current?.saved);
   const [canvases, setCanvases] = useState<Canvas[]>([]);
@@ -192,9 +194,33 @@ function Editor({ active, onProblem, followRequest }: { active: boolean; onProbl
     // A replayed or followed run is not your draft.
     if (replaying || watching) return;
     try {
-      localStorage.setItem(DRAFT_KEY, JSON.stringify({ id: doc.id, name: doc.name, graph: JSON.parse(graphJson), saved } satisfies Draft));
+      localStorage.setItem(DRAFT_KEY, JSON.stringify({ id: doc.id, name: doc.name, folder: doc.folder, hidden: doc.hidden, graph: JSON.parse(graphJson), saved } satisfies Draft));
     } catch {}
   }, [graphJson, doc, saved, replaying, watching]);
+
+  // The open workflow's folder and hidden flag follow the saved one (a draft from before a reload may not know them).
+  useEffect(() => {
+    const c = doc.id ? canvases.find((x) => x.id === doc.id) : undefined;
+    if (c && ((c.folder ?? '') !== (doc.folder ?? '') || !!c.hidden !== !!doc.hidden)) setDoc((d) => ({ ...d, folder: c.folder ?? '', hidden: !!c.hidden }));
+  }, [canvases, doc.id]);
+
+  // The last run of the open workflow (from any app: this screen, another tab, the phone, the robot), so switching
+  // away never loses it: a bar offers its result, or to follow it while it still runs.
+  const [lastRun, setLastRun] = useState<{ id: string; status: string; startedAt: string; question: string }>();
+  useEffect(() => {
+    if (!active || !doc.id || replaying || watching) return setLastRun(undefined);
+    let gone = false;
+    api<{ id: string; canvasId?: string; status: string; startedAt: string; question: string }[]>('/api/runs', { quiet: true })
+      .then((list) => {
+        if (gone) return;
+        const r = list.find((x) => x.canvasId === doc.id);
+        setLastRun(r && { id: r.id, status: r.status, startedAt: r.startedAt, question: r.question });
+      })
+      .catch(() => {});
+    return () => {
+      gone = true;
+    };
+  }, [active, doc.id, replaying, watching, run.final, run.runId]);
 
   const confirmDiscard = () => !dirty || nodes.length === 0 || confirm('You have unsaved changes on this workflow. Throw them away?');
 
@@ -804,6 +830,28 @@ Save your copy over it? (Cancel keeps the saved one)`) ? graph : undefined;
         </div>
         )}
       </div>
+
+      {lastRun && lastRun.id !== run.runId && !replaying && !watching && (
+        <div className="flex flex-wrap items-center gap-2 border-b border-[#30363d] bg-[#11161d] px-3 py-1.5 text-xs text-slate-300">
+          <span className={lastRun.status === 'running' ? 'text-amber-300' : 'text-slate-400'}>{lastRun.status === 'running' ? '● Running now' : `Last run (${lastRun.status})`}</span>
+          <span className="text-slate-500">{new Date(`${lastRun.startedAt.replace(' ', 'T')}Z`).toLocaleString()}</span>
+          <span className="min-w-0 flex-1 truncate" title={lastRun.question}>
+            “{lastRun.question.replace(/!\[[^\]]*\]\(hm-file:[^)]*\)/g, '🖼').slice(0, 140)}”
+          </span>
+          {lastRun.status === 'running' ? (
+            <button className="btn-ghost px-2 py-0.5 text-xs" onClick={() => watchRun({ runId: lastRun.id, title: doc.name, n: Date.now() })}>
+              Follow live
+            </button>
+          ) : (
+            <button className="btn-ghost px-2 py-0.5 text-xs" onClick={() => void enterReplay(lastRun.id)}>
+              Show result
+            </button>
+          )}
+          <button className="text-slate-500 hover:text-white" onClick={() => setLastRun(undefined)} aria-label="Hide">
+            ✕
+          </button>
+        </div>
+      )}
 
       {!replaying &&
         run.paused.map((p) => (

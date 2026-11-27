@@ -158,6 +158,8 @@ export interface NodeConfig {
   /** Agent (H21): the tools it may use, at most this many steps (default 12) and minutes (default 20), the canvas that
    * answers askCharacter (default "hivebot", with vars.character = the teammate), and the steps under the answer. */
   agentTools?: string[];
+  /** Agent: the only memory files its writeMemory may write (one per line; "folder/" = everything in it). Empty: any. */
+  agentWritePaths?: string;
   maxSteps?: number;
   maxMinutes?: number;
   agentAskCanvas?: string;

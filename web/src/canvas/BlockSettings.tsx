@@ -691,6 +691,18 @@ function KindSettings(p: Props) {
               ))}
             </div>
           </div>
+          {tools.includes('writeMemory') && (
+            <label className="block space-y-1">
+              <Label>Memory files it may write (optional)</Label>
+              <textarea
+                className="input font-mono text-xs"
+                rows={2}
+                placeholder={'empty: any file. One per line, e.g.\nprompts/lessons.md\nnotes/ (a whole folder)'}
+                value={p.config.agentWritePaths ?? ''}
+                onChange={(e) => p.onChange({ agentWritePaths: e.target.value || undefined })}
+              />
+            </label>
+          )}
           <div className="flex flex-wrap gap-3 text-xs text-slate-300">
             <label className="flex items-center gap-1">
               At most

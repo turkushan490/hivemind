@@ -1259,6 +1259,17 @@ API (admin only):
     (`?hidden=1`, which needs unlock mode).
   - The `skills.hidden` column is added outside the numbered migrations.
 - **Skills has its own tab** at the top, right after HiveBot (moved out of Settings).
+- **`{{now}}`** in templates: "2026-11-27 14:05", in the server's time zone (TZ). History entries get a timestamp.
+- **Agent `agentWritePaths`**: the only memory files the agent may write, one per line (`folder/` = the whole
+  folder). Other paths, and moves or deletes, are refused. The Prompt coach uses it so it never touches the history it
+  reads.
+- **Locked skill on a normal run**: the block now says it is locked and only a hidden workflow can use it, instead of
+  "Skill not found".
+- **Editor**:
+  - The draft remembers the open workflow's folder and hidden flag, and follows the saved workflow. Before, a reload
+    showed "Other" and attachments weren't hidden.
+  - A bar shows the open workflow's last run, from any app, with **Show result** or **Follow live**, so switching
+    workflows never loses a run.
 - **Skill block** (`type: "skill"`), so a workflow can make and edit skills:
   - `skillOp: "read"` (default) gives the list of your skills, plus the whole text of the skill the request names (or
     `skillName`), for a model to edit.

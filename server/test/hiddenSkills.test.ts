@@ -80,6 +80,10 @@ describe('locked skills', () => {
     expect(normal).toEqual(['open-one']);
     expect(hidden.sort()).toEqual(['open-one', 'secret-one', 'secret-two']);
     expect(skills.skillsForRun({ id: 'u1', role: 'admin' }).load('secret-one')).toBeUndefined();
+    // A normal run is told it is locked (not "not found"); a hidden run just uses it.
+    expect(skills.skillsForRun({ id: 'u1', role: 'admin' }).locked('secret-one')).toBe(true);
+    expect(skills.skillsForRun({ id: 'u1', role: 'admin' }).locked('nope')).toBe(false);
+    expect(skills.skillsForRun({ id: 'u1', role: 'admin' }, { hidden: true }).locked('secret-one')).toBe(false);
     expect(skills.skillsForRun({ id: 'u1', role: 'admin' }, { hidden: true }).load('secret-one')).toContain('SECRET-ONE');
     // Someone else's hidden run never gets u1's locked skills.
     expect(skills.skillsForRun({ id: 'u2', role: 'admin' }, { hidden: true }).list().map((s) => s.name)).not.toContain('secret-one');

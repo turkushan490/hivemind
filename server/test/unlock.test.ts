@@ -64,6 +64,13 @@ describe('unlock mode', () => {
     expect((await get('/api/unlock')).json()).toMatchObject({ unlocked: true });
     await send('POST', '/api/unlock', { on: false });
     expect((await get('/api/unlock')).json()).toMatchObject({ unlocked: false });
+    // A new log-in always starts locked, also with "never".
+    await send('POST', '/api/unlock/after', { after: 'never' });
+    unlock.setUnlocked({ id: 'u1' }, true);
+    const { hashPassword } = await import('../src/crypto.js');
+    db.prepare('UPDATE users SET pw_hash = ? WHERE id = ?').run(await hashPassword('test-pass-1'), 'u1');
+    expect((await app.inject({ method: 'POST', url: '/api/auth/login', payload: { username: 'user_u1', password: 'test-pass-1' } })).statusCode).toBe(200);
+    expect(unlock.isUnlocked({ id: 'u1' })).toBe(false);
     // 1 day: two days old is locked.
     await send('POST', '/api/unlock/after', { after: '1d' });
     setSetting('user:u1:unlocked', String(Date.now() - 2 * 86_400_000));

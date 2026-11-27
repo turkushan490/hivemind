@@ -5,7 +5,7 @@ import { db, getSetting, setSetting } from '../db/index.js';
  * Unlock mode: a private zone per user with its own memory (a separate folder, never mixed with the normal memory)
  * and hidden workflows. Only shown while the user turned it on with their PIN, on the screen: API tokens (T3, robots,
  * apps) never see it, also when it is on. It locks again by itself after the chosen time (default 12 hours) and on
- * log out, or with "never" only when the user locks it.
+ * log out, or with "never" only when the user locks it. A new log-in always starts locked.
  */
 export interface UnlockUser {
   id: string;

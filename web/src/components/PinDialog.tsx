@@ -102,6 +102,7 @@ export function UnlockPinPanel() {
           <option value="never">never: only when I lock it</option>
         </select>
       </label>
+      <p className="text-xs text-slate-500">Logging in always starts locked: unlock with your PIN after every log-in.</p>
       <p className="text-sm">{unlock.hasPin ? 'A PIN is set.' : 'No PIN yet.'}</p>
       {unlock.hasPin && <input className="input w-64" type="password" autoComplete="off" placeholder="Current PIN" value={old} onChange={(e) => setOld(e.target.value)} />}
       <div className="flex flex-wrap gap-2">

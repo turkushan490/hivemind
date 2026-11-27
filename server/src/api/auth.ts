@@ -183,6 +183,8 @@ export function authRoutes(app: FastifyInstance) {
       noteFailure(account);
       return reply.code(401).send({ error: 'Wrong username or password' });
     }
+    // A new log-in always starts locked: unlock mode needs the PIN again (whatever "lock by itself" is set to).
+    setUnlocked({ id: row.id }, false);
     startSession(reply, row.id);
     return { ok: true };
   });

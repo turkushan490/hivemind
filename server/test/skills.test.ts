@@ -209,7 +209,7 @@ describe('skills', () => {
     const graph = chain(node('q', 'input'), node('l', 'llm', { model: M, system: 'Be short.', skills: ['pirate'] }), node('o', 'output'));
     const run = await runAndWait(app, { question: 'Hello', graph }, 'b');
     expect(run.status).toBe('done');
-    expect(chats[0].system).toMatch(/^Be short\.\n\nUse these skills[\s\S]*## Skill: pirate[\s\S]*Always say Arr\./);
+    expect(chats[0].system).toMatch(/^Be short\.\n\nSKILLS: the person's own instructions[\s\S]*the skill wins[\s\S]*## Skill: pirate[\s\S]*Always say Arr\.[\s\S]*skills above win/);
     expect(run.events.some((e) => e.type === 'node_progress' && e.note === 'Skills loaded: pirate')).toBe(true);
   });
 

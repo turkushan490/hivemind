@@ -457,7 +457,9 @@ export async function withSkills(ctx: NodeContext, system: string | undefined): 
     return system;
   }
   ctx.progress(`Skills loaded: ${loaded.join(', ')}`);
-  const block = `Use these skills (instructions to follow where they apply):\n\n${parts.join('\n\n---\n\n')}`;
+  // The person's skills win: where a skill says something else than the block's own instructions (settings, format,
+  // style, words to use or avoid), the model follows the skill.
+  const block = `SKILLS: the person's own instructions. Follow them exactly where they apply. Where a skill says something different from the instructions above (settings, sizes, steps, format, style, words to use or avoid), the skill wins.\n\n${parts.join('\n\n---\n\n')}\n\n(End of skills. Remember: where they apply, the skills above win over every other instruction.)`;
   return system ? `${system}\n\n${block}` : block;
 }
 

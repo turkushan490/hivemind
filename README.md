@@ -3,188 +3,190 @@
 <h1 align="center">HiveMind</h1>
 <p align="center"><b>Many AIs, one answer — and you watch them think.</b></p>
 
-<p align="center"><img src="docs/website-files.gif" width="860" alt="A website built by a local model, shown in a live sandboxed preview, and the files folder with previews"></p>
+HiveMind is a self-hosted web app where several AI models work together on a canvas of blocks.
+Local models (Ollama, the built-in Colibri engine) and cloud models answer, review each other and a judge merges the best answer.
+It also does chat and voice, pictures with ComfyUI, websites, memory, skills, an OpenAI-compatible API and a HiveBot robot companion.
 
-<p align="center"><img src="docs/comfyui-example.png" width="320" alt="Picture made by an Image block with a local SDXL model in ComfyUI"></p>
+<p align="center"><img src="docs/demo.gif" width="860" alt="A council run: two local models answer, an anonymous review, then a judge merges the final answer"></p>
 
-<p align="center"><img src="docs/builder.gif" width="860" alt="Setup wizard, the Builder making a canvas from one sentence, running it, then asking it in Use mode"></p>
+**Contents:** [Features](#features) · [Quick start](#quick-start) · [Your first chat in 5 minutes](#your-first-chat-in-5-minutes) · [Ready-made workflows](#ready-made-workflows) · [Guides](#guides) · [Development](#development)
 
-<p align="center"><img src="docs/replay.gif" width="860" alt="Run history: pick a past run and replay it on the canvas with a time slider and speed control"></p>
+## Features
 
-<p align="center"><img src="docs/animations.gif" width="760" alt="A run with animations: loading aura and GPU chip, thinking brain with floating thoughts, writing with live text, particles along the wires"></p>
+- **Canvas of blocks:** drag in models, reviewers, judges, search, files and actions, wire them together and run. Every block shows live what it is doing.
+- **Builder AI:** describe what you want in one sentence and it builds the canvas with the models you really have.
+- **Local and cloud models:** Ollama (with model downloads), Colibri for very large models, OpenAI, Anthropic, OpenRouter, Groq, Gemini and any OpenAI-compatible server.
+- **Live GPU view:** GPU bars per block (waiting, loading, loaded) and a priority queue (1–200), so jobs share one GPU in the right order.
+- **Replay:** every run is saved and can be played back on the canvas.
+- **Websites and files:** AIs build websites into projects, with a live preview, an editor and Git.
+- **Images:** Image blocks draw with your own ComfyUI or an image API.
+- **Chat and voice:** ask your workflows with the microphone and hear the answer.
+- **Memory and skills:** Markdown memory files the models read and write, and `SKILL.md` skills they follow.
+- **HiveBot:** a robot companion with its own characters, voices and background jobs.
+- **API:** every saved canvas is a model on an OpenAI-compatible `/v1` API.
+- **Users and stats:** admin / user / viewer roles, access profiles, cost and speed stats, a model leaderboard.
 
-<p align="center"><img src="docs/canvas.gif" width="860" alt="Building a canvas: add blocks, drag them, pull wires, pick models, run it live"></p>
+| Build a canvas | Builder AI |
+|---|---|
+| ![Building a canvas: add blocks, pull wires, pick models, run](docs/canvas.gif) | ![The Builder makes a canvas from one sentence](docs/builder.gif) |
+| **Live GPU bars** | **Replay a run** |
+| ![GPU bar and work bar per block](docs/gpu-bars.gif) | ![Replay a past run with a time slider](docs/replay.gif) |
+| **Websites and files** | **Models and providers** |
+| ![A website with a live preview and the files folder](docs/website-files.gif) | ![Provider cards and model downloads](docs/settings-and-models.gif) |
+| **Voice** | **Memory** |
+| ![Voice in Use mode](docs/img/voice.gif) | ![The Memory page](docs/img/memory-page.png) |
+| **HiveBot** | **Colibri** |
+| ![The HiveBot page](docs/img/hivebot.png) | ![Settings → Colibri](docs/img/colibri.png) |
 
-<p align="center"><img src="docs/gpu-bars.gif" width="700" alt="Local models: GPU bar (waiting, loading into GPU, loaded) and work bar (thinking, writing) per block"></p>
+> **TODO — screenshots to take** (save them in `docs/img/`).
+> The `docs/img/` images above show as broken until these are taken:
+>
+> - [ ] `docs/img/voice.gif` — Use mode: press 🎤, ask, hear the answer
+> - [ ] `docs/img/memory-page.png` — the Memory page with a few files
+> - [ ] `docs/img/skills-page.png` — the Skills page with an imported skill
+> - [ ] `docs/img/hivebot.png` — the HiveBot page with its characters
+> - [ ] `docs/img/colibri.png` — Settings → Colibri with the library
+> - [ ] `docs/img/setup-wizard.png` — the setup wizard after the first login
+> - [ ] `docs/img/use-mode.png` — Use mode with an answer
+> - [ ] `docs/img/unraid-template.png` — the Unraid template form
 
-<p align="center"><img src="docs/demo.gif" width="860" alt="A council run: two local Ollama models answer, an anonymous review, then a judge merges the final answer"></p>
+## Quick start
 
-HiveMind is a self-hosted web app where several AI models work together. Ask one question: local models (Ollama) and cloud models answer it, review each other anonymously, and a judge model merges the best parts into one final answer, noting where they disagreed. Every step streams live with tokens, speed, time and cost.
-
-> **Status: milestone 8.** On top of everything before it: **Projects** (whole websites built run after run, with an editor, preview and Git), **skills** (`SKILL.md` folders the models follow), the **Colibri** local engine (big mixture-of-experts models split across GPU and RAM, several loaded at once, the hottest experts on the GPU), **coding agents** over `/v1` (T3 Code / OpenCode: every provider model is a model, with tools and streaming), and a **GPU priority queue** (1–200) so HiveBot, coding agents and background jobs share one GPU in the right order. Before that: the API changes for [DungeonMind](docs/HIVEMIND_CHANGES.md), **decision models** (Jev) with the Decide block and the Auto model, and the **Training Lab**. The Android app is next on the [roadmap](#roadmap).
-
-## Features (now)
-
-- **Decision models (Jev):** TypeSafe Jev, Ollama decision models (Nimble, Tev1, Clef — local on your GPU) and OpenAI Decisions answer yes/no, choice and score questions with probabilities in ~0.1 s. The **Decide** block branches on the answers (with live probability bars), the **Auto (Jev router)** model picks a small / medium / large model per question, the **Router** can decide with Jev, **Judge / Vote** can pre-score answers with Jev, and an optional canvas router sends voice to the right canvas. See [docs/decisions.md](docs/decisions.md).
-- **Training Lab:** datasets (upload, import from Hugging Face, 👍, review, workflow blocks) and **New model** in three plain steps: your data, a "brain" (small & fast, balanced, smart) and Start — trained on this server's GPU (Unsloth) or a rented Hugging Face GPU, then put into Ollama. Jobs can wait for a nightly **training window**, stream live progress, and workflows can run on a **schedule**. (The D&D simulator and scoreboard now live in DungeonMind.) See [docs/lab.md](docs/lab.md).
-- **For apps like DungeonMind:** run variables (`vars` → `{{vars.name}}`), chat history over `/v1`, **JSON mode** per block (checked and repaired once), a context size per block (`num_ctx`), per-block **outputs** on `GET /api/runs/:id`, memory **search** (SQLite FTS5) with **bulk import**, templated memory keys, image batches (1–8 pictures), API tokens **limited** to some canvases, memory keys and datasets (optionally allowed to train), a per-run model override, the exact messages each block sent, and feature flags on `/api/health`. See [docs/HIVEMIND_CHANGES.md](docs/HIVEMIND_CHANGES.md).
-- **Roles:** admin (everything), user (own canvases and AI keys), viewer (only uses shared canvases in Use mode, with voice and API tokens). Admins manage people in **Settings → Users**; the server checks the role on every write. **Share** on a canvas lets everyone use it (it runs with the sharer's AI providers).
-- **Access profiles:** **Settings → Access** (admins) says which providers, models and LoRAs each user and each API token may see and use — per provider "all", a checklist, or folder globs like `dnd/*`. New users get **Basic** (the shared cloud providers, nothing local); admins always have **Everything**. A token with a profile of its own gets only what both it and its user allow. The server checks it in every model list and on every run (also shared canvases, `/v1`, schedules and every call an Auto model or Router makes).
-- **Private files:** everyone sees, opens, uses in blocks and deletes only their own files (uploads, saved files, made pictures); admins see all of them with an Owner column and filter. ComfyUI pictures pass through its temp folder, so they don't pile up in its output folder.
-- **Stats:** every model call is counted: tokens in/out, cost (provider prices, else a [pricing table](server/src/services/pricing.ts) for OpenAI / Anthropic; free and local models count as $0) and speed. The **Stats** tab shows cost per day, provider and model, tokens/sec per model, and a **leaderboard** of how often each model's answer is picked by a Judge (it names the best answer) or wins a Vote.
-- **Export a run** as Markdown, JSON or PDF (the browser's print view → Save as PDF), from History, Use mode and the canvas answer — or as a ZIP with its files.
-- **OpenAI-compatible API:** every saved canvas is a “model” at `http://<server>:4820/v1` — `GET /v1/models`, `POST /v1/chat/completions` (streaming too) with your API token. Works with Home Assistant, Open WebUI, the `openai` package or anything that speaks OpenAI. See [docs/openai-api.md](docs/openai-api.md).
-- **Voice:** 🎤 in Use mode and on the Question block (record → transcribe → run) and 🔊 Read aloud on answers. Speech to text through any OpenAI-compatible server (Groq Whisper free, OpenAI, a local speaches / faster-whisper); text to speech with the browser's voice or an OpenAI-compatible speech server (OpenAI, local Kokoro / Piper). See [docs/voice.md](docs/voice.md).
-- **Action blocks:** **Home Assistant** (read entity states, call services with templated JSON), **Webhook / HTTP** (any method, headers, body template; passes the response on) and **Discord** (post to a channel webhook). Failures show on the block and in Problems. See [docs/action-blocks.md](docs/action-blocks.md).
-- **Home Assistant integration:** a custom integration ([`integrations/home_assistant`](integrations/home_assistant)) — config flow, an Assist conversation agent and a button per canvas, and a `hivemind.run_canvas` action that returns the answer. Works on HA OS and HA Docker over plain HTTP.
-- **Images:** an Image block draws with your own **ComfyUI** (its checkpoints and LoRAs, fully local) or an OpenAI-compatible image API. Ollama and ComfyUI on the same GPU take turns automatically.
-- **Files & websites:** a files folder per user (upload, preview, download), a Save file block (website, Markdown, code, JSON, CSV), and a sandboxed live **preview** of websites the AIs build.
-- **Projects (whole websites):** folders of files that stay between runs, with an editor, a sandboxed preview and a history of what each run changed. Blocks **Read project**, **Write files**, **Update notes** (`PROJECT.md`, so each run knows earlier choices), **Build** (npm, inside the container, without HiveMind's keys) and **Git** (commit, push, pull, pull request with your own GitHub token). A **Pause** block waits for you before anything is published, and **For each … Collect** runs part of a workflow once per item. The **Site builder** template keeps building one site run after run. See [docs/projects.md](docs/projects.md).
-- **Skills:** your own `SKILL.md` folders (the Claude skills format) — upload, import from GitHub or write them — that AI model blocks follow, picked by you or by the model.
-- **Export / import:** canvases as files or a ZIP, finished tasks as ZIPs (answer, every block's output, images, replay data) — and back in again.
-- **Ready-made sets:** Everyday, Coding, Creative, Home / research, Website, Decisions (spam check, smart router, safe action) and Tabletop (the DungeonMind canvases) templates.
-- **GPU priority:** every run and every API request carries a priority **1–200** (1 runs first, 200 last, 100 the middle). When a local GPU is busy, the waiting job with the lowest number goes next — a job already generating is never cut off. The Workflow page has a **Prio** box (run two canvases, the lower number goes first), **Activity** shows each run's priority, **HiveBot** sends its own per request (quick chat jumps the queue, a background site build waits at 200), and **T3 Code** is pinned at 100 so a coding agent never starves your robot.
-- **Colibri (local MoE engine):** run big mixture-of-experts models (Qwen3, Flint, LFM3, DeepSeek, GLM, Kimi, …) split across your GPU and RAM — the most-used experts on the GPU, the rest in RAM — so a model far larger than your VRAM still runs, optionally **CPU-only** to leave the GPU free. Several models stay loaded at once (RAM budget, pin the ones you want kept), and any Hugging Face Ollama model whose architecture it supports gets an "also run in Colibri" option.
-- **Coding agents (OpenAI-compatible, per model):** point **T3 Code / OpenCode**, Continue or any OpenAI client at `/v1` and every provider model you may use is a model (`colibri/qwen36-35b`, `ollama/gemma4:e2b`) — called directly with tools, tool results, streaming and the same access rules, run limit and shared GPU queue as a canvas. Settings → **T3 Code** writes its `opencode.json` for you.
-- **Parallel switch:** cloud AIs always run at the same time; local models one by one, or together when you switch it on.
-- **Builder AI:** tell it what you need ("search Wikipedia, then two models answer and a judge merges them") and it builds or changes the canvas with the models you really have. A setup wizard helps you pick its model.
-- **Use mode:** the simple screen — pick a canvas, ask, get the answer, with a compact view of how it was made.
-- **Logic blocks:** Router (a model or Jev picks the branch), Decide (a decision model answers typed questions and branches), Debate (models improve each other over rounds), Vote (models pick the best answer).
-- **Data blocks:** Text template, File (txt, md, csv, json, PDF), Web search (Wikipedia free; Brave, Tavily or your own SearXNG), Memory (remember, recall the newest, or **search** the best matches — e.g. one rule out of a whole rulebook).
-- **Drag-and-drop canvas:** build your own AI teams — drag in models, reviewers and judges, wire them together, pick a model per block (with search and a free filter), save and reuse them. Templates for council, council + review and draft → improve. Run it and every block shows live what it is doing.
-
-- **Providers:** Ollama (local, models listed automatically), any OpenAI-compatible API, Anthropic (Claude). Presets for **OpenRouter** (free `:free` models), **Groq** and **Google Gemini** (free tiers), OpenAI, OpenCode Zen and custom URLs.
-- **Council run:** question → N models → optional anonymous review round → judge → final answer.
-- **Run history + replay:** every run is kept; pick one and it plays again on the canvas exactly as it happened (same timing, animations and camera), at 1×–10× speed, with a slider to jump anywhere.
-- **Live animations:** a spinning aura around every working block (amber loading, violet thinking, cyan writing), a pulsing brain-core with the model's real thoughts floating up, the answer typing live, particles flowing along the wires, a green burst when a block finishes, and a camera that follows the active block.
-- **Real GPU bars for local models:** waiting for the GPU → loading into it (timed against that model's last real load on your server) → loaded / already in GPU, plus a separate thinking / writing bar with tokens and speed.
-- **Local models run one at a time** per Ollama host (no VRAM fights), cloud models run in parallel.
-- **Live event stream (SSE)** for every step: queued, loading into VRAM, thinking, streaming, done, error — with token counts, tokens/sec, time and cost. Runs are stored and can be replayed.
-- **Crash feedback:** nothing fails silently. Server crashes, failed models, provider errors and page errors show up live (red banners, toasts) and are kept in a **Problems** tab, also after a restart.
-- **Free memory:** the header shows which Ollama models sit in RAM/VRAM and unloads one or all with a click.
-- **Settings page:** one card per AI — Claude, ChatGPT, free OpenRouter/Groq/Gemini, Ollama, any OpenAI-compatible server. Paste a key, it tests itself.
-- **Download models into Ollama:** live search of the whole Ollama library, recommendations small to big for your GPU size (fits / slow / too big), or Hugging Face GGUF search with every quant and its size; live progress and delete.
-- **Accounts:** first visitor creates the admin; users, per-user **API tokens** (`Authorization: Bearer hm_…`) for apps and Home Assistant. Provider keys are stored encrypted (AES-256-GCM).
-
-<p align="center"><img src="docs/problems-and-memory.gif" width="860" alt="A model fails during a run and the reason is shown; the Problems tab lists it; Unload all frees the GPU memory"></p>
-
-<p align="center"><img src="docs/model-library.gif" width="860" alt="Recommended models by GPU size, live Ollama library search with exact sizes, sharded Hugging Face warning"></p>
-
-<p align="center"><img src="docs/settings-and-models.gif" width="860" alt="Settings: provider cards, OpenRouter free models, Hugging Face search and download into Ollama with progress, then delete"></p>
-
-## A workflow, end to end
-
-The flagship workflow is a **council**, the run in the [demo above](docs/demo.gif):
-
-```
-Question ─┬─▶ Model A ─┐
-          ├─▶ Model B ─┼─▶ Review (anonymous) ─▶ Judge ─▶ Final answer
-          └─▶ Model C ─┘
-```
-
-1. **Ask once.** You type a question into the Question block (or send it over the API).
-2. **Several models answer.** Two or three models — local (Ollama/Colibri) and cloud — answer the same question. Cloud models run at the same time; local ones take turns on the GPU **in priority order**.
-3. **They review each other, anonymously.** A review step shows each answer without its author so no model is flattered by a name.
-4. **A judge merges.** The Judge block reads every answer and writes one final answer, keeping the best parts and noting where the models disagreed. (Swap it for a **Vote** block and the models pick the winner instead.)
-5. **Watch it think.** Every block streams live — loading into VRAM, thinking, writing — with tokens, speed, time and cost, and the whole run is saved so you can **replay** it.
-
-Build it in three clicks from the **council** / **council + review** templates, or tell the **Builder** ("two models answer, a judge merges them") and it wires the canvas with the models you actually have. Then **Save** it and it's instantly a model on the API: `POST /v1/chat/completions` with `"model": "<its name>"`.
-
-Other ready-made starting points: **HiveMind: smart router** (Jev sorts each question into chat / code / reasoning / writing / deep / home / picture and sends it to the right specialist), **Site builder** (keeps building one website run after run), **Deep research**, and the DungeonMind **Tabletop** set.
-
-## Run it
-
-### Docker
-
-```bash
-docker run -d --name hivemind -p 4820:4820 \
-  -v ./hivemind-data:/data \
-  -e OLLAMA_URL=http://192.168.1.10:11434 \
-  ghcr.io/turkushan490/hivemind:latest
-```
-
-Or use [`docker-compose.yml`](docker-compose.yml). Open `http://<server>:4820` and create the admin account.
+HiveMind listens on port **4820**. All data (database, files, keys) lives in one folder: `/data` in Docker.
+In the examples, replace `your-server` with the name or address of the machine that runs it.
 
 ### Unraid
 
-Add the template URL in Docker → Add Container → Template repositories, or install from Community Apps once listed:
+1. Go to **Docker → Add Container**, and under *Template repositories* add:
+   ```
+   https://raw.githubusercontent.com/turkushan490/hivemind/main/unraid/hivemind.xml
+   ```
+   (or search **HiveMind** in Community Applications once it is listed).
+2. Set **Ollama URL** to your Ollama server, for example `http://your-server:11434`. Use the real address, not `localhost`. Leave it empty if you only use cloud AIs.
+3. Optional: set **ComfyUI URL** for local pictures.
+4. Click **Apply** and open the WebUI: `http://your-server:4820`.
 
+The template already passes `--gpus=all`. If you have no NVIDIA GPU (or no Nvidia driver plugin), remove `--gpus=all` from *Extra Parameters*; everything except training and Colibri's GPU mode still works.
+
+### Docker
+
+Without a GPU:
+
+```bash
+docker run -d --name hivemind --restart unless-stopped \
+  -p 4820:4820 \
+  -v ./hivemind-data:/data \
+  -e OLLAMA_URL=http://your-server:11434 \
+  -e TZ=Etc/UTC \
+  ghcr.io/turkushan490/hivemind:latest
 ```
-https://raw.githubusercontent.com/turkushan490/hivemind/main/unraid/hivemind.xml
+
+With an NVIDIA GPU (needs the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)), add `--gpus=all`:
+
+```bash
+docker run -d --name hivemind --restart unless-stopped --gpus=all \
+  -p 4820:4820 \
+  -v ./hivemind-data:/data \
+  -e OLLAMA_URL=http://your-server:11434 \
+  -e TZ=Etc/UTC \
+  ghcr.io/turkushan490/hivemind:latest
 ```
 
-Set `OLLAMA_URL` to your Ollama container (e.g. `http://192.168.1.10:11434`). Update later with [`unraid/update.sh`](unraid/update.sh) or *Check for updates* in the Docker tab.
+The GPU is used by the Training Lab, Colibri (CUDA), the built-in voice engine and fast speech-to-text. Ollama and ComfyUI run in their own containers and use the GPU there.
 
-#### Getting listed in Community Applications
+#### Docker compose
 
-The template ([`unraid/hivemind.xml`](unraid/hivemind.xml)) and the maintainer profile ([`ca_profile.xml`](ca_profile.xml), in the repository root where CA looks for it) are ready. To submit:
+The repository has a ready [`docker-compose.yml`](docker-compose.yml). Download it and start:
 
-1. **Check the template.** In Unraid, add the template URL above under Docker → Template repositories and install it once. Every field should show a description, the icon should load, and the WebUI link should work.
-2. **Open a support thread.** Post in the Unraid forum's *Docker Containers* section ("[Support] HiveMind"). CA moderators expect one per app. Put its URL in `<Support>` in `hivemind.xml` (it points at GitHub issues now) and push.
-3. **Submit the repository.** Use the Community Applications submission form linked from the CA policies post in the Unraid forum. Give it this repository's URL; CA reads every `*.xml` template in it plus `ca_profile.xml`.
-4. **Keep it current.** CA re-reads the template from `main` automatically. Update `<Changes>` with each release, and keep `<Beta>true</Beta>` until a tagged stable version exists.
+```bash
+curl -O https://raw.githubusercontent.com/turkushan490/hivemind/main/docker-compose.yml
+docker compose up -d
+```
 
-| Variable | Default | What it does |
+For the GPU, add this under the `hivemind:` service:
+
+```yaml
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+```
+
+The image is large (~16 GB, it carries the training stack), so the first pull takes a while.
+
+### Windows (.exe)
+
+1. Download `hivemind-windows-x64.exe` from the [Releases page](https://github.com/turkushan490/hivemind/releases).
+2. Double-click it. A window opens with HiveMind at `http://localhost:4820`.
+3. Your data lives in `%LOCALAPPDATA%\HiveMind` (database, files, keys and `hivemind.log`).
+
+The .exe has the same app, the built-in speech-to-text and the API. Linux-only parts are not in it: Colibri, the Training Lab and the built-in Kokoro voice. The Shell and Browser blocks need their tools (bash or PowerShell, a Chromium browser) on the PC; the Docker image has them built in. Install [Ollama for Windows](https://ollama.com/download) for local models; HiveMind finds it at `http://localhost:11434`.
+
+### Update
+
+- **Docker:** `docker pull ghcr.io/turkushan490/hivemind:latest` and recreate the container (`docker compose pull && docker compose up -d`).
+- **Unraid:** *Check for updates* in the Docker tab, or run [`unraid/update.sh`](unraid/update.sh).
+- **Windows:** download the new .exe and replace the old one. Your data stays in `%LOCALAPPDATA%\HiveMind`.
+
+All settings are in [docs/environment.md](docs/environment.md).
+
+## Your first chat in 5 minutes
+
+1. **Open HiveMind** at `http://your-server:4820`. The first person to visit creates the **admin** account.
+2. **Add an AI.** The setup wizard opens. Pick one:
+   - **Local:** your Ollama is already there if you set `OLLAMA_URL`. No model yet? Go to **Settings → Download models** and download a small one, for example `gemma3:4b` or `qwen3:4b`.
+   - **Free cloud:** get a free key at [openrouter.ai](https://openrouter.ai), [console.groq.com](https://console.groq.com) or [aistudio.google.com](https://aistudio.google.com) and paste it in **Settings → AI providers**. The card tests the key itself.
+3. **Pick a canvas.** On the **Workflow** page click **New ▾ → Everyday → Council** (or *Empty canvas*). Choose a model in each AI block.
+4. **Ask.** Type a question in the Question block and press **Run**. Watch the blocks load, think and write.
+5. **Save** the canvas. Now it is in **Use** mode (the simple ask-and-answer screen) and on the API as a model.
+
+Want it even simpler? Open the **Builder** panel and type: *"Two models answer, a judge merges them."*
+
+## Ready-made workflows
+
+Open them on the **Workflow** page with **New ▾**. A few to start with:
+
+| Template | Group | What it does |
 |---|---|---|
-| `PORT` | `4820` | Web port |
-| `OLLAMA_URL` | `http://localhost:11434` | First Ollama provider on a fresh install |
-| `SECRET_KEY` | generated in `/data` | Encrypts stored API keys |
-| `SECURE_COOKIES` | `false` | `true` when served over HTTPS (also needed for the microphone on other devices) |
-| `COMFYUI_URL` | empty | Optional ComfyUI, added once as an image provider. Keep ComfyUI's own port inside your network: anyone who reaches it can list and download every picture it holds (`/history`, `/view`), which HiveMind can't protect |
-| `TYPESAFE_API_KEY` | empty | Optional TypeSafe key, added once (encrypted) as the Jev decision provider |
-| `BLOCK_PRIVATE_ADDRESSES` | `false` | `true` stops Webhook blocks and image links from reaching private (LAN) addresses — for servers other people use. Loopback and cloud-metadata addresses are always blocked, and workflows of non-admins never reach the LAN, whatever this says |
-| `RUN_TIMEOUT_MINUTES` | `30` | A run that takes longer is stopped, so a server that never answers can't hold the GPU |
-| `TRUST_PROXY` | `loopback, linklocal, uniquelocal` | Which reverse proxies may set `X-Forwarded-For` (the client IP for the login limit) |
-| `LOG_LEVEL` | `info` | Container log detail (`debug`, `info`, `warn`, `error`) |
+| **Council** | Everyday | 3 models answer, a judge merges the best parts |
+| **Council + review** | Everyday | Same, with an anonymous review round first |
+| **Draft → improve** | Everyday | One model writes, a second checks and improves |
+| **Fact-check with Wikipedia** | Everyday | Searches Wikipedia, answers with sources |
+| **Summarize a file** / **Translate** | Everyday | Ask about a PDF or text; translate with a checker |
+| **HiveMind: smart router** | Everyday | Sorts each question (chat, code, writing, picture…) and sends it to the right model |
+| **Coder + reviewer** | Coding | One model writes code, a second finds bugs and fixes them |
+| **Bug-hunt debate** | Coding | Two models debate the bug, a judge writes the fix |
+| **Software builder (project)** | Coding | Builds a software project run after run |
+| **Picture from an idea** | Creative | A model writes the image prompt, your image model draws it |
+| **Story + editor** / **Brainstorm + vote** | Creative | Write and polish; brainstorm and let a vote pick |
+| **Deep research** | Research | Searches the web in rounds, reviews each site, writes an answer with sources |
+| **Research with memory** | Home / research | Remembers what earlier runs learned |
+| **Website builder** / **Site builder (project)** | Website | Builds a website with a live preview, and keeps improving it |
+| **Spam check** / **Safe action (guard)** | Decisions | Fast yes/no decisions with a decision model |
+| **Voice assistant** | Voice | Ask by voice, get a spoken answer |
 
-### Home Assistant
+There are more for training models, voices and tabletop games. What every block does: [docs/blocks.md](docs/blocks.md).
 
-Both directions work:
+## Guides
 
-- **HiveMind → Home Assistant:** in **Settings → Home Assistant** enter your HA address (e.g. `http://192.168.1.20:8123`) and a long-lived access token (HA profile → Security). Home Assistant blocks can then read sensors and call services.
-- **Home Assistant → HiveMind:** install the [HiveMind integration](integrations/home_assistant/README.md) with an API token from **Settings → API tokens**. Each canvas becomes an Assist agent and a button, plus the `hivemind.run_canvas` action.
-
-### Free models
-
-| Provider | How to get it free |
+| Guide | What it covers |
 |---|---|
-| Ollama | Runs on your own GPU — no key |
-| OpenRouter | Free key at openrouter.ai, use models ending in `:free` (20/min, 50/day) |
-| Groq | Free key at console.groq.com |
-| Google Gemini | Free key at aistudio.google.com |
+| [Blocks](docs/blocks.md) | Every block on the canvas, in 2–3 lines each |
+| [Chat & Talk](docs/chat-and-talk.md) | Use mode, voice in and out |
+| [Skills](docs/skills.md) | `SKILL.md` folders the models follow |
+| [Memory](docs/memory.md) | Memory blocks and Markdown memory files |
+| [Unlock mode](docs/unlock-mode.md) | A private, PIN-protected area |
+| [Ollama & machines](docs/ollama.md) | Local models, several machines, the GPU queue |
+| [Colibri](docs/colibri.md) | The built-in engine for very large models |
+| [HiveBot](docs/hivebot.md) | The robot companion |
+| [API](docs/api.md) | The OpenAI-compatible `/v1` API and the native API |
+| [Environment variables](docs/environment.md) | Every setting for Docker, Unraid and Windows |
+| [FAQ & troubleshooting](docs/faq.md) | Common problems and fixes |
 
-OpenCode Zen's free models (like Big Pickle) only work inside the OpenCode app, so HiveMind supports Zen's paid models only.
-
-## API
-
-### OpenAI-compatible (per canvas)
-
-```bash
-curl http://server:4820/v1/chat/completions \
-  -H "Authorization: Bearer hm_..." -H "Content-Type: application/json" \
-  -d '{"model": "<canvas id or name>", "messages": [{"role": "user", "content": "Why is the sky blue?"}]}'
-```
-
-`GET /v1/models` lists your canvases (plus `auto` when the canvas router is on). Add `"stream": true` for server-sent chunks; send the whole conversation and it fills `{{history}}`; `hivemind_vars` fills `{{vars.name}}`. Set `"hivemind_vars": {"priority": 10}` (1–200, 1 first) to put the request ahead of others on a shared GPU. **Settings → OpenAI API** shows your base URL, canvas ids and copyable examples. Details: [docs/openai-api.md](docs/openai-api.md).
-
-### Native
-
-```bash
-# Run a saved canvas or an ad-hoc graph, with optional variables for {{vars.name}} and a GPU priority (1–200, 1 first)
-curl -H "Authorization: Bearer hm_..." -H "content-type: application/json" \
-  -d '{"question":"Why is the sky blue?","canvasId":"...","vars":{"tone":"short"},"priority":100}' http://server:4820/api/runs
-# → {"runId":"..."}; then stream events:
-curl -N -H "Authorization: Bearer hm_..." http://server:4820/api/runs/<runId>/events
-# the result, with the output of every labelled block:
-curl -H "Authorization: Bearer hm_..." http://server:4820/api/runs/<runId>
-# memory: import a rulebook and search it
-curl -H "Authorization: Bearer hm_..." -H "content-type: application/json" \
-  -d '{"replace":true,"entries":[{"text":"Grapple: …"}]}' http://server:4820/api/memory/keys/rules:srd51/import
-curl -H "Authorization: Bearer hm_..." -H "content-type: application/json" \
-  -d '{"query":"grapple","limit":3}' http://server:4820/api/memory/keys/rules:srd51/search
-```
-
-**Settings → API tokens** can limit a token to some canvases and memory keys (`dnd-*`, `rules:*`): it then can't reach anything else. All endpoints and errors for DungeonMind: [docs/HIVEMIND_CHANGES.md](docs/HIVEMIND_CHANGES.md).
+More in-depth: [projects](docs/projects.md) · [action blocks](docs/action-blocks.md) · [voice](docs/voice.md) · [decision models](docs/decisions.md) · [Training Lab](docs/lab.md) · [OpenAI API details](docs/openai-api.md) · [Home Assistant integration](integrations/home_assistant/README.md) · [change log](docs/HIVEMIND_CHANGES.md)
 
 ## Development
 
@@ -196,20 +198,7 @@ npm run dev:server   # API on :4820
 npm run dev:web      # UI on :5173 (proxies /api and /v1)
 ```
 
-Layout: `packages/shared` (canvas + event types), `server` (Fastify, providers, engine, SQLite via `node:sqlite`; the Lab in `server/src/lab`), `web` (React + Vite + Tailwind; the Lab in `web/src/lab`), `integrations/home_assistant` (the Home Assistant custom integration, Python; its tests run with `pytest`, see its README).
-
-## Roadmap
-
-1. ✅ Engine, providers, login, council test page, Docker/Unraid
-2. ✅ Drag-and-drop canvas editor (React Flow): wire any models together, save canvases
-3. ✅ Neon live view: particles running along wires, timings, camera following the active step, replay
-4. ✅ Helper AI that builds canvases for you, setup wizard, simple "Use" mode, logic and data nodes
-5. ✅ Voice (speech in/out), OpenAI-compatible API per canvas, Home Assistant integration, action nodes
-6. ✅ Roles, cost stats, judge winner stats, export, Unraid Community Apps template
-7. ✅ API for DungeonMind (M0), decision models (Jev, Decide block, Auto model), Training Lab L1–L2
-8. ✅ Projects, builds, GitHub, Pause, Site builder, skills
-9. ✅ Colibri local MoE engine (big models split GPU/RAM), coding agents over `/v1` (T3 Code / OpenCode), GPU priority queue (1–200)
-10. Lab L4 (training on Hugging Face) · Android app
+Layout: `packages/shared` (canvas and event types), `server` (Fastify + TypeScript, SQLite via `node:sqlite`), `web` (React + Vite + Tailwind), `integrations/home_assistant` (the Home Assistant custom integration).
 
 ## License
 

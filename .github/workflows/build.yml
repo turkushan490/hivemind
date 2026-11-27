@@ -118,9 +118,27 @@ jobs:
           APP_RELEASE: ${{ steps.ver.outputs.release }}
       - run: npm run embed:bin -w server
       - run: npm run build:exe -w server
+      # pkg downloads a prebuilt Windows Node binary; keep it between runs so a flaky download (504) can't break the build.
+      - name: Cache pkg base binaries
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/pkg-cache
+          key: pkg-cache-${{ runner.os }}-yao-pkg-6.25.0-node24-win-x64
       - name: Pack single .exe
+        env:
+          PKG_CACHE_PATH: ${{ runner.temp }}/pkg-cache
         # --no-bytecode --public: ship plain JS, not V8 bytecode (bytecode fatally crashes this bundle at runtime).
-        run: npx @yao-pkg/pkg@6.25.0 server/dist-exe/hivemind.mjs -t node24-win-x64 --no-bytecode --public --public-packages "*" -o hivemind-windows-x64.exe
+        # Up to 3 tries with a pause: the base binary download sometimes times out.
+        run: |
+          mkdir -p "$PKG_CACHE_PATH"
+          for attempt in 1 2 3; do
+            if npx --yes @yao-pkg/pkg@6.25.0 server/dist-exe/hivemind.mjs -t node24-win-x64 --no-bytecode --public --public-packages "*" -o hivemind-windows-x64.exe; then
+              exit 0
+            fi
+            echo "pkg failed (try $attempt of 3)"
+            if [ "$attempt" -lt 3 ]; then sleep $((attempt * 30)); fi
+          done
+          exit 1
       - uses: actions/upload-artifact@v4
         with:
           name: hivemind-windows-x64

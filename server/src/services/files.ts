@@ -77,6 +77,13 @@ export function setOwner(rel: string, ownerId: string | null, hidden = false) {
   ).run(relOf(rel), ownerId, hidden ? 1 : 0);
 }
 
+/** Lock (hide) or unlock one of your own files by hand (the caller checks unlock mode). */
+export function setFileHidden(u: FileUser, rel: string, hidden: boolean) {
+  const row = rowOf(rel);
+  if (!row || row.owner_id !== u.id) throw notFound();
+  db.prepare('UPDATE files SET hidden = ? WHERE path = ?').run(hidden ? 1 : 0, relOf(rel));
+}
+
 /** Hides these files of this owner (a hidden workflow used them); someone else's files are left alone. */
 export function hideFiles(ownerId: string, paths: string[]) {
   const hide = db.prepare('UPDATE files SET hidden = 1 WHERE path = ? AND owner_id = ?');

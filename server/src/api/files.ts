@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { createReadStream, statSync } from 'node:fs';
 import { basename, extname } from 'node:path';
-import { cleanName, deleteFile, listFiles, ownPath, writeUnique } from '../services/files.js';
+import { cleanName, deleteFile, listFiles, ownPath, setFileHidden, writeUnique } from '../services/files.js';
 import { requireUser } from './auth.js';
 import { isUnlocked } from '../services/unlock.js';
 
@@ -56,6 +56,14 @@ export function fileRoutes(app: FastifyInstance) {
     if (ext !== '.pdf') reply.header('content-security-policy', "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; sandbox");
     reply.header('content-disposition', `${disposition}; filename*=UTF-8''${encodeURIComponent(basename(full))}`);
     return reply.send(createReadStream(full));
+  });
+
+  /** Lock (hide) or unlock one of your own files: {path, hidden}. Only while unlock mode is on. */
+  app.put('/api/files/hidden', { preHandler: requireUser }, async (req, reply) => {
+    if (!isUnlocked(req.user!)) return reply.code(403).send({ error: 'Turn on unlock mode first' });
+    const b = (req.body ?? {}) as { path?: string; hidden?: boolean };
+    setFileHidden(req.user!, String(b.path ?? ''), !!b.hidden);
+    return { ok: true };
   });
 
   app.delete('/api/files', { preHandler: requireUser }, async (req) => {

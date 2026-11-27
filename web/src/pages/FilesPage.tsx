@@ -2,7 +2,7 @@ import { useEffect, useState, type DragEvent } from 'react';
 import { api } from '../api';
 import { fileUrl, SitePreview } from '../components/AnswerView';
 import { toast } from '../notify';
-import { useOnUnlockChange } from '../unlock';
+import { useOnUnlockChange, useUnlock } from '../unlock';
 
 interface FileEntry {
   path: string;
@@ -70,6 +70,32 @@ export function FilesPage({ active, isAdmin = false }: { active: boolean; isAdmi
 
   const owners = [...new Set(files.map((f) => f.owner ?? ''))].sort();
   const shown = files.filter((f) => f.path.toLowerCase().includes(q.toLowerCase()) && (!isAdmin || !owner || (owner === '-' ? !f.owner : f.owner === owner)));
+  // Hidden files (unlock mode) get their own section, never mixed into the normal list.
+  const lockedShown = shown.filter((f) => f.hidden);
+  const normalShown = shown.filter((f) => !f.hidden);
+  const unlock = useUnlock();
+  const setLocked = async (f: FileEntry, hidden: boolean) => {
+    const res = await fetch('/api/files/hidden', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ path: f.path, hidden }) });
+    if (!res.ok) return toast((await res.json().catch(() => ({}))).error ?? `HTTP ${res.status}`);
+    toast(hidden ? 'Locked: only shown while unlocked' : 'Unlocked: a normal file again', 'ok');
+    setOpen({ ...f, hidden });
+    load();
+  };
+  const row = (f: FileEntry) => (
+    <button
+      key={f.path}
+      onClick={() => setOpen(f)}
+      className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm ${open?.path === f.path ? 'bg-indigo-500/15' : 'hover:bg-[#21262d]'}`}
+    >
+      <span>{ICON[f.kind]}</span>
+      <span className="min-w-0 flex-1 truncate" title={f.path}>
+        {f.path}
+      </span>
+      {isAdmin && <span className="w-20 shrink-0 truncate text-xs text-slate-400" title="Owner">{f.owner ?? '—'}</span>}
+      <span className="shrink-0 text-xs text-slate-500">{size(f.size)}</span>
+      <span className="hidden shrink-0 text-xs text-slate-600 sm:inline">{new Date(f.modified).toLocaleDateString()}</span>
+    </button>
+  );
 
   return (
     <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1fr_1.2fr]">
@@ -101,24 +127,15 @@ export function FilesPage({ active, isAdmin = false }: { active: boolean; isAdmi
             </select>
           )}
         </div>
+        {lockedShown.length > 0 && (
+          <div className="card max-h-[40vh] space-y-0.5 overflow-y-auto border-amber-700/60 p-1">
+            <p className="px-2 py-1 text-xs font-semibold text-amber-300">🔒 Unlocked files ({lockedShown.length}): only you, only while unlocked</p>
+            {lockedShown.map(row)}
+          </div>
+        )}
         <div className="card max-h-[60vh] space-y-0.5 overflow-y-auto p-1">
-          {shown.length === 0 && <p className="p-3 text-sm text-slate-500">No files yet.</p>}
-          {shown.map((f) => (
-            <button
-              key={f.path}
-              onClick={() => setOpen(f)}
-              className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm ${open?.path === f.path ? 'bg-indigo-500/15' : 'hover:bg-[#21262d]'}`}
-            >
-              <span>{ICON[f.kind]}</span>
-              <span className="min-w-0 flex-1 truncate" title={f.path}>
-                {f.hidden && <span title="Hidden: from a hidden workflow, only shown while unlocked">🔒 </span>}
-                {f.path}
-              </span>
-              {isAdmin && <span className="w-20 shrink-0 truncate text-xs text-slate-400" title="Owner">{f.owner ?? '—'}</span>}
-              <span className="shrink-0 text-xs text-slate-500">{size(f.size)}</span>
-              <span className="hidden shrink-0 text-xs text-slate-600 sm:inline">{new Date(f.modified).toLocaleDateString()}</span>
-            </button>
-          ))}
+          {normalShown.length === 0 && <p className="p-3 text-sm text-slate-500">No files yet.</p>}
+          {normalShown.map(row)}
         </div>
       </div>
 
@@ -134,6 +151,11 @@ export function FilesPage({ active, isAdmin = false }: { active: boolean; isAdmi
               <a className="btn-ghost" href={fileUrl(open.path, false)}>
                 Download
               </a>
+              {unlock.unlocked && (
+                <button className="btn-ghost text-amber-300" onClick={() => void setLocked(open, !open.hidden)} title="Locked files only show while unlock mode is on, only for you">
+                  {open.hidden ? '🔓 Unlock' : '🔒 Lock'}
+                </button>
+              )}
               <button
                 className="btn-ghost text-red-400"
                 onClick={async () => {

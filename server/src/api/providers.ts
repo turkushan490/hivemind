@@ -320,7 +320,7 @@ export function trainingFor(user: User | undefined, opts: { scheduled?: boolean 
   return trainingServices(user.id, trainDepsFor(user), {
     nightly: !!opts.scheduled,
     tokenId: user.tokenId,
-    allowFile: (path: string) => mayUseFile(user, path),
+    allowFile: (path: string) => mayUseFile(user, path, { run: true }),
     ...(user.scope && { allowDataset: (name: string) => datasetAllowed(user, name), allowCanvas: (id: string) => canvasAllowed(user, id) }),
   });
 }

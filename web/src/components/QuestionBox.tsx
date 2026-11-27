@@ -35,9 +35,10 @@ async function pdfText(file: File): Promise<string> {
   return pages.join('\n\n');
 }
 
-async function upload(file: File): Promise<string> {
+/** hidden: the question is for a hidden workflow, so the file is hidden too (only you see it, only while unlocked). */
+async function upload(file: File, hidden = false): Promise<string> {
   const safe = file.name.replace(/[^\w.-]+/g, '_') || 'picture.png';
-  const res = await fetch(`/api/files?name=${encodeURIComponent(`uploads/${safe}`)}`, { method: 'POST', headers: { 'content-type': 'application/octet-stream' }, body: file });
+  const res = await fetch(`/api/files?name=${encodeURIComponent(`uploads/${safe}`)}${hidden ? '&hidden=1' : ''}`, { method: 'POST', headers: { 'content-type': 'application/octet-stream' }, body: file });
   const data = (await res.json().catch(() => ({}))) as { path?: string; error?: string };
   if (!res.ok || !data.path) throw new Error(data.error ?? `upload failed (HTTP ${res.status})`);
   return data.path;
@@ -54,7 +55,8 @@ const clip = (text: string, name: string) => {
 };
 
 /** The attachments of one question box. */
-export function useAttachments() {
+/** hidden: attachments for a hidden workflow are uploaded as hidden files. */
+export function useAttachments(hidden = false) {
   const [list, setList] = useState<Attachment[]>([]);
   const patch = (id: string, p: Partial<Attachment> | null) => setList((l) => (p ? l.map((a) => (a.id === id ? { ...a, ...p } : a)) : l.filter((a) => a.id !== id)));
 
@@ -74,11 +76,11 @@ export function useAttachments() {
       void (async () => {
         try {
           if (kind === 'image') {
-            const path = await upload(file);
+            const path = await upload(file, hidden);
             patch(id, { busy: false, text: `![${file.name}](hm-file:${linkPath(path)})`, preview: `/api/files/raw?inline=1&path=${encodeURIComponent(path)}` });
           } else if (kind === 'audio') {
             // The file itself goes along (a Voice trainer needs the recording); a short voice note also as its words.
-            const path = await upload(file);
+            const path = await upload(file, hidden);
             const link = `[${file.name}](hm-file:${linkPath(path)})`;
             const said = file.size < 5 * 1024 * 1024 && file.type.startsWith('audio/') ? await transcribe(file).catch(() => '') : '';
             patch(id, { busy: false, text: said ? `${link}\n--- Audio "${file.name}" (what is said in it) ---\n${clip(said, file.name)}` : link });

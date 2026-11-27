@@ -2,6 +2,7 @@ import { useEffect, useState, type DragEvent } from 'react';
 import { api } from '../api';
 import { fileUrl, SitePreview } from '../components/AnswerView';
 import { toast } from '../notify';
+import { useOnUnlockChange } from '../unlock';
 
 interface FileEntry {
   path: string;
@@ -10,6 +11,8 @@ interface FileEntry {
   kind: 'image' | 'text' | 'html' | 'pdf' | 'other';
   /** Admins: who it belongs to (none: put in the folder by hand, admins only). */
   owner?: string;
+  /** Unlock mode: a hidden file (from a hidden workflow); only listed while unlocked. */
+  hidden?: boolean;
 }
 
 const ICON: Record<FileEntry['kind'], string> = { image: '🖼️', text: '📄', html: '🌐', pdf: '📕', other: '📦' };
@@ -32,6 +35,11 @@ export function FilesPage({ active, isAdmin = false }: { active: boolean; isAdmi
   useEffect(() => {
     if (active) load();
   }, [active]);
+  // Unlock mode switched: hidden files come or go.
+  useOnUnlockChange(() => {
+    setOpen(null);
+    void load();
+  });
 
   useEffect(() => {
     setText(null);
@@ -103,6 +111,7 @@ export function FilesPage({ active, isAdmin = false }: { active: boolean; isAdmi
             >
               <span>{ICON[f.kind]}</span>
               <span className="min-w-0 flex-1 truncate" title={f.path}>
+                {f.hidden && <span title="Hidden: from a hidden workflow, only shown while unlocked">🔒 </span>}
                 {f.path}
               </span>
               {isAdmin && <span className="w-20 shrink-0 truncate text-xs text-slate-400" title="Owner">{f.owner ?? '—'}</span>}

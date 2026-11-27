@@ -3,6 +3,7 @@ import { createReadStream, statSync } from 'node:fs';
 import { basename, extname } from 'node:path';
 import { cleanName, deleteFile, listFiles, ownPath, writeUnique } from '../services/files.js';
 import { requireUser } from './auth.js';
+import { isUnlocked } from '../services/unlock.js';
 
 const MIME: Record<string, string> = {
   '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.gif': 'image/gif', '.svg': 'image/svg+xml',
@@ -19,12 +20,15 @@ export function fileRoutes(app: FastifyInstance) {
   /** Your own files; an admin gets every file, with its owner. */
   app.get('/api/files', { preHandler: requireUser }, async (req) => listFiles(req.user!));
 
-  /** Body: the file. ?name=folder/file.ext — an existing name gets " (2)" added. */
+  /** Body: the file. ?name=folder/file.ext — an existing name gets " (2)" added. ?hidden=1 (unlock mode on): a hidden file. */
   app.post('/api/files', { preHandler: requireUser, bodyLimit: 200 * 1024 * 1024 }, async (req, reply) => {
-    const name = String((req.query as { name?: string }).name ?? '');
+    const { name: rawName, hidden } = req.query as { name?: string; hidden?: string };
+    const name = String(rawName ?? '');
     if (!Buffer.isBuffer(req.body)) return reply.code(415).send({ error: 'Send the file as application/octet-stream' });
+    const hide = hidden === '1' || hidden === 'true';
+    if (hide && !isUnlocked(req.user!)) return reply.code(403).send({ error: 'Turn on unlock mode first' });
     const parts = name.split('/').map(cleanName);
-    return { path: writeUnique(parts.join('/'), req.body, req.user!.id) };
+    return { path: writeUnique(parts.join('/'), req.body, req.user!.id, { hidden: hide }) };
   });
 
   /**

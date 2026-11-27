@@ -35,12 +35,14 @@ import { config } from './config.js';
 import { logError } from './errors.js';
 import { FEATURES } from './features.js';
 import { captureError, logApiCall } from './services/activity.js';
-import { claimExistingFiles } from './services/files.js';
+import { claimExistingFiles, hideFilesOfHiddenRuns } from './services/files.js';
 
 /** The whole web app without listening: main.ts starts it, tests inject requests into it. */
 export async function buildApp(opts: { logger?: boolean; web?: boolean; onRoute?: (r: RouteOptions) => void } = {}): Promise<FastifyInstance> {
   // Files that were in the folder before files had owners go to the first admin (once).
   claimExistingFiles();
+  // Files that earlier hidden workflow runs used or saved become hidden (once).
+  hideFilesOfHiddenRuns();
   // Logs go to stdout and (Settings → Log file) to the file; debug in Settings turns on the debug lines without a restart.
   const app = Fastify({ logger: opts.logger === false ? false : { level: serverLogLevel(), stream: serverLogStream }, trustProxy: process.env.TRUST_PROXY || 'loopback, linklocal, uniquelocal', bodyLimit: 5 * 1024 * 1024 });
 

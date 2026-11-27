@@ -51,7 +51,8 @@ export function UsePage({ active, viewer, onProblem, onBuild }: { active: boolea
   }, [run.final]);
 
   // The question box: the text plus its pictures, files and audio.
-  const attachments = useAttachments();
+  // Pictures and files for a hidden workflow are hidden too.
+  const attachments = useAttachments(!!canvas?.hidden);
   const ask = async (e?: FormEvent, q?: string, target = canvas) => {
     e?.preventDefault();
     if (attachments.busy) return toast('Wait until the attachments are read', 'info');

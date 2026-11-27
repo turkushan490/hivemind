@@ -11,7 +11,7 @@ import { memoryFor } from '../services/memory.js';
 import type { User } from '../api/auth.js';
 import { scopedMemory } from '../api/scope.js';
 import { readPage, webSearch } from '../services/search.js';
-import { kindOf, readOwnFile, writeUnique } from '../services/files.js';
+import { filesIn, hideFiles, kindOf, readOwnFile, writeUnique } from '../services/files.js';
 import { allowedFor, checkGraph, type Access } from '../services/access.js';
 import { homeAssistantConnection } from '../services/homeassistant.js';
 import { projectServicesFor } from '../services/projectRun.js';
@@ -165,6 +165,8 @@ export function startRun(opts: {
     ...(canvasHidden(opts.canvasId) && { hidden: true }),
   };
   live.set(id, run);
+  // A hidden workflow's pictures and files (attached to the question) become hidden too, from any app (screen, phone, robot, API).
+  if (run.hidden) hideFiles(opts.ownerId, filesIn(opts.question));
   const sp = (guest?: boolean): memFiles.Space => (run.hidden ? 'hidden' : !!guest);
   // What it takes to start this run again after a restart; its progress is added as blocks finish.
   const meta: ResumeMeta | undefined = opts.resumable && !opts.cancelWhenAlone && !opts.chat
@@ -307,12 +309,13 @@ export function startRun(opts: {
         readPage,
         memory: opts.user ? scopedMemory(memoryFor(opts.ownerId), opts.user) : memoryFor(opts.ownerId),
         saveFile: (path, data) => {
-          const saved = writeUnique(path, data, opts.ownerId);
+          // What a hidden workflow saves is hidden too.
+          const saved = writeUnique(path, data, opts.ownerId, { hidden: run.hidden });
           return { path: saved, kind: kindOf(saved) };
         },
         freeGpu: opts.freeGpu,
         homeAssistant: homeAssistantConnection,
-        readFile: (path) => readOwnFile(fileUser, path),
+        readFile: (path) => readOwnFile(fileUser, path, { run: true }),
         lanAllowed: fileUser.role === 'admin',
         training: opts.training,
         // Projects: the runner's own. Not for limited API tokens, except a robot's own token — the robot starts its

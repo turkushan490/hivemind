@@ -1241,7 +1241,16 @@ API (admin only):
   uncensored Opus 4.7 Colibri model. It follows `prompts/good.md` and keeps every prompt in `prompts/history.md`.
 - Not hidden: the older keyed memory block ("Memory", by key) and lines on Problems when a hidden run fails.
 - The question box stays one line high while empty (a long placeholder in a narrow box made it very tall).
-- Tests: `server/test/unlock.test.ts`.
+- **Hidden files**: when a file is hidden, it is left out of Files, downloads and links for everyone else, and also
+  for its owner while locked (it shows as "not found"). Only its owner sees it, only while unlocked, with a 🔒 in
+  Files. A file is hidden when:
+  - it is attached in a hidden workflow's question box (`POST /api/files?hidden=1`, which needs unlock mode);
+  - it is linked in a hidden run's question (`hm-file:`), from any app: screen, phone, robot or API;
+  - a hidden run saved it.
+- A hidden run still reads its own hidden files after the lock switches on mid-run.
+- Once, at the next start, files that earlier hidden runs used or saved become hidden (`files.hiddenBackfill`). The
+  `files.hidden` column is added outside the numbered migrations.
+- Tests: `server/test/unlock.test.ts`, `server/test/hiddenFiles.test.ts`.
 
 ---
 

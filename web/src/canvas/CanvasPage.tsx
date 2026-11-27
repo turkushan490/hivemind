@@ -531,7 +531,8 @@ Save your copy over it? (Cancel keeps the saved one)`) ? graph : undefined;
   };
 
   // The question box: the text plus its pictures, files and audio.
-  const attachments = useAttachments();
+  // Pictures and files for a hidden workflow are hidden too.
+  const attachments = useAttachments(!!doc.hidden);
   const askWithAttachments = async () => {
     if (attachments.busy) return toast('Wait until the attachments are read', 'info');
     const q = attachments.compose(question);

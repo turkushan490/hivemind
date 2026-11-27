@@ -896,6 +896,25 @@ which project it works on, and can make a new one.
   - models that need a PyTorch conversion are marked as such.
 - **The image builds every engine** colibri has: qwen38, deepseek_v41, glm53, mimo, olmoe, kimi_k3, inkling, laya and gliner_decide too. `GET /api/colibri/status` lists them (`engines`), and the library marks a family whose engine is missing.
 
+### Colibri vision (Qwen3.6 GGUF + mmproj), research 2026-11-27
+
+HiveMind pins `COLIBRI_REF=v2.1.0`. There `c/qwen36.c` loads a GGUF `mmproj` only for LFM3-VL: `q36_mmproj_cfg` refuses every projector but `lfm3vl`, so a Qwen3.6 GGUF on Colibri is text only.
+
+- **v2.2.0 (2026-11-21, also the newest release and `main`) adds it.** Commit `af4de471` ("the Qwen family's vision tower from a GGUF's mmproj") adds `q36_mmproj_qwen`. It reads llama.cpp's `qwen3vl_merger` projector (unsloth's `mmproj-*.gguf`) for Qwen3.5, 3.6 and 3.8.
+  - The tower's `projection_dim` must equal the model's width.
+  - A tower with `v.deepstack*` mergers (Qwen3-VL's) is refused: text only.
+  - The GGUF needs `<arch>.rope.dimension_sections` (M-RoPE) and an `<|image_pad|>` token.
+  - The file comes from `gguf.json`'s `"mmproj"`, or from the `Q36_MMPROJ` env var.
+  - Colibri's CI tests it only on a tiny dense 27B-shaped model, not on a qwen35moe (35B-A3B) GGUF.
+- **The v2.2.0 importer does not link it.** `coli import` (`tools/gguf_import.py`) has no qwen35/qwen35moe entry in `MMPROJ_PROJECTORS`. So an imported Qwen GGUF gets no `"mmproj"` in its `gguf.json`.
+  - The gateway (`openai_server.py`, `qwen36_has_vision`) does take pictures once `gguf.json` has an `"mmproj"`.
+- **Not bumped here.** The CPU `qwen36` engine of v2.2.0 builds (checked). But the image (CUDA) build only runs in CI on `main`, tags and PRs, and `build.sh` never fails the image when an engine does not build. Also v2.2.0 is a big release (≈1,200 files changed since v2.1.0). A bump alone gives no pictures either.
+- **What vision on Colibri would need:**
+  1. Bump `COLIBRI_REF` to `v2.2.0`. Then check in the image build log that no engine says "did not build" (CPU and CUDA `sm_75`).
+  2. `server/colibri/helper.py gguf` downloads the repo's `mmproj-*.gguf` too (e.g. `mmproj-F16.gguf`). After `coli import`, it writes its path as `"mmproj"` into the model's `gguf.json`.
+  3. The Colibri model list marks such a model `vision: true`, so the picture reader is skipped for it.
+  4. Test with one real Qwen3.6-35B-A3B GGUF and its unsloth mmproj on the home server.
+
 ## M16 — Questions with pictures, files and audio; HiveBot S7/S8
 
 - **The question box** (Workflow page and Use page):

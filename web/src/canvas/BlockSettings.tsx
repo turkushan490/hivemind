@@ -193,6 +193,28 @@ function ModelOptions(p: Props) {
         </label>
       )}
       {p.kind === 'llm' && (
+        <label className="flex flex-col gap-1 text-xs text-slate-300">
+          <span className="font-semibold">Thinking</span>
+          <select
+            className="input text-xs"
+            value={c.think === undefined ? '' : c.think === 'high' ? 'high' : c.think ? 'on' : 'off'}
+            onChange={(e) => {
+              const v = e.target.value;
+              p.onChange({ think: v === '' ? undefined : v === 'high' ? 'high' : v === 'on' });
+            }}
+          >
+            <option value="">Model default</option>
+            <option value="off">Off: answer straight away</option>
+            <option value="on">On: think first</option>
+            <option value="high">Think more: longer and harder</option>
+          </select>
+          <span className="text-slate-500">
+            For thinking models (Qwen3, Qwen3.6, DeepSeek, GLM, gpt-oss). Thinking gives better answers to hard questions but takes longer; Think more also gives local
+            models twice the token room. You see the thinking in the block while it runs.
+          </span>
+        </label>
+      )}
+      {p.kind === 'llm' && (
         <label className="flex items-start gap-2 text-xs text-slate-300">
           <input type="checkbox" className="mt-0.5" checked={c.pictures === 'direct'} onChange={(e) => p.onChange({ pictures: e.target.checked ? 'direct' : undefined })} />
           <span>

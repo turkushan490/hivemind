@@ -1290,6 +1290,15 @@ API (admin only):
 - The workflow editor's question box grows to about 4 lines while typing and is one line when you click away; long
   text scrolls inside it.
 - Tests: `server/test/unlock.test.ts`, `server/test/hiddenFiles.test.ts`, `server/test/hiddenSkills.test.ts`.
+- **Thinking** on AI model blocks (`think`: unset = the model's default, `false` = off, `true` = think first,
+  `"high"` = think more):
+  - Ollama gets `think` true/false (gpt-oss: `low`/`medium`/`high`).
+  - Colibri gets `enable_thinking`, plus `reasoning_effort: "high"` for think more.
+  - OpenAI-compatible APIs get `reasoning_effort: "high"` where the model has it; a model that refuses it is asked
+    again without.
+  - Think more also doubles the default token cap of local models (at most 32768), so the answer still fits after
+    long thinking.
+  - Tests: `server/test/thinkLevel.test.ts`.
 
 ---
 

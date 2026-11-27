@@ -218,7 +218,8 @@ const numCtxOf = (node: CanvasNode, limits: RunLimits, isLocal: boolean) => {
 const maxTokensOf = (node: CanvasNode, limits: RunLimits, isLocal: boolean) => {
   const n = node.config.maxTokens;
   if (n && Number.isFinite(n)) return Math.round(Math.min(32768, Math.max(16, n)));
-  return isLocal ? limits.maxTokens : undefined;
+  // Think more: a local thinking model gets twice the room, so the long thinking still leaves space for the answer.
+  return isLocal ? (node.config.think === 'high' ? Math.min(32768, limits.maxTokens * 2) : limits.maxTokens) : undefined;
 };
 
 /** Picture links in a message: ![name](hm-file:folder/x.png). */
@@ -458,7 +459,7 @@ export async function runGraph(
 
       // live.quiet: no token events (a check the person needn't see). live.fresh: the first token says the text so far is
       // replaced (a corrected answer).
-      const call = async (messages: ChatMessage[], ref: ModelRef, think?: boolean, json?: boolean, noImages = false, retried = false, live: { quiet?: boolean; fresh?: boolean } = {}): Promise<string> => {
+      const call = async (messages: ChatMessage[], ref: ModelRef, think?: boolean | 'high', json?: boolean, noImages = false, retried = false, live: { quiet?: boolean; fresh?: boolean } = {}): Promise<string> => {
         const p = await deps.resolve(ref.providerId);
         const asked = messages;
         // A model that can't see gets the picture reader's description of each picture in place of the picture.
@@ -644,8 +645,8 @@ export async function runGraph(
           if (p.local && p.exclusive !== false) await deps.services?.freeGpu?.(p.hostKey, m.providerId, { model: m.model, bytes: (await p.modelInfo(m.model).catch(() => undefined))?.sizeBytes }).catch(() => {});
           // A different local GPU than the one this block holds: wait for that GPU too.
           if (p.local && p.exclusive !== false && p.hostKey !== heldHost)
-            return withHostLock(p.hostKey, () => call(messages, m, node.config.think === false ? false : undefined, json, false, false, live), { signal, label: lockLabel, priority: deps.priority });
-          return call(messages, m, node.config.think === false ? false : undefined, json, false, false, live);
+            return withHostLock(p.hostKey, () => call(messages, m, node.config.think, json, false, false, live), { signal, label: lockLabel, priority: deps.priority });
+          return call(messages, m, node.config.think, json, false, false, live);
         },
         decide: async (req, ref) => {
           const m = ref ?? primary;

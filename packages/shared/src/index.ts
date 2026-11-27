@@ -34,8 +34,8 @@ export interface NodeConfig {
   maxTokens?: number;
   /** Each model call of this block may take at most this many seconds (10-86400), counted once it holds the GPU; default = the run limit. */
   maxSeconds?: number;
-  /** false: thinking models answer straight away, without thinking first. */
-  think?: boolean;
+  /** Thinking models: false = answer straight away; true = think first; 'high' = think longer and harder (more tokens). Unset = the model's own default. */
+  think?: boolean | 'high';
   /** H22: wait for the night window (Settings → Night work) before this block runs, so big (Colibri) jobs keep the day free. */
   preferNight?: boolean;
   /** Local (Ollama) models: keep the model loaded this long after a call ("30m", "1h"), so the next answer starts warm. */

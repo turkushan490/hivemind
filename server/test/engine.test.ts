@@ -194,7 +194,7 @@ describe('runGraph', () => {
 
   it('asks a local model again without thinking when it only thought', async () => {
     const p = fake({ local: true });
-    const asks: (boolean | undefined)[] = [];
+    const asks: (boolean | 'high' | undefined)[] = [];
     p.adapter.stream = async function* (req) {
       asks.push(req.think);
       if (req.think === false) yield { type: 'token' as const, text: 'answer' };

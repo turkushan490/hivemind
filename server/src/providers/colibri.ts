@@ -102,6 +102,7 @@ async function* chat(req: ChatRequest, signal: AbortSignal, loadMs: number | und
       // think: false asks a thinking model (Qwen3.6, GLM) to answer straight away.
       ...(req.think === false && { enable_thinking: false, reasoning_effort: 'none' }),
       ...(req.think === true && { enable_thinking: true }),
+      ...(req.think === 'high' && { enable_thinking: true, reasoning_effort: 'high' }),
       // Coding agents (/v1): colibri renders the tools in the model's own format and parses its calls back.
       ...toolFields(req),
     }),

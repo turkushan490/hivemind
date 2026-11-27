@@ -96,8 +96,8 @@ export interface ChatRequest {
   maxTokens?: number;
   /** Ask for a JSON object as the answer (where the provider supports forcing it). */
   json?: boolean;
-  /** false: ask a thinking model to answer straight away (Ollama). */
-  think?: boolean;
+  /** false: ask a thinking model to answer straight away; true: think first; 'high': think longer and harder. */
+  think?: boolean | 'high';
   /** Context size in tokens (Ollama num_ctx); other providers ignore it. */
   numCtx?: number;
   /** Keep the model loaded this long after the call (Ollama keep_alive, e.g. "30m"); others ignore it. */

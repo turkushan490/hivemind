@@ -74,7 +74,7 @@ export function openaiAdapter(cfg: ProviderConfig): ProviderAdapter {
 
     async *stream(req: ChatRequest, signal: AbortSignal): AsyncIterable<StreamChunk> {
       // think: false also for cloud reasoning models (Gemini, gpt-oss), which otherwise think before every answer.
-      const effort = req.think === false ? noThinking(cfg.preset, req.model) : undefined;
+      const effort = req.think === false ? noThinking(cfg.preset, req.model) : req.think === 'high' ? moreThinking(cfg.preset, req.model) : undefined;
       const send = (withEffort: boolean) =>
         fetch(`${base}/chat/completions`, {
         method: 'POST',
@@ -154,6 +154,13 @@ export function noThinking(preset: string, model: string): string | undefined {
   if (/gpt-oss/i.test(model)) return 'low';
   if (preset === 'openai' && /^(o\d|gpt-5)/i.test(model)) return 'minimal';
   return undefined;
+}
+
+/** The "think hard" setting of an API, when it has one (models without it refuse it, and are asked again without). */
+export function moreThinking(preset: string, model: string): string | undefined {
+  if (preset === 'gemini' || /gpt-oss/i.test(model)) return 'high';
+  if (preset === 'openai' && /^(o\d|gpt-5)/i.test(model)) return 'high';
+  return /think|reason|qwen3|deepseek|glm/i.test(model) ? 'high' : undefined;
 }
 
 function isFreePreset(preset: string): boolean {

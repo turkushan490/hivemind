@@ -117,7 +117,7 @@ export function ollamaAdapter(cfg: ProviderConfig): ProviderAdapter {
             messages: ollamaMessages(messages),
             stream: true,
             ...(req.json && { format: 'json' }),
-            ...(req.think === false && { think: false }),
+            ...(req.think !== undefined && { think: ollamaThink(req.think, model) }),
             ...(keepAlive(req.keepAlive) && { keep_alive: keepAlive(req.keepAlive) }),
             ...(req.tools?.length && { tools: req.tools }),
             options: {
@@ -222,4 +222,10 @@ function gpuFullNote(model: string, provider: string) {
     s.n = 0;
   }
   gpuFullSeen.set(model, s);
+}
+
+/** Ollama's think field: true/false for most thinking models; gpt-oss takes a level (low/medium/high) instead. */
+export function ollamaThink(think: boolean | 'high', model: string): boolean | string {
+  if (/gpt-oss/i.test(model)) return think === false ? 'low' : think === 'high' ? 'high' : 'medium';
+  return think !== false;
 }

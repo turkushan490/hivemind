@@ -129,3 +129,40 @@ describe('unlock mode', () => {
     expect((await get(`/api/runs/${runId}`)).statusCode).toBe(404);
   });
 });
+
+describe('Prompt maker v2 template', () => {
+  it('reads lessons, good prompts and style first, lets lessons win, and writes a history entry with "My fix"', async () => {
+    const { promptMakerGraphV2, promptMakerGraph, historyEntryTemplate } = await import('../src/api/unlock.js');
+    expect(promptMakerGraph).toBe(promptMakerGraphV2);
+    const g = promptMakerGraphV2();
+    const by = (id: string) => g.nodes.find((n) => n.id === id)!;
+    expect(g.nodes.map((n) => `${n.id}:${n.type}`)).toEqual(['q:input', 'r:readMemory', 'm:llm', 'o:output', 'h:template', 'w:writeMemory']);
+    expect(by('r').config.memoryPaths!.split('\n')).toEqual(['prompts/lessons.md', 'prompts/good.md', 'prompts/style.md']);
+    expect(g.edges.map((e) => `${e.source}>${e.target}`)).toEqual(['q>r', 'r>m', 'm>o', 'm>h', 'h>w']);
+    const sys = by('m').config.system!;
+    expect(sys).toMatch(/only defaults/);
+    expect(sys).toMatch(/lessons win|win over them/);
+    expect(sys).toMatch(/Follow every lesson/);
+    expect(by('h').config).toMatchObject({ raw: true, prompt: historyEntryTemplate('Prompt maker') });
+    const tpl = by('h').config.prompt!;
+    expect(tpl.startsWith('---\n\n## Prompt {{now}} · Prompt maker\nStatus: new\n\n**You asked:** {{question}}\n\n{{inputs}}\n\n**My fix** (optional:')).toBe(true);
+    expect(by('w').config).toMatchObject({ memoryPath: 'prompts/history.md', memoryMode: 'append' });
+    // A future "picture to text" template writes the same format with its own name.
+    expect(historyEntryTemplate('Picture to text')).toContain('## Prompt {{now}} · Picture to text\nStatus: new');
+  });
+
+  it('an existing Prompt maker canvas is never overwritten', async () => {
+    const { ensureUnlockedStart } = await import('../src/api/unlock.js');
+    const row = db.prepare("SELECT id, graph FROM canvases WHERE owner_id = 'u1' AND hidden = 1 AND name = 'Prompt maker'").get() as { id: string; graph: string };
+    db.prepare('UPDATE canvases SET graph = ? WHERE id = ?').run('{"nodes":[],"edges":[]}', row.id);
+    ensureUnlockedStart({ id: 'u1', username: 'user_u1', role: 'admin' } as never);
+    expect((db.prepare('SELECT graph FROM canvases WHERE id = ?').get(row.id) as { graph: string }).graph).toBe('{"nodes":[],"edges":[]}');
+    expect(db.prepare("SELECT count(*) AS n FROM canvases WHERE owner_id = 'u1' AND name = 'Prompt maker'").get()).toEqual({ n: 1 });
+  });
+
+  it('two appended history entries keep a blank line before each "---" rule', () => {
+    mem.write('u1', 'prompts/history-test.md', 'first entry\n**My fix**: too dark', { guest: 'hidden' });
+    mem.write('u1', 'prompts/history-test.md', '---\n\n## Prompt 2026-11-27 14:05 · Prompt maker', { mode: 'append', guest: 'hidden' });
+    expect(mem.read('u1', ['prompts/history-test.md'], 'hidden')[0].content).toBe('first entry\n**My fix**: too dark\n\n---\n\n## Prompt 2026-11-27 14:05 · Prompt maker');
+  });
+});

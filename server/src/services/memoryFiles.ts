@@ -137,7 +137,9 @@ export function write(userId: string, path: string, text: string, opts: { mode?:
   }
   if (opts.mode === 'append' && existsSync(full)) {
     const prev = readFileSync(full, 'utf8');
-    writeFileSync(full, `${prev}${prev.endsWith('\n') ? '' : '\n'}${text}`);
+    // An entry that starts with a "---" rule needs a blank line before it, or Markdown reads the line above as a heading.
+    const gap = /^---[ \t]*(\n|$)/.test(text) && prev.trim() ? (prev.endsWith('\n\n') ? '' : prev.endsWith('\n') ? '\n' : '\n\n') : prev.endsWith('\n') ? '' : '\n';
+    writeFileSync(full, `${prev}${gap}${text}`);
   } else {
     writeFileSync(full, text);
   }

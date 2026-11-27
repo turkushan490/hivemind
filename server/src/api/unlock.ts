@@ -28,8 +28,39 @@ For a video (Wan 2.2, LTX, HunyuanVideo):
 
 Start your answer with "Request: " and the request in one line. Then the prompt(s) under clear headings. Follow the style of the saved good prompts when there are any.`;
 
-/** The hidden "Prompt maker" workflow: saved good prompts → the model → the answer, and every answer kept in hidden memory. */
-export function promptMakerGraph(): CanvasGraph {
+/** v2 adds: the coach's lessons win over the defaults above. */
+const SYSTEM_V2 = `${SYSTEM}
+
+The sizes, steps, CFG and other settings above are only defaults. Saved skills, lessons and style notes win over them: when a lesson or a good prompt says otherwise, do what it says.
+Follow every lesson in prompts/lessons.md, each time, also the small ones. When lessons disagree, the newest one wins.`;
+
+/**
+ * The entry every made prompt gets in prompts/history.md ({{question}}: what was asked, {{inputs}}: the answer,
+ * {{now}}: the time). The "My fix" line is where the owner corrects it; the Prompt coach learns from those.
+ * A future "picture to text" template can use it too: historyEntryTemplate('Picture to text').
+ */
+export function historyEntryTemplate(source: string, asked = '**You asked:** {{question}}'): string {
+  return [
+    '---',
+    '',
+    `## Prompt {{now}} · ${source}`,
+    'Status: new',
+    '',
+    asked,
+    '',
+    '{{inputs}}',
+    '',
+    '**My fix** (optional: paste the prompt as you changed it, and/or say what was wrong; leave empty when it was good):',
+    '',
+  ].join('\n');
+}
+
+/**
+ * The hidden "Prompt maker" workflow, v2: lessons, good prompts and style notes → the writer → the answer,
+ * and every answer kept in hidden memory as a history entry with a "My fix" section for the Prompt coach.
+ * Only new installs get it: an existing Prompt maker canvas is never overwritten.
+ */
+export function promptMakerGraphV2(): CanvasGraph {
   const model = promptModel();
   return {
     nodes: [
@@ -38,8 +69,8 @@ export function promptMakerGraph(): CanvasGraph {
         id: 'r',
         type: 'readMemory',
         position: { x: 300, y: 0 },
-        label: 'Saved good prompts',
-        config: { memoryPaths: 'prompts/good.md\nprompts/style.md' },
+        label: 'Lessons, good prompts, style',
+        config: { memoryPaths: 'prompts/lessons.md\nprompts/good.md\nprompts/style.md' },
       },
       {
         id: 'm',
@@ -48,8 +79,8 @@ export function promptMakerGraph(): CanvasGraph {
         label: 'Write the prompt',
         config: {
           ...(model && { model }),
-          system: SYSTEM,
-          prompt: 'Saved good prompts and style notes (follow these):\n{{inputs}}\n\nRequest: {{question}}',
+          system: SYSTEM_V2,
+          prompt: 'Lessons, saved good prompts and style notes (these win over the defaults; follow every lesson):\n{{inputs}}\n\nRequest: {{question}}',
           temperature: 0.8,
           think: false,
           maxTokens: 2048,
@@ -58,9 +89,16 @@ export function promptMakerGraph(): CanvasGraph {
       },
       { id: 'o', type: 'output', position: { x: 900, y: 0 }, label: 'The prompt', config: {} },
       {
+        id: 'h',
+        type: 'template',
+        position: { x: 900, y: 160 },
+        label: 'History entry',
+        config: { raw: true, prompt: historyEntryTemplate(PROMPT_MAKER) },
+      },
+      {
         id: 'w',
         type: 'writeMemory',
-        position: { x: 900, y: 160 },
+        position: { x: 1200, y: 160 },
         label: 'Keep it (prompts/history.md)',
         config: { memoryPath: 'prompts/history.md', memoryMode: 'append', memoryBy: 'prompt maker' },
       },
@@ -69,10 +107,14 @@ export function promptMakerGraph(): CanvasGraph {
       { id: 'e1', source: 'q', target: 'r' },
       { id: 'e2', source: 'r', target: 'm' },
       { id: 'e3', source: 'm', target: 'o' },
-      { id: 'e4', source: 'm', target: 'w' },
+      { id: 'e4', source: 'm', target: 'h' },
+      { id: 'e5', source: 'h', target: 'w' },
     ],
   };
 }
+
+/** The template a new install gets (the newest version). */
+export const promptMakerGraph = promptMakerGraphV2;
 
 /** The first time unlock mode is turned on: the hidden Prompt maker workflow and a place for good prompts. */
 export function ensureUnlockedStart(user: User) {

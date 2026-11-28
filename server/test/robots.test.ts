@@ -71,6 +71,10 @@ describe('installers', () => {
     expect(list[0]).toMatchObject({ app: 'hivebot', versions: [{ version: 'v0.9.5', files: [{ name: 'HiveBot.exe', size: 6 }] }] });
     const dl = await app.inject({ method: 'GET', url: '/api/installers/hivebot/v0.9.5/HiveBot.exe', headers: bearer() });
     expect(dl.body).toBe('MZ exe');
+    // The HiveBot app checks for its own update with the same token: it may list and download installers too.
+    expect((await app.inject({ method: 'GET', url: '/api/installers', headers: as(t) })).json().apps[0].app).toBe('hivebot');
+    expect((await app.inject({ method: 'GET', url: '/api/installers/hivebot/v0.9.5/HiveBot.exe', headers: as(t) })).body).toBe('MZ exe');
+    expect((await app.inject({ method: 'GET', url: '/api/installers', headers: bearer('u2') })).statusCode).toBe(403);
   });
 
   it('robot firmware: a manifest for the browser flasher, and the robot is told which firmware to run', async () => {

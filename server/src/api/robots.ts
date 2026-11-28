@@ -212,7 +212,12 @@ export function robotRoutes(app: FastifyInstance) {
   });
 
   // ---- Installers ----
-  app.get('/api/installers', { preHandler: requireAdmin }, async () => ({ apps: listInstallers(), firmwareApp: FIRMWARE_APP }));
+  // Admins, and a token with the installers permission (the HiveBot app checks for its own updates with it).
+  app.get('/api/installers', { preHandler: requireUser }, async (req, reply) => {
+    const u = req.user!;
+    if (u.scope ? u.scope.installers !== true : u.role !== 'admin') return reply.code(403).send({ error: 'Installers are for admins' });
+    return { apps: listInstallers(), firmwareApp: FIRMWARE_APP };
+  });
 
   /** A release file, uploaded by the app's build script (a token with the "installers" permission) or an admin. */
   app.put('/api/installers/:app/:version/:file', { preHandler: requireUser, bodyLimit: 200 * 1024 * 1024 }, async (req, reply) => {
@@ -224,12 +229,13 @@ export function robotRoutes(app: FastifyInstance) {
     return safe(reply, () => putInstallerFile(p.app, p.version, p.file, req.body as Buffer));
   });
 
-  /** Downloads a release file: admins, and a robot for its own firmware (OTA update). */
+  /** Downloads a release file: admins, a token with the installers permission, and a robot for its own firmware (OTA update). */
   app.get('/api/installers/:app/:version/:file', { preHandler: requireUser }, async (req, reply) => {
     const u = req.user!;
     const p = req.params as { app: string; version: string; file: string };
     const robotFirmware = !!u.scope?.robot && p.app === FIRMWARE_APP && p.file.endsWith('.bin');
-    if (!robotFirmware && (u.scope || u.role !== 'admin')) return reply.code(403).send({ error: 'Installers are for admins' });
+    const installers = u.scope ? u.scope.installers === true : u.role === 'admin';  // the HiveBot app updating itself
+    if (!robotFirmware && !installers) return reply.code(403).send({ error: 'Installers are for admins' });
     return safe(reply, () => {
       const full = installerFilePath(p.app, p.version, p.file);
       return reply

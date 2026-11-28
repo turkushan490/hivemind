@@ -126,6 +126,8 @@ export async function scopeGuard(req: FastifyRequest, reply: FastifyReply) {
     }
     return;
   }
+  // The HiveBot app checks for and downloads its own update with its installers token.
+  if ((route === 'GET /api/installers' || route === 'GET /api/installers/:app/:version/:file') && user.scope.installers === true) return;
   if (ROBOT_ROUTES.has(route)) {
     if (!user.scope.robot) return deny('use the robot API (only a robot token may)');
     return;

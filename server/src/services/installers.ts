@@ -139,11 +139,26 @@ export async function fetchGithubRelease(app: string, token: string | undefined)
   const version = rel.tag_name.replace(/[^A-Za-z0-9._+-]/g, '-');
   const files: string[] = [];
   for (const a of rel.assets.filter((x) => ALLOWED.test(x.name) && PART.test(x.name))) {
-    const r = await fetch(a.url, { headers: { ...headers, accept: 'application/octet-stream' }, signal: AbortSignal.timeout(15 * 60_000) });
-    if (!r.ok) throw err(502, `GitHub: downloading ${a.name} failed (HTTP ${r.status})`);
+    // GitHub's file servers sometimes close the connection in the middle of a big file ("terminated", 2026-11-28):
+    // try each file up to 4 times before giving up.
+    let data: Buffer | undefined;
+    for (let attempt = 1; !data; attempt++) {
+      try {
+        const r = await fetch(a.url, { headers: { ...headers, accept: 'application/octet-stream' }, signal: AbortSignal.timeout(15 * 60_000) });
+        if (!r.ok) throw err(502, `GitHub: downloading ${a.name} failed (HTTP ${r.status})`);
+        data = Buffer.from(await r.arrayBuffer());
+        if (a.size && data.length !== a.size) throw new Error(`got ${data.length} of ${a.size} bytes`);
+      } catch (e) {
+        data = undefined;
+        if ((e as { statusCode?: number }).statusCode || attempt >= 4) {
+          throw (e as { statusCode?: number }).statusCode ? e : err(502, `GitHub: downloading ${a.name} broke off ${attempt} times (${(e as Error).message})`);
+        }
+        await new Promise((ok) => setTimeout(ok, attempt * 3_000));
+      }
+    }
     // Robot firmware in the same release (<board>-*.bin, firmware-version.txt) goes to the firmware app.
     const target = FIRMWARE_FILE.test(a.name) ? FIRMWARE_APP : app;
-    putInstallerFile(target, version, a.name, Buffer.from(await r.arrayBuffer()));
+    putInstallerFile(target, version, a.name, data);
     files.push(target === app ? a.name : `${target}/${a.name}`);
   }
   if (rel.body) writeFileSync(join(dirOf(app, version), 'release.md'), rel.body.slice(0, 20_000));

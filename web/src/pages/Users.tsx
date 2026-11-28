@@ -4,6 +4,16 @@ import { api } from '../api';
 import { toast } from '../notify';
 
 type Role = 'admin' | 'user' | 'viewer';
+interface InviteRow {
+  id: string;
+  note: string | null;
+  profileId: string | null;
+  createdAt: string;
+  expiresAt: number;
+  usedAt: string | null;
+  usedBy: string | null;
+  open: boolean;
+}
 interface UserRow {
   id: string;
   username: string;
@@ -25,7 +35,12 @@ export function Users({ meId, active }: { meId: string; active: boolean }) {
   const [password, setPassword] = useState('');
   const [role, setRole] = useState<Role>('user');
   const [profiles, setProfiles] = useState<AccessOverview['profiles']>([]);
+  const [invites, setInvites] = useState<InviteRow[]>([]);
+  const [inviteNote, setInviteNote] = useState('');
+  const [inviteProfile, setInviteProfile] = useState('');
+  const [inviteLink, setInviteLink] = useState('');
   const load = () => {
+    api<InviteRow[]>('/api/invites', { quiet: true }).then(setInvites).catch(() => {});
     api<UserRow[]>('/api/users', { quiet: true }).then(setUsers).catch((err) => toast(`Could not load users: ${(err as Error).message}`));
     api<AccessOverview>('/api/access', { quiet: true }).then((a) => setProfiles(a.profiles)).catch(() => {});
   };
@@ -41,9 +56,55 @@ export function Users({ meId, active }: { meId: string; active: boolean }) {
     load();
   };
 
+  // Rollout R1: one link per person; they choose their own username and password.
+  const invite = async () => {
+    const r = await api<{ token: string }>('/api/invites', { body: { note: inviteNote.trim() || undefined, profileId: inviteProfile || undefined, days: 7 } });
+    const link = `${location.origin}/invite/${r.token}`;
+    setInviteLink(link);
+    setInviteNote('');
+    navigator.clipboard?.writeText(link).then(() => toast('Invite link copied: send it to them (works once, 7 days)', 'ok')).catch(() => {});
+    load();
+  };
+
   return (
     <div className="card max-w-2xl space-y-3">
       <h2 className="font-semibold">Users</h2>
+      <div className="space-y-2 rounded border border-[#30363d] p-2">
+        <p className="text-sm font-medium">Invite someone</p>
+        <p className="text-xs text-slate-400">They get a link, choose their own username and password, and start on Use. The link works once and for 7 days.</p>
+        <div className="flex flex-wrap gap-2">
+          <input className="input w-44 py-1" placeholder="Who is it for? (note)" value={inviteNote} onChange={(e) => setInviteNote(e.target.value)} />
+          <select className="input w-auto py-1 text-xs" value={inviteProfile} onChange={(e) => setInviteProfile(e.target.value)} title="What they may use">
+            <option value="">New users' profile</option>
+            {profiles.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+              </option>
+            ))}
+          </select>
+          <button className="btn" onClick={() => invite().catch(() => {})}>
+            Make invite link
+          </button>
+        </div>
+        {inviteLink && <input className="input w-full py-1 font-mono text-xs" readOnly value={inviteLink} onFocus={(e) => e.target.select()} />}
+        {invites.filter((i) => i.open || i.usedBy).slice(0, 10).map((i) => (
+          <div key={i.id} className="flex flex-wrap items-center gap-2 text-xs text-slate-400">
+            <span className="text-slate-300">{i.note || 'invite'}</span>
+            {i.open ? <span>open until {new Date(i.expiresAt).toLocaleDateString()}</span> : <span>used by {i.usedBy}</span>}
+            {i.open && (
+              <button
+                className="btn-ghost ml-auto text-xs text-red-400"
+                onClick={async () => {
+                  await api(`/api/invites/${i.id}`, { method: 'DELETE' });
+                  load();
+                }}
+              >
+                Revoke
+              </button>
+            )}
+          </div>
+        ))}
+      </div>
       <ul className="space-y-0.5 text-xs text-slate-400">
         {(Object.keys(ROLE_INFO) as Role[]).map((r) => (
           <li key={r}>

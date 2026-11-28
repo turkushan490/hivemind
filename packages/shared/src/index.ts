@@ -468,6 +468,10 @@ export interface AccessProfile {
   /** Built in, not editable or deletable ("Everything"). */
   builtin?: boolean;
   providers: Record<string, ProviderAccess>;
+  /** Rollout R1: this profile's runs never take a GPU place before this (1 first … 200); empty = as asked. */
+  priority?: number;
+  /** Rollout R1: at most this many runs per day (night work and robots not counted); empty = no limit. */
+  dailyRuns?: number;
 }
 
 export const EVERYTHING_PROFILE = 'everything';

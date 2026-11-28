@@ -58,7 +58,7 @@ export function App() {
   useEffect(() => void loadUnlock(), []);
   const [pinAsk, setPinAsk] = useState(false);
   const allowed = (t: Tab) => t in TABS && (me?.role !== 'viewer' || VIEWER_TABS.includes(t));
-  const tab: Tab = allowed(storedTab) ? storedTab : me?.role === 'viewer' ? 'use' : 'canvas';
+  const tab: Tab = allowed(storedTab) ? storedTab : me?.role === 'admin' ? 'canvas' : 'use';
   // Tabs stay mounted once opened, so switching never loses what you picked or a running council.
   const [opened, setOpened] = useState<Set<Tab>>(() => new Set([tab]));
   useEffect(() => setOpened((o) => (o.has(tab) ? o : new Set(o).add(tab))), [tab]);

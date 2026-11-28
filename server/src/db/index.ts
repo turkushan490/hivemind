@@ -393,6 +393,25 @@ export const MIGRATIONS: string[] = [
   -- Unlock mode: a hidden workflow only shows for its owner while unlock mode is on.
   ALTER TABLE canvases ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0;
   `,
+  // Invite links (rollout R1): the admin makes a one-time link; whoever opens it makes their own account.
+  `
+  CREATE TABLE invites (
+    id TEXT PRIMARY KEY,
+    token_hash TEXT NOT NULL UNIQUE,
+    profile_id TEXT,
+    note TEXT,
+    created_by TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    expires_at INTEGER NOT NULL,
+    used_at TEXT,
+    used_by TEXT
+  );
+  `,
+  // Per-profile limits (rollout R1): a GPU place in the queue (guests behind the owner) and runs per day.
+  `
+  ALTER TABLE access_profiles ADD COLUMN priority INTEGER;
+  ALTER TABLE access_profiles ADD COLUMN daily_runs INTEGER;
+  `,
 ];
 
 export const db = new DatabaseSync(join(config.dataDir, 'hivemind.db'));

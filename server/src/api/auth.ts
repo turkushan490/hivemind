@@ -258,6 +258,73 @@ export function authRoutes(app: FastifyInstance) {
     return { ok: true };
   });
 
+  // ---- Invite links (rollout R1): one link per person, used once, valid for some days ----
+  type InviteRow = { id: string; profile_id: string | null; note: string | null; created_at: string; expires_at: number; used_at: string | null; used_by: string | null };
+  const openInvite = (token: string) =>
+    db.prepare('SELECT * FROM invites WHERE token_hash = ? AND used_at IS NULL AND expires_at > ?').get(sha256(token), Date.now()) as InviteRow | undefined;
+
+  /** Body: {profileId?, days? (1-30, default 7), note?} -> {id, token} (the link is <address>/invite/<token>). */
+  app.post('/api/invites', { preHandler: requireAdmin }, async (req, reply) => {
+    const { profileId, days, note } = (req.body ?? {}) as { profileId?: unknown; days?: unknown; note?: unknown };
+    if (profileId !== undefined && (typeof profileId !== 'string' || !getProfile(profileId))) return reply.code(400).send({ error: 'No such access profile' });
+    const d = Math.min(30, Math.max(1, Math.round(Number(days) || 7)));
+    const token = randomToken();
+    const id = newId();
+    db.prepare('INSERT INTO invites (id, token_hash, profile_id, note, created_by, expires_at) VALUES (?, ?, ?, ?, ?, ?)').run(
+      id, sha256(token), (profileId as string | undefined) ?? null, typeof note === 'string' ? note.slice(0, 80) : null, req.user!.id, Date.now() + d * 86_400_000,
+    );
+    return { id, token, expiresAt: Date.now() + d * 86_400_000 };
+  });
+
+  app.get('/api/invites', { preHandler: requireAdmin }, async () =>
+    (db.prepare('SELECT i.*, u.username AS used_name FROM invites i LEFT JOIN users u ON u.id = i.used_by ORDER BY i.created_at DESC LIMIT 100').all() as (InviteRow & { used_name: string | null })[]).map((i) => ({
+      id: i.id, note: i.note, profileId: i.profile_id, createdAt: i.created_at, expiresAt: i.expires_at, usedAt: i.used_at, usedBy: i.used_name,
+      open: !i.used_at && i.expires_at > Date.now(),
+    })),
+  );
+
+  app.delete('/api/invites/:id', { preHandler: requireAdmin }, async (req) => {
+    db.prepare('DELETE FROM invites WHERE id = ? AND used_at IS NULL').run((req.params as { id: string }).id);
+    return { ok: true };
+  });
+
+  /** Public: is this invite still good? (the invite page asks before showing the form) */
+  app.get('/api/invites/check/:token', async (req, reply) => {
+    if (tooManyFailures(req.ip)) return reply.code(429).send({ error: 'Too many attempts, try again later' });
+    const inv = openInvite((req.params as { token: string }).token);
+    if (!inv) {
+      noteFailure(req.ip);
+      return reply.code(404).send({ error: 'This invite link is not valid any more (used, revoked or expired). Ask for a new one.' });
+    }
+    return { ok: true, expiresAt: inv.expires_at };
+  });
+
+  /** Public: make the account with the invite, then log in. Body: {username, password}. */
+  app.post('/api/invites/accept/:token', async (req, reply) => {
+    if (tooManyFailures(req.ip)) return reply.code(429).send({ error: 'Too many attempts, try again later' });
+    const token = (req.params as { token: string }).token;
+    const { username, password } = (req.body ?? {}) as Record<string, unknown>;
+    if (!openInvite(token)) {
+      noteFailure(req.ip);
+      return reply.code(404).send({ error: 'This invite link is not valid any more (used, revoked or expired). Ask for a new one.' });
+    }
+    const bad = validCredentials(username, password);
+    if (bad) return reply.code(400).send({ error: bad });
+    const hash = await hashPassword(password as string);
+    // Checked again right before the insert (no await in between): one invite makes one account.
+    const inv = openInvite(token);
+    if (!inv) return reply.code(404).send({ error: 'This invite link was just used.' });
+    let id: string;
+    try {
+      id = createUser(username as string, hash, 'user', inv.profile_id && getProfile(inv.profile_id) ? inv.profile_id : newUsersProfile());
+    } catch {
+      return reply.code(409).send({ error: 'That username is taken, pick another one' });
+    }
+    db.prepare("UPDATE invites SET used_at = datetime('now'), used_by = ? WHERE id = ?").run(id, inv.id);
+    startSession(reply, id);
+    return { ok: true };
+  });
+
   // ---- API tokens: each user makes their own for the phone app, Home Assistant, scripts ----
   app.get('/api/tokens', { preHandler: requireUser }, async (req) =>
     (

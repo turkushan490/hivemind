@@ -137,9 +137,13 @@ function ProviderAccessRow({ p, value, onChange }: { p: ProviderInfo; value: Pro
 function ProfileEditor({ profile, providers, isDefault, onSaved, onDeleted }: { profile: AccessProfile; providers: ProviderInfo[]; isDefault: boolean; onSaved: () => void; onDeleted: () => void }) {
   const [name, setName] = useState(profile.name);
   const [map, setMap] = useState(profile.providers);
+  const [prio, setPrio] = useState(String(profile.priority ?? ''));
+  const [daily, setDaily] = useState(String(profile.dailyRuns ?? ''));
   useEffect(() => {
     setName(profile.name);
     setMap(profile.providers);
+    setPrio(String(profile.priority ?? ''));
+    setDaily(String(profile.dailyRuns ?? ''));
   }, [profile]);
   if (profile.builtin)
     return (
@@ -148,7 +152,8 @@ function ProfileEditor({ profile, providers, isDefault, onSaved, onDeleted }: { 
         <p className="text-sm text-slate-400">Built in: every provider, model and LoRA. Admins always have it. It can't be changed or deleted.</p>
       </div>
     );
-  const changed = name !== profile.name || JSON.stringify(map) !== JSON.stringify(profile.providers);
+  const changed =
+    name !== profile.name || JSON.stringify(map) !== JSON.stringify(profile.providers) || prio !== String(profile.priority ?? '') || daily !== String(profile.dailyRuns ?? '');
   return (
     <div className="card space-y-2">
       <div className="flex flex-wrap items-center gap-2">
@@ -157,7 +162,7 @@ function ProfileEditor({ profile, providers, isDefault, onSaved, onDeleted }: { 
           className="btn ml-auto"
           disabled={!changed || !name.trim()}
           onClick={async () => {
-            await api(`/api/access/profiles/${profile.id}`, { method: 'PUT', body: { name, providers: map } });
+            await api(`/api/access/profiles/${profile.id}`, { method: 'PUT', body: { name, providers: map, priority: prio || null, dailyRuns: daily || null } });
             toast(`Saved ${name}`, 'ok');
             onSaved();
           }}
@@ -176,6 +181,16 @@ function ProfileEditor({ profile, providers, isDefault, onSaved, onDeleted }: { 
         >
           Delete
         </button>
+      </div>
+      <div className="flex flex-wrap items-center gap-3 text-xs text-slate-400">
+        <label className="flex items-center gap-1" title="1 goes first, 200 last. The owner and robots stay at their own priority; this keeps these users behind them.">
+          GPU place at least
+          <input className="input w-16 py-0.5" inputMode="numeric" placeholder="—" value={prio} onChange={(e) => setPrio(e.target.value.replace(/\D/g, ''))} />
+        </label>
+        <label className="flex items-center gap-1" title="Runs per day for each user with this profile. Empty = no limit.">
+          Runs per day
+          <input className="input w-20 py-0.5" inputMode="numeric" placeholder="no limit" value={daily} onChange={(e) => setDaily(e.target.value.replace(/\D/g, ''))} />
+        </label>
       </div>
       <p className="text-xs text-slate-500">A provider that isn't ticked can't be used at all. Providers a user added with their own key are always theirs.</p>
       {providers.map((p) => (

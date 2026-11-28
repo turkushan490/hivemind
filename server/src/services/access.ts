@@ -64,7 +64,10 @@ interface ProfileRow {
   id: string;
   name: string;
   providers: string;
+  priority?: number | null;
+  daily_runs?: number | null;
 }
+const limitsOf = (r: ProfileRow) => ({ ...(r.priority ? { priority: r.priority } : {}), ...(r.daily_runs ? { dailyRuns: r.daily_runs } : {}) });
 
 const parseProviders = (s: string): Record<string, ProviderAccess> => {
   try {
@@ -76,15 +79,15 @@ const parseProviders = (s: string): Record<string, ProviderAccess> => {
 };
 
 export function listProfiles(): AccessProfile[] {
-  const rows = db.prepare('SELECT id, name, providers FROM access_profiles ORDER BY created_at, name').all() as unknown as ProfileRow[];
-  return [EVERYTHING_INFO, ...rows.map((r) => ({ id: r.id, name: r.name, providers: parseProviders(r.providers) }))];
+  const rows = db.prepare('SELECT id, name, providers, priority, daily_runs FROM access_profiles ORDER BY created_at, name').all() as unknown as ProfileRow[];
+  return [EVERYTHING_INFO, ...rows.map((r) => ({ id: r.id, name: r.name, providers: parseProviders(r.providers), ...limitsOf(r) }))];
 }
 
 export function getProfile(id: string | null | undefined): AccessProfile | undefined {
   if (!id) return undefined;
   if (id === EVERYTHING_PROFILE) return EVERYTHING_INFO;
-  const r = db.prepare('SELECT id, name, providers FROM access_profiles WHERE id = ?').get(id) as ProfileRow | undefined;
-  return r && { id: r.id, name: r.name, providers: parseProviders(r.providers) };
+  const r = db.prepare('SELECT id, name, providers, priority, daily_runs FROM access_profiles WHERE id = ?').get(id) as ProfileRow | undefined;
+  return r && { id: r.id, name: r.name, providers: parseProviders(r.providers), ...limitsOf(r) };
 }
 
 /** The profile new users get (Settings → Access → "New users get"); Basic by default. */

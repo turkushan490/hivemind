@@ -12,7 +12,7 @@ import type { User } from '../api/auth.js';
 import { scopedMemory } from '../api/scope.js';
 import { readPage, webSearch } from '../services/search.js';
 import { filesIn, hideFiles, kindOf, readOwnFile, writeUnique } from '../services/files.js';
-import { allowedFor, checkGraph, type Access } from '../services/access.js';
+import { allowedFor, checkGraph, getProfile, userProfileId, type Access } from '../services/access.js';
 import { homeAssistantConnection } from '../services/homeassistant.js';
 import { projectServicesFor } from '../services/projectRun.js';
 import { skillsForRun } from '../services/skills.js';
@@ -133,7 +133,18 @@ export function startRun(opts: {
   title?: string;
 }): string {
   const access = opts.access ?? (opts.user ? allowedFor(opts.user) : undefined);
-  const priority = clampPriority(opts.priority);
+  let priority = clampPriority(opts.priority);
+  // Rollout R1: a profile's limits. Its runs never take a GPU place before its priority (guests behind the owner), and
+  // at most dailyRuns runs per day (night work, robots and the admin are not limited).
+  if (opts.user && opts.user.role !== 'admin' && !opts.user.scope?.robot) {
+    const prof = getProfile(userProfileId(opts.user));
+    if (prof?.priority && priority < prof.priority) priority = prof.priority;
+    if (prof?.dailyRuns) {
+      const today = (db.prepare("SELECT COUNT(*) AS n FROM runs WHERE owner_id = ? AND started_at >= datetime('now', 'start of day')").get(opts.ownerId) as { n: number }).n;
+      if (today >= prof.dailyRuns)
+        throw Object.assign(new Error(`Your daily limit of ${prof.dailyRuns} runs is used up; it starts again tomorrow`), { statusCode: 429 });
+    }
+  }
   if (access) checkGraph(opts.graph, access);
   // Files: what the run saves belongs to whoever runs it; it reads only their files (an admin's: all).
   const fileUser = opts.user ?? { id: opts.ownerId, role: 'user' as const };

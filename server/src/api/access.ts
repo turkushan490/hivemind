@@ -44,8 +44,14 @@ export function accessRoutes(app: FastifyInstance) {
     const name = body.name === undefined ? cur.name : String(body.name).trim().slice(0, 60);
     if (!name) return reply.code(400).send({ error: 'Give the profile a name' });
     const providers = body.providers === undefined ? cur.providers : cleanProviders(body.providers);
+    // Rollout R1 limits: a number sets it, null / 0 / "" clears it, missing keeps it.
+    const lim = (v: unknown, cur: number | undefined, max: number) =>
+      v === undefined ? (cur ?? null) : Number(v) > 0 ? Math.min(max, Math.round(Number(v))) : null;
+    const b2 = body as { priority?: unknown; dailyRuns?: unknown };
     try {
-      db.prepare('UPDATE access_profiles SET name = ?, providers = ? WHERE id = ?').run(name, JSON.stringify(providers), id);
+      db.prepare('UPDATE access_profiles SET name = ?, providers = ?, priority = ?, daily_runs = ? WHERE id = ?').run(
+        name, JSON.stringify(providers), lim(b2.priority, cur.priority, 200), lim(b2.dailyRuns, cur.dailyRuns, 100000), id,
+      );
     } catch {
       return reply.code(409).send({ error: `There is already a profile called "${name}"` });
     }

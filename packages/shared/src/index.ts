@@ -487,6 +487,8 @@ export interface AccessOverview {
   newUsers: string;
   /** Image blocks keep a copy in ComfyUI's output folder (off: ComfyUI only holds it in temp). */
   keepComfyCopy: boolean;
+  /** Rollout R3b: minutes ComfyUI may sit idle before it is told to unload its models (0 = never). */
+  comfyIdleFreeMin: number;
 }
 
 export interface ModelInfo {

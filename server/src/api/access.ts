@@ -2,6 +2,7 @@ import { EVERYTHING_PROFILE, type AccessOverview } from '@hivemind/shared';
 import type { FastifyInstance } from 'fastify';
 import { newId } from '../crypto.js';
 import { db } from '../db/index.js';
+import { comfyIdleFreeMin, setComfyIdleFreeMin } from '../services/comfyLeash.js';
 import { cleanProviders, getProfile, keepComfyCopy, listProfiles, newUsersProfile, setKeepComfyCopy, setNewUsersProfile, userProfileId } from '../services/access.js';
 import { requireAdmin } from './auth.js';
 
@@ -18,6 +19,7 @@ export function accessRoutes(app: FastifyInstance) {
       tokens: tokens.map(({ profileId, ...t }) => ({ ...t, ...(profileId && { profileId }) })),
       newUsers: newUsersProfile(),
       keepComfyCopy: keepComfyCopy(),
+      comfyIdleFreeMin: comfyIdleFreeMin(),
     };
   });
 
@@ -78,7 +80,12 @@ export function accessRoutes(app: FastifyInstance) {
   });
 
   app.put('/api/access/settings', { preHandler: requireAdmin }, async (req, reply) => {
-    const body = (req.body ?? {}) as { newUsers?: unknown; keepComfyCopy?: unknown };
+    const body = (req.body ?? {}) as { newUsers?: unknown; keepComfyCopy?: unknown; comfyIdleFreeMin?: unknown };
+    if (body.comfyIdleFreeMin !== undefined) {
+      const n = Number(body.comfyIdleFreeMin);
+      if (!Number.isFinite(n) || n < 0) return reply.code(400).send({ error: 'comfyIdleFreeMin must be 0 or more minutes' });
+      setComfyIdleFreeMin(n);
+    }
     if (body.newUsers !== undefined) {
       if (typeof body.newUsers !== 'string' || !getProfile(body.newUsers)) return reply.code(400).send({ error: 'No such profile' });
       setNewUsersProfile(body.newUsers);
@@ -87,7 +94,7 @@ export function accessRoutes(app: FastifyInstance) {
       if (typeof body.keepComfyCopy !== 'boolean') return reply.code(400).send({ error: 'keepComfyCopy must be true or false' });
       setKeepComfyCopy(body.keepComfyCopy);
     }
-    return { newUsers: newUsersProfile(), keepComfyCopy: keepComfyCopy() };
+    return { newUsers: newUsersProfile(), keepComfyCopy: keepComfyCopy(), comfyIdleFreeMin: comfyIdleFreeMin() };
   });
 
   /** Body: {profileId}. Admins always have Everything. */

@@ -111,4 +111,6 @@ const { nightTick } = await import('./services/nightWork.js');
 (await import('./services/workspaces.js')).startWorkspaceSweeper();
 // Models kept in RAM for good (H36.2a): loaded again within a minute when Ollama throws them out.
 (await import('./services/keepWarm.js')).startKeepWarm();
+// ComfyUI on a leash (rollout R3b): an idle ComfyUI lets go of its GPU memory after a few minutes.
+(await import('./services/comfyLeash.js')).startComfyLeash();
 setInterval(() => void nightTick(), 15 * 60_000).unref();

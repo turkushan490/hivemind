@@ -225,7 +225,7 @@ export function Access({ active }: { active: boolean }) {
   const profile = useMemo(() => data?.profiles.find((p) => p.id === sel) ?? data?.profiles[0], [data, sel]);
   if (!data) return null;
   const names = Object.fromEntries(data.profiles.map((p) => [p.id, p.name]));
-  const settings = async (body: { newUsers?: string; keepComfyCopy?: boolean }) => {
+  const settings = async (body: { newUsers?: string; keepComfyCopy?: boolean; comfyIdleFreeMin?: number }) => {
     await api('/api/access/settings', { method: 'PUT', body });
     load();
   };
@@ -261,6 +261,24 @@ export function Access({ active }: { active: boolean }) {
               Off: Image blocks use ComfyUI's temp folder (PreviewImage) and HiveMind keeps the picture in the owner's Files. Anyone who can reach ComfyUI's own port can
               list and download what is in its output folder, so keep that port inside your network.
             </span>
+          </span>
+        </label>
+        <label className="flex flex-wrap items-center gap-2 text-sm">
+          Free ComfyUI's GPU memory after
+          <input
+            className="input w-16 py-1"
+            inputMode="numeric"
+            defaultValue={data.comfyIdleFreeMin}
+            key={data.comfyIdleFreeMin}
+            onBlur={(e) => {
+              const n = Number(e.target.value.replace(/[^0-9]/g, '') || 0);
+              if (n !== data.comfyIdleFreeMin) void settings({ comfyIdleFreeMin: n });
+            }}
+          />
+          minutes with nothing to do
+          <span className="block w-full text-xs text-slate-500">
+            ComfyUI keeps its image models on the GPU after a picture (up to 13 GB on a 16 GB card), and then chat models don't fit. After this many idle minutes
+            HiveMind tells it to let go; the next picture loads them again. 0 = never.
           </span>
         </label>
       </div>

@@ -1299,6 +1299,10 @@ API (admin only):
   - Think more also doubles the default token cap of local models (at most 32768), so the answer still fits after
     long thinking.
   - Tests: `server/test/thinkLevel.test.ts`.
+- **Colibri after-download steps**: a catalog download now runs the entry's `post_install` tools, as colibri's own
+  setup does (Kimi K3 ships only `tiktoken.model`; `tools/k3_tokenizer.py` writes the `tokenizer.json` the engine
+  reads). A model downloaded before this gets the steps the next time the Colibri list loads; a failing step marks
+  the model not installed, with its error.
 
 ---
 

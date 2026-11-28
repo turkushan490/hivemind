@@ -55,6 +55,13 @@ def cmd_catalog(ram, models_dir):
         folder = os.path.join(models_dir, row["entry"].id)
         item["dir"] = folder
         item["installed"] = setup_download.is_complete(folder)
+        if item["installed"]:
+            # Downloaded before HiveMind ran the after-download steps (Kimi K3's tokenizer.json): run them now.
+            try:
+                post_install(row["entry"], folder)
+            except Exception as error:  # noqa: BLE001 - shown on the model, the rest of the list still loads
+                item["installed"] = False
+                item["error"] = str(error)
         item["downloaded_bytes"] = downloaded.get(row["entry"].id, 0)
         item["size_class"] = row["entry"].size_class
         models.append(item)
@@ -68,7 +75,22 @@ def cmd_download(model_id, models_dir):
     out({"type": "progress", "label": "Listing files", "done": 0, "total": 0, "file": ""})
     files = setup_download.list_repo_files(entry.repo, entry.revision, include=entry.include, exclude=entry.exclude, token=token)
     setup_download.download_repo(entry.repo, entry.revision, folder, files, token=token, progress=progress_printer(entry.name))
+    post_install(entry, folder)
     out({"type": "result", "dir": folder})
+
+
+def post_install(entry, folder):
+    """The catalog's after-download steps (tool under tools/, file it creates), as colibri's own setup runs them:
+    Kimi K3 ships only tiktoken.model, and tools/k3_tokenizer.py writes the tokenizer.json the engines read.
+    A step whose file is already there is done."""
+    for tool, creates in getattr(entry, "post_install", ()) or ():
+        if os.path.exists(os.path.join(folder, creates)):
+            continue
+        out({"type": "progress", "label": f"Writing {creates}", "done": 0, "total": 0, "file": creates})
+        script = os.path.join(COLI_DIR, "tools", f"{tool}.py")
+        r = subprocess.run([sys.executable, script, folder], capture_output=True, encoding="utf-8", errors="replace")
+        if r.returncode != 0 or not os.path.exists(os.path.join(folder, creates)):
+            raise RuntimeError(f"tools/{tool}.py failed: {(r.stderr or r.stdout).strip()[-400:]}")
 
 
 def missing_parts(paths):
